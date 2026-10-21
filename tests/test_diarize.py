@@ -111,6 +111,16 @@ def test_download_failure_leaves_no_partial_file(tmp_path, fake_downloads):
     assert not list(tmp_path.glob("*.part"))
 
 
+def test_failure_to_move_download_into_place_is_a_download_error(tmp_path, fake_downloads, monkeypatch):
+    def refuse(src, dst):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(download.os, "replace", refuse)
+    with pytest.raises(RuntimeError, match=r"could not download .*locked"):
+        dz.sherpa_models(tmp_path)
+    assert not list(tmp_path.rglob("*.part"))
+
+
 def test_archive_without_model_is_an_error(tmp_path, fake_downloads):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:bz2"):

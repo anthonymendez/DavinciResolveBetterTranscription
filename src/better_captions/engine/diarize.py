@@ -142,15 +142,27 @@ def sherpa_models(cache_dir: str | Path | None = None) -> tuple[Path, Path]:
     segmentation = root / SEGMENTATION_NAME / "model.onnx"
     if not segmentation.exists():
         archive = root / f"{SEGMENTATION_NAME}.tar.bz2"
-        download(SEGMENTATION_URL, archive)
+        _download(SEGMENTATION_URL, archive)
         try:
             _extract_member(archive, "model.onnx", segmentation)
         finally:
             archive.unlink(missing_ok=True)
     embedding = root / EMBEDDING_NAME
     if not embedding.exists():
-        download(EMBEDDING_URL, embedding)
+        _download(EMBEDDING_URL, embedding)
     return segmentation, embedding
+
+
+def _download(url: str, dest: Path) -> None:
+    """download(), but a failure to move the finished file into place is reported as a download error too."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        download(url, dest)
+    except OSError as e:  # download() wraps fetch errors in RuntimeError; this is its final os.replace
+        dest.with_name(dest.name + ".part").unlink(missing_ok=True)
+        raise RuntimeError(
+            f"could not download {url} to {dest}: {e} (download it there by hand to work offline)"
+        ) from e
 
 
 def _extract_member(archive: Path, name: str, dest: Path) -> None:
