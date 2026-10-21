@@ -30,6 +30,7 @@ better-captions = "better_captions.cli:main"
 dev = [
     "pytest>=8",
     "pyyaml>=6",
+    "ruff==0.14.0",
 ]
 
 [build-system]
@@ -38,6 +39,33 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/better_captions"]
+
+[tool.ruff]
+line-length = 120
+# Also the floor for resolve_plugin/src, which runs on Resolve's system Python 3.10+ (stdlib only).
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "RUF001", # en dashes in UI strings are intentional
+    "SIM105", # try/except/pass reads plainer than contextlib.suppress
+    "UP031",  # the plugin uses %-formatting throughout; converting is churn with no gain
+    "RUF012", # ctypes _fields_ and test fakes are plain class-level lists; ClassVar is noise there
+    "RUF046", # int(round(x)) states the intent and stays an int for numpy scalars too
+    "SIM905", # a """...""".split() word list reads better than a 200-item list literal
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["better_captions", "better_captions_plugin", "tests"]
+# Python 3.11+ stdlib; py310 doesn't know it, but it's only imported where 3.11+ is guaranteed.
+extra-standard-library = ["tomllib"]
+
+[tool.ruff.lint.per-file-ignores]
+# The launcher checks the version so it can report too-old Pythons instead of crashing.
+"resolve_plugin/Utility/Better Captions.py" = ["UP036"]
+# The launcher still admits Python 3.8, so the plugin avoids 3.10-only zip(strict=) and itertools.pairwise.
+"resolve_plugin/src/**" = ["B905", "RUF007"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

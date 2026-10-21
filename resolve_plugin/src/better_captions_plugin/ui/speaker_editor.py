@@ -25,7 +25,7 @@ def cue_number(index: int) -> str:
     return "#%d" % (index + 1)
 
 
-def cue_index(label) -> "int | None":
+def cue_index(label) -> int | None:
     text = str(label or "").strip().lstrip("#")
     return int(text) - 1 if text.isdigit() and int(text) > 0 else None
 
@@ -42,27 +42,32 @@ class EditorController:
         name = self.editor.display_name(speaker_id)
         return speaker_id if name == speaker_id else "%s (%s)" % (name, speaker_id)
 
-    def speaker_rows(self) -> "list[tuple[str, str, str]]":
+    def speaker_rows(self) -> list[tuple[str, str, str]]:
         """(id, name, cue count) per speaker."""
         return [(s.id, s.name, str(s.cue_count)) for s in self.editor.speakers()]
 
-    def speaker_ids(self) -> "list[str]":
+    def speaker_ids(self) -> list[str]:
         return [s.id for s in self.editor.speakers()]
 
-    def filter_choices(self) -> "list[tuple[str, str | None]]":
+    def filter_choices(self) -> list[tuple[str, str | None]]:
         """(label, speaker id or None for all) for the cue list filter."""
         return [(ALL_SPEAKERS_LABEL, None)] + [(self.speaker_label(sid), sid) for sid in self.speaker_ids()]
 
-    def merge_choices(self, source: "str | None") -> "list[tuple[str, str]]":
+    def merge_choices(self, source: str | None) -> list[tuple[str, str]]:
         return [(self.speaker_label(sid), sid) for sid in self.speaker_ids() if sid != source]
 
-    def move_choices(self) -> "list[tuple[str, str]]":
+    def move_choices(self) -> list[tuple[str, str]]:
         return [(self.speaker_label(sid), sid) for sid in self.speaker_ids()] + [(NEW_SPEAKER_LABEL, NEW_SPEAKER)]
 
-    def cue_rows(self, speaker_id: "str | None" = None) -> "list[tuple[str, str, str, str]]":
+    def cue_rows(self, speaker_id: str | None = None) -> list[tuple[str, str, str, str]]:
         """(number, time, speaker, text) per cue, in time order; ``cue_index(number)`` is the cue."""
         return [
-            (cue_number(c.index), self.time_label(c.start), self.editor.display_name(c.speaker), " / ".join(c.text.splitlines()))
+            (
+                cue_number(c.index),
+                self.time_label(c.start),
+                self.editor.display_name(c.speaker),
+                " / ".join(c.text.splitlines()),
+            )
             for c in self.editor.cues(speaker_id)
         ]
 
@@ -72,20 +77,22 @@ class EditorController:
 
     # actions
 
-    def rename(self, speaker_id: "str | None", name: str) -> bool:
+    def rename(self, speaker_id: str | None, name: str) -> bool:
         if not speaker_id:
             return self._fail("Pick a speaker to rename.")
         if not str(name or "").strip():
             return self._fail("Type a name first.")
-        return self._do(lambda: self.editor.rename(speaker_id, name), "Renamed %s to %s." % (speaker_id, str(name).strip()))
+        return self._do(
+            lambda: self.editor.rename(speaker_id, name), "Renamed %s to %s." % (speaker_id, str(name).strip())
+        )
 
-    def merge(self, source: "str | None", target: "str | None") -> bool:
+    def merge(self, source: str | None, target: str | None) -> bool:
         if not source or not target:
             return self._fail("Pick a speaker, then the speaker to merge it into.")
         message = "Merged %s into %s." % (self.speaker_label(source), self.speaker_label(target))
         return self._do(lambda: self.editor.merge(source, target), message)
 
-    def move(self, cue_indexes, target: "str | None", new_name: "str | None" = None) -> bool:
+    def move(self, cue_indexes, target: str | None, new_name: str | None = None) -> bool:
         cue_indexes = [i for i in cue_indexes if i is not None]
         if not cue_indexes:
             return self._fail("Select one or more cues first.")
@@ -98,7 +105,9 @@ class EditorController:
             if ok:
                 self.status = "Moved %s to new speaker %s." % (count, self.speaker_label(created[0]))
             return ok
-        return self._do(lambda: self.editor.reassign(cue_indexes, target), "Moved %s to %s." % (count, self.speaker_label(target)))
+        return self._do(
+            lambda: self.editor.reassign(cue_indexes, target), "Moved %s to %s." % (count, self.speaker_label(target))
+        )
 
     def undo(self) -> bool:
         op = self.editor.undo()

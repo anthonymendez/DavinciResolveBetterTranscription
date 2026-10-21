@@ -65,7 +65,10 @@ def name_speakers(transcript: Transcript, provider: str = "auto", **options) -> 
         raise ValueError(f"unknown naming provider {provider!r}; expected one of {', '.join(PROVIDERS)}")
     speakers = transcript.speakers
     if provider == "none":
-        return [Speaker(id=s.id, name=s.name, name_confidence=s.name_confidence, name_source=s.name_source) for s in speakers]
+        return [
+            Speaker(id=s.id, name=s.name, name_confidence=s.name_confidence, name_source=s.name_source)
+            for s in speakers
+        ]
     if provider == "auto":
         provider = _resolve_auto(options)
 
@@ -73,6 +76,8 @@ def name_speakers(transcript: Transcript, provider: str = "auto", **options) -> 
         try:
             return _apply_llm(speakers, _ASK[provider](speakers, transcript.segments, options))
         except Exception as exc:  # any SDK, network or parsing failure: degrade, don't fail the run
-            log.warning("%s speaker naming failed (%s: %s); falling back to heuristic", provider, type(exc).__name__, exc)
+            log.warning(
+                "%s speaker naming failed (%s: %s); falling back to heuristic", provider, type(exc).__name__, exc
+            )
 
     return heuristic.name_speakers(speakers, transcript.segments)

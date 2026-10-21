@@ -24,7 +24,11 @@ def wav(tmp_path):
 
 
 def test_parse_event_forwards_non_json_as_log():
-    assert parse_event('{"event": "progress", "stage": "transcribe", "pct": 5}\n') == {"event": "progress", "stage": "transcribe", "pct": 5}
+    assert parse_event('{"event": "progress", "stage": "transcribe", "pct": 5}\n') == {
+        "event": "progress",
+        "stage": "transcribe",
+        "pct": 5,
+    }
     assert parse_event("Downloading model...\n") == {"event": "log", "line": "Downloading model..."}
     assert parse_event('{"not": "an event"}') == {"event": "log", "line": '{"not": "an event"}'}
     assert parse_event("{broken json") == {"event": "log", "line": "{broken json"}
@@ -50,7 +54,8 @@ def test_run_engine_streams_events_and_returns_done(wav, tmp_path):
     pcts = [e["pct"] for e in events if e["event"] == "progress"]
     assert pcts == sorted(pcts) and pcts[-1] == 100.0
     assert pumps  # the UI got a chance to repaint while waiting
-    transcript = json.load(open(done["transcript"], encoding="utf-8"))
+    with open(done["transcript"], encoding="utf-8") as handle:
+        transcript = json.load(handle)
     assert transcript["meta"]["audio"] == str(wav)
 
 
@@ -83,5 +88,10 @@ def test_run_engine_cancel_terminates_process(wav, tmp_path):
         return any(e["event"] == "progress" for e in seen)
 
     with pytest.raises(EngineCancelled):
-        run_engine(_argv(wav, tmp_path / "out", "--slow"), on_event=seen.append, should_cancel=should_cancel, poll_interval=0.02)
+        run_engine(
+            _argv(wav, tmp_path / "out", "--slow"),
+            on_event=seen.append,
+            should_cancel=should_cancel,
+            poll_interval=0.02,
+        )
     assert not (tmp_path / "out" / "transcript.json").exists()

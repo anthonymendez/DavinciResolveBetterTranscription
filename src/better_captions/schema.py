@@ -87,7 +87,7 @@ class Transcript:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Transcript":
+    def from_dict(cls, data: dict[str, Any]) -> Transcript:
         version = data.get("schema_version", SCHEMA_VERSION)
         if version > SCHEMA_VERSION:
             raise ValueError(f"transcript schema {version} is newer than supported {SCHEMA_VERSION}")
@@ -96,8 +96,7 @@ class Transcript:
             duration=data["duration"],
             speakers=[Speaker(**s) for s in data.get("speakers", [])],
             segments=[
-                Segment(**{**s, "words": [Word(**w) for w in s.get("words", [])]})
-                for s in data.get("segments", [])
+                Segment(**{**s, "words": [Word(**w) for w in s.get("words", [])]}) for s in data.get("segments", [])
             ],
             cues=[Cue(**c) for c in data.get("cues", [])],
             meta=data.get("meta", {}),
@@ -108,5 +107,5 @@ class Transcript:
         Path(path).write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: str | Path) -> "Transcript":
+    def load(cls, path: str | Path) -> Transcript:
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))

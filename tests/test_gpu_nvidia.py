@@ -76,7 +76,9 @@ def test_cuda_info_from_ctranslate2(monkeypatch):
     def no_driver():
         raise RuntimeError("CUDA driver version is insufficient")
 
-    monkeypatch.setitem(sys.modules, "ctranslate2", types.SimpleNamespace(__version__="4.8.3", get_cuda_device_count=no_driver))
+    monkeypatch.setitem(
+        sys.modules, "ctranslate2", types.SimpleNamespace(__version__="4.8.3", get_cuda_device_count=no_driver)
+    )
     info = gpu.cuda_info()
     assert info["cuda_devices"] == 0 and "insufficient" in info["error"]
 
@@ -128,8 +130,16 @@ def dll_dirs(monkeypatch):
 
 def test_library_dirs_per_platform(tmp_path):
     nvidia = _fake_nvidia(tmp_path, {**WINDOWS_WHEEL_FILES, **LINUX_WHEEL_FILES})
-    assert gpu.library_dirs([nvidia], "win32") == [nvidia / "cublas/bin", nvidia / "cuda_nvrtc/bin", nvidia / "cudnn/bin"]
-    assert gpu.library_dirs([nvidia], "linux") == [nvidia / "cublas/lib", nvidia / "cuda_nvrtc/lib", nvidia / "cudnn/lib"]
+    assert gpu.library_dirs([nvidia], "win32") == [
+        nvidia / "cublas/bin",
+        nvidia / "cuda_nvrtc/bin",
+        nvidia / "cudnn/bin",
+    ]
+    assert gpu.library_dirs([nvidia], "linux") == [
+        nvidia / "cublas/lib",
+        nvidia / "cuda_nvrtc/lib",
+        nvidia / "cudnn/lib",
+    ]
     assert gpu.library_dirs([tmp_path / "missing"], "linux") == []
 
 
@@ -137,15 +147,22 @@ def test_runtime_libraries_skip_nvblas_alt_and_other_files(tmp_path):
     nvidia = _fake_nvidia(tmp_path, {**WINDOWS_WHEEL_FILES, **LINUX_WHEEL_FILES})
     win = [p.name for p in gpu.runtime_libraries(gpu.library_dirs([nvidia], "win32"), "win32")]
     assert win == [
-        "cublas64_12.dll", "cublasLt64_12.dll",
-        "nvrtc-builtins64_129.dll", "nvrtc64_120_0.dll",
-        "cudnn64_9.dll", "cudnn_graph64_9.dll", "cudnn_ops64_9.dll",
+        "cublas64_12.dll",
+        "cublasLt64_12.dll",
+        "nvrtc-builtins64_129.dll",
+        "nvrtc64_120_0.dll",
+        "cudnn64_9.dll",
+        "cudnn_graph64_9.dll",
+        "cudnn_ops64_9.dll",
     ]
     linux = [p.name for p in gpu.runtime_libraries(gpu.library_dirs([nvidia], "linux"), "linux")]
     assert linux == [
-        "libcublas.so.12", "libcublasLt.so.12",
-        "libnvrtc-builtins.so.12.9", "libnvrtc.so.12",
-        "libcudnn.so.9", "libcudnn_graph.so.9",
+        "libcublas.so.12",
+        "libcublasLt.so.12",
+        "libnvrtc-builtins.so.12.9",
+        "libnvrtc.so.12",
+        "libcudnn.so.9",
+        "libcudnn_graph.so.9",
     ]
 
 
@@ -204,7 +221,11 @@ def test_setup_uses_site_packages_once_and_never_raises(tmp_path, monkeypatch, l
     monkeypatch.setenv("PATH", os.environ.get("PATH", ""))  # restored afterwards; setup() edits it on Windows
 
     first = gpu.setup()
-    assert first["dirs"] == [str(nvidia / "cublas" / sub), str(nvidia / "cuda_nvrtc" / sub), str(nvidia / "cudnn" / sub)]
+    assert first["dirs"] == [
+        str(nvidia / "cublas" / sub),
+        str(nvidia / "cuda_nvrtc" / sub),
+        str(nvidia / "cudnn" / sub),
+    ]
     assert len(first["loaded"]) == (7 if windows else 6)
     count = len(loads)
     assert gpu.setup() is first and len(loads) == count  # cached: nothing loaded twice
@@ -262,18 +283,21 @@ def fake_model(monkeypatch):
     return events
 
 
-@pytest.mark.parametrize("device,expected", [("auto", ["setup"]), ("cuda", ["setup"]), ("cuda:1", ["setup"]), ("cpu", [])])
+@pytest.mark.parametrize(
+    "device,expected", [("auto", ["setup"]), ("cuda", ["setup"]), ("cuda:1", ["setup"]), ("cpu", [])]
+)
 def test_load_model_registers_cuda_runtime_first(fake_model, monkeypatch, device, expected):
     monkeypatch.setitem(
-        sys.modules, "faster_whisper",
+        sys.modules,
+        "faster_whisper",
         types.SimpleNamespace(WhisperModel=lambda *a, **kw: fake_model.append("model")),
     )
     tr._load_model("tiny", device)
-    assert fake_model == expected + ["model"]
+    assert fake_model == [*expected, "model"]
 
 
 def test_auto_falls_back_to_cpu_when_cuda_fails_on_first_use(fake_model):
-    language, duration, words = tr.transcribe("in.wav", device="auto")
+    language, _duration, words = tr.transcribe("in.wav", device="auto")
     assert [m.device for m in FakeModel.instances] == ["cuda", "cpu"]
     assert [w.text for w in words] == ["hi"] and language == "en"
 
@@ -296,7 +320,9 @@ def test_unrelated_first_use_error_is_not_retried(fake_model):
 
 def test_doctor_prints_detection_as_json(monkeypatch, capsys):
     monkeypatch.setattr(gpu, "setup", lambda: {"dirs": ["/sp/nvidia/cublas/lib"], "loaded": ["libcublas.so.12"]})
-    monkeypatch.setattr(gpu, "nvidia_gpus", lambda: [{"name": "NVIDIA GeForce RTX 4090", "driver": "560.94", "memory_mb": 24564}])
+    monkeypatch.setattr(
+        gpu, "nvidia_gpus", lambda: [{"name": "NVIDIA GeForce RTX 4090", "driver": "560.94", "memory_mb": 24564}]
+    )
     monkeypatch.setattr(gpu, "cuda_info", lambda: {"ctranslate2": "4.8.3", "cuda_devices": 1})
     monkeypatch.setattr(tr, "_cuda_available", lambda: True)
     monkeypatch.setattr(tr, "_backend_available", lambda name: name == "whispercpp")
@@ -338,7 +364,7 @@ def _fake_bin(tmp_path: Path, smi: str | None) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     if smi is not None:
-        body = f"echo '{GPU_LISTING}'" if smi == "gpu" else f"echo \"{NO_DRIVER}\"; exit 9"
+        body = f"echo '{GPU_LISTING}'" if smi == "gpu" else f'echo "{NO_DRIVER}"; exit 9'
         (bin_dir / "nvidia-smi").write_text(f"#!/bin/sh\n{body}\n")
         (bin_dir / "nvidia-smi").chmod(0o755)
     return bin_dir
@@ -354,7 +380,10 @@ def _gpu_choice_sh(tmp_path: Path, os_name: str, smi: str | None, gpu_env: str |
         env["BETTER_CAPTIONS_GPU"] = gpu_env
     return subprocess.run(
         [bash, "-c", 'source "$1"; gpu_choice "$2"', "_", str(INSTALL / "install.sh"), os_name],
-        env=env, capture_output=True, text=True, timeout=60,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
 
@@ -404,14 +433,27 @@ def _gpu_choice_ps1(tmp_path: Path, smi: str | None, gpu_env: str | None = None)
     if gpu_env is not None:
         env["BETTER_CAPTIONS_GPU"] = gpu_env
     script = f"& '{INSTALL / 'install.ps1'}'; try {{ Get-GpuChoice }} catch {{ Write-Output \"error: $_\"; exit 3 }}"
-    return subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", script],
-                          env=env, capture_output=True, text=True, timeout=120)
+    return subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-Command", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="fakes nvidia-smi with a shell script; Windows has real WMI adapters")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="fakes nvidia-smi with a shell script; Windows has real WMI adapters"
+)
 @pytest.mark.parametrize(
     "smi,gpu_env,expected",
-    [("gpu", None, "cuda"), ("nodriver", None, "none"), (None, None, "none"), ("gpu", "none", "none"), (None, "cuda", "cuda")],
+    [
+        ("gpu", None, "cuda"),
+        ("nodriver", None, "none"),
+        (None, None, "none"),
+        ("gpu", "none", "none"),
+        (None, "cuda", "cuda"),
+    ],
 )
 def test_install_ps1_gpu_choice(tmp_path, smi, gpu_env, expected):
     result = _gpu_choice_ps1(tmp_path, smi, gpu_env)

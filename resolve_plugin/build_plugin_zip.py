@@ -22,7 +22,7 @@ PACKAGE = "better_captions_plugin"
 FIXED_DATE = (1980, 1, 1, 0, 0, 0)
 
 
-def source_files(src: str = SRC) -> "list[tuple[str, str]]":
+def source_files(src: str = SRC) -> list[tuple[str, str]]:
     """``(archive name, absolute path)`` for every .py file of the package, sorted."""
     files = []
     root = os.path.join(src, PACKAGE)
@@ -52,8 +52,9 @@ def build_bytes(src: str = SRC) -> bytes:
 def is_up_to_date(zip_path: str = ZIP, src: str = SRC) -> bool:
     if not os.path.isfile(zip_path):
         return False
+
     # Compare entries, not raw bytes: deflate output differs between zlib builds (e.g. on Windows).
-    def entries(archive: zipfile.ZipFile) -> "dict[str, bytes]":
+    def entries(archive: zipfile.ZipFile) -> dict[str, bytes]:
         return {name: archive.read(name) for name in archive.namelist()}
 
     with zipfile.ZipFile(zip_path) as committed, zipfile.ZipFile(io.BytesIO(build_bytes(src))) as fresh:

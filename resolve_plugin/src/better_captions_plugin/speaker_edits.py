@@ -42,7 +42,7 @@ class SpeakerSummary:
     name: str  # display name: the speaker's name, or the id
     cue_count: int
     sample: str  # first non-empty cue text
-    source: "str | None" = None  # name_source
+    source: str | None = None  # name_source
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ class CueSummary:
 # --- operations on the transcript dict
 
 
-def _speaker_ids(data: dict) -> "list[str]":
+def _speaker_ids(data: dict) -> list[str]:
     """Known speaker ids: the speaker list, then ids that only appear on cues."""
     ids = [str(s.get("id")) for s in data.get("speakers", [])]
     for cue in data.get("cues", []):
@@ -66,7 +66,7 @@ def _speaker_ids(data: dict) -> "list[str]":
     return ids
 
 
-def _speaker_entry(data: dict, speaker_id: str, create: bool = False) -> "dict | None":
+def _speaker_entry(data: dict, speaker_id: str, create: bool = False) -> dict | None:
     for speaker in data.setdefault("speakers", []):
         if str(speaker.get("id")) == speaker_id:
             return speaker
@@ -98,7 +98,7 @@ def _find_cue(cues: list, ref: dict) -> int:
     return min(candidates, key=lambda i: abs(float(cues[i]["start"]) - start) + abs(float(cues[i]["end"]) - end))
 
 
-def _relabel_segments(data: dict, old: str, new: str, start: "float | None" = None, end: "float | None" = None):
+def _relabel_segments(data: dict, old: str, new: str, start: float | None = None, end: float | None = None):
     """Relabel ``old``'s segments (all, or those whose midpoint lies in [start, end]) and their words."""
     for segment in data.get("segments", []) or []:
         if str(segment.get("speaker")) != old:
@@ -183,7 +183,7 @@ def apply_op(data: dict, op: dict):
     except (KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, EditError):
             raise
-        raise EditError("malformed %s edit: %s" % (kind, exc))
+        raise EditError("malformed %s edit: %s" % (kind, exc)) from exc
     data.clear()
     data.update(trial)
 
@@ -205,13 +205,13 @@ class SpeakerEditor:
 
     def __init__(self, transcript: dict):
         self.base = copy.deepcopy(transcript)
-        self.ops: "list[dict]" = []
-        self.skipped: "list[tuple[dict, str]]" = []  # (op, reason) for saved edits that no longer apply
+        self.ops: list[dict] = []
+        self.skipped: list[tuple[dict, str]] = []  # (op, reason) for saved edits that no longer apply
         self.data = copy.deepcopy(self.base)
 
     # queries
 
-    def speakers(self) -> "list[SpeakerSummary]":
+    def speakers(self) -> list[SpeakerSummary]:
         """Speakers with at least one cue, in transcript order (as ``Transcript.speaker_ids_with_cues``)."""
         cues = self.data.get("cues", [])
         with_cues = {str(c.get("speaker")) for c in cues}
@@ -219,22 +219,29 @@ class SpeakerEditor:
         ordered += sorted(sid for sid in with_cues if sid not in ordered)
         summaries = []
         for speaker_id in ordered:
-            own = sorted((c for c in cues if str(c.get("speaker")) == speaker_id), key=lambda c: (float(c["start"]), float(c["end"])))
+            own = sorted(
+                (c for c in cues if str(c.get("speaker")) == speaker_id),
+                key=lambda c: (float(c["start"]), float(c["end"])),
+            )
             texts = [_cue_text(c) for c in own]
             entry = _speaker_entry(self.data, speaker_id) or {}
-            summaries.append(SpeakerSummary(
-                id=speaker_id,
-                name=entry.get("name") or speaker_id,
-                cue_count=len(own),
-                sample=next((t for t in texts if t.strip()), ""),
-                source=entry.get("name_source"),
-            ))
+            summaries.append(
+                SpeakerSummary(
+                    id=speaker_id,
+                    name=entry.get("name") or speaker_id,
+                    cue_count=len(own),
+                    sample=next((t for t in texts if t.strip()), ""),
+                    source=entry.get("name_source"),
+                )
+            )
         return summaries
 
-    def cues(self, speaker: "str | None" = None) -> "list[CueSummary]":
+    def cues(self, speaker: str | None = None) -> list[CueSummary]:
         """Cues in time order, optionally only one speaker's."""
         rows = [
-            CueSummary(index=i, start=float(c["start"]), end=float(c["end"]), speaker=str(c["speaker"]), text=_cue_text(c))
+            CueSummary(
+                index=i, start=float(c["start"]), end=float(c["end"]), speaker=str(c["speaker"]), text=_cue_text(c)
+            )
             for i, c in enumerate(self.data.get("cues", []))
             if speaker is None or str(c["speaker"]) == speaker
         ]
@@ -269,13 +276,15 @@ class SpeakerEditor:
         """Move cues (indexes into the cue list) to an existing speaker."""
         return self._push({"op": "reassign", "cues": self._refs(cue_indexes), "speaker": speaker})
 
-    def split(self, cue_indexes, name: "str | None" = None) -> str:
+    def split(self, cue_indexes, name: str | None = None) -> str:
         """Move cues to a new speaker; returns the new speaker's id."""
         new_id = new_speaker_id(self.data)
-        self._push({"op": "split", "cues": self._refs(cue_indexes), "speaker": new_id, "name": (name or "").strip() or None})
+        self._push(
+            {"op": "split", "cues": self._refs(cue_indexes), "speaker": new_id, "name": (name or "").strip() or None}
+        )
         return new_id
 
-    def record_names(self, names: "dict[str, str]") -> "list[dict]":
+    def record_names(self, names: dict[str, str]) -> list[dict]:
         """Turn the review dialog's names into rename edits, for those that differ from the current name."""
         pushed = []
         known = {s.id for s in self.speakers()}
@@ -285,7 +294,7 @@ class SpeakerEditor:
                 pushed.append(self.rename(speaker_id, name))
         return pushed
 
-    def undo(self) -> "dict | None":
+    def undo(self) -> dict | None:
         if not self.ops:
             return None
         op = self.ops.pop()
@@ -306,7 +315,7 @@ class SpeakerEditor:
                 self.skipped.append((op, str(exc)))
         return applied
 
-    def _refs(self, cue_indexes) -> "list[dict]":
+    def _refs(self, cue_indexes) -> list[dict]:
         cues = self.data.get("cues", [])
         refs = []
         for index in cue_indexes:
@@ -340,7 +349,7 @@ def _cue_text(cue: dict) -> str:
 # --- edits.json
 
 
-def audio_fingerprint(path: str) -> "str | None":
+def audio_fingerprint(path: str) -> str | None:
     """sha256 of the rendered audio file, or None when it cannot be read."""
     digest = hashlib.sha256()
     try:
@@ -352,20 +361,20 @@ def audio_fingerprint(path: str) -> "str | None":
     return digest.hexdigest()
 
 
-def edits_document(editor: SpeakerEditor, audio_sha256: "str | None" = None) -> dict:
+def edits_document(editor: SpeakerEditor, audio_sha256: str | None = None) -> dict:
     return {"version": EDITS_VERSION, "audio_sha256": audio_sha256, "ops": copy.deepcopy(editor.ops)}
 
 
-def save_edits(path: str, editor: SpeakerEditor, audio_sha256: "str | None" = None):
+def save_edits(path: str, editor: SpeakerEditor, audio_sha256: str | None = None):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(edits_document(editor, audio_sha256), handle, indent=2, ensure_ascii=False)
 
 
-def load_edits(path: str) -> "dict | None":
+def load_edits(path: str) -> dict | None:
     """The saved document, or None when the file is missing, unreadable or from a newer plugin."""
     try:
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError):
         return None
@@ -376,7 +385,7 @@ def load_edits(path: str) -> "dict | None":
     return data
 
 
-def find_saved_edits(paths, audio_sha256: "str | None" = None) -> "tuple[str, dict] | tuple[None, None]":
+def find_saved_edits(paths, audio_sha256: str | None = None) -> tuple[str, dict] | tuple[None, None]:
     """The first saved edits among ``paths`` that are for this audio (or do not say which audio)."""
     for path in paths:
         if not path:

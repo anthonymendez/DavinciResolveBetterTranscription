@@ -49,7 +49,7 @@ def parse_event(line: str) -> dict:
     return {"event": "log", "line": line.rstrip("\r\n")}
 
 
-def _reader(stream, sink: "queue.Queue"):
+def _reader(stream, sink: queue.Queue):
     try:
         for line in iter(stream.readline, ""):
             sink.put(("line", line))
@@ -70,17 +70,25 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
     """
     on_event = on_event or (lambda event: None)
     popen = popen or subprocess.Popen
-    kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, env=env,
-                  universal_newlines=True, encoding="utf-8", errors="replace", bufsize=1)
+    kwargs = dict(
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        env=env,
+        universal_newlines=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
     if sys.platform == "win32":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         process = popen(list(argv), **kwargs)
     except OSError as exc:
-        raise EngineError("could not start the engine (%s): %s" % (argv[0], exc))
+        raise EngineError("could not start the engine (%s): %s" % (argv[0], exc)) from exc
 
-    events: "queue.Queue" = queue.Queue()
-    stderr_lines: "list[str]" = []
+    events: queue.Queue = queue.Queue()
+    stderr_lines: list[str] = []
     threads = [
         threading.Thread(target=_reader, args=(process.stdout, events), daemon=True),
         threading.Thread(target=_stderr_reader, args=(process.stderr, stderr_lines, events), daemon=True),
@@ -124,11 +132,13 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
         raise EngineError(str(error.get("message") or "engine failed"))
     if done is None or returncode != 0:
         tail = "\n".join(stderr_lines[-15:]).strip()
-        raise EngineError("engine exited with code %s without finishing%s" % (returncode, ("\n" + tail) if tail else ""))
+        raise EngineError(
+            "engine exited with code %s without finishing%s" % (returncode, ("\n" + tail) if tail else "")
+        )
     return done
 
 
-def _stderr_reader(stream, store: "list[str]", sink: "queue.Queue"):
+def _stderr_reader(stream, store: list[str], sink: queue.Queue):
     try:
         for line in iter(stream.readline, ""):
             line = line.rstrip("\r\n")

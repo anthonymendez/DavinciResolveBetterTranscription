@@ -6,8 +6,19 @@ is pumped with ``UIDispatcher.StepLoop()`` while the engine runs.
 
 from __future__ import annotations
 
-from better_captions_plugin.ui import (HIGHLIGHT_COLOR_LABEL, HIGHLIGHT_LABEL, NAMING_CHOICES, NAMING_LABEL, Backend, ProgressView,
-                                       ReviewRequest, ReviewResult, checked_highlight_color, naming_index, speaker_rows)
+from better_captions_plugin.ui import (
+    HIGHLIGHT_COLOR_LABEL,
+    HIGHLIGHT_LABEL,
+    NAMING_CHOICES,
+    NAMING_LABEL,
+    Backend,
+    ProgressView,
+    ReviewRequest,
+    ReviewResult,
+    checked_highlight_color,
+    naming_index,
+    speaker_rows,
+)
 from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
 
 TITLE = "Better Captions"
@@ -22,7 +33,7 @@ class UIManagerProgress(ProgressView):
         self.ui = ui
         self.disp = dispatcher
         self._cancelled = False
-        self._lines: "list[str]" = []
+        self._lines: list[str] = []
         self.window = dispatcher.AddWindow(
             {"ID": WINDOW_ID_PROGRESS, "WindowTitle": title, "Geometry": [200, 200, 560, 320]},
             [
@@ -32,7 +43,9 @@ class UIManagerProgress(ProgressView):
                         ui.Label({"ID": "Status", "Text": "Starting…", "Weight": 0}),
                         ui.Label({"ID": "Percent", "Text": "", "Weight": 0}),
                         ui.TextEdit({"ID": "Log", "ReadOnly": True, "Weight": 1}),
-                        ui.HGroup({"Weight": 0}, [ui.HGap(0, 1), ui.Button({"ID": "Cancel", "Text": "Cancel", "Weight": 0})]),
+                        ui.HGroup(
+                            {"Weight": 0}, [ui.HGap(0, 1), ui.Button({"ID": "Cancel", "Text": "Cancel", "Weight": 0})]
+                        ),
                     ],
                 )
             ],
@@ -116,10 +129,10 @@ class UIManagerBackend(Backend):
         disp.RunLoop()
         window.Hide()
 
-    def review(self, request: ReviewRequest) -> "ReviewResult | None":
+    def review(self, request: ReviewRequest) -> ReviewResult | None:
         """The review window; "Fix speakers…" closes it, runs the editor and reopens it rebuilt."""
         speakers = list(request.speakers)
-        template_choice: "dict[str, int]" = {}
+        template_choice: dict[str, int] = {}
         checked = {
             "Subtitles": bool(request.default_subtitles and request.allow_subtitles),
             "TextPlus": bool(request.default_textplus and request.templates),
@@ -141,10 +154,13 @@ class UIManagerBackend(Backend):
                 continue
             if action != "ok":
                 return None
-            result = ReviewResult(subtitles=bool(items["Subtitles"].Checked), textplus=bool(items["TextPlus"].Checked),
-                                  highlight_words=bool(items["Highlight"].Checked),
-                                  highlight_color=checked_highlight_color(str(items["HighlightColor"].Text)) or request.highlight_color,
-                                  naming_provider=NAMING_CHOICES[self._naming_choice(items)][0])
+            result = ReviewResult(
+                subtitles=bool(items["Subtitles"].Checked),
+                textplus=bool(items["TextPlus"].Checked),
+                highlight_words=bool(items["Highlight"].Checked),
+                highlight_color=checked_highlight_color(str(items["HighlightColor"].Text)) or request.highlight_color,
+                naming_provider=NAMING_CHOICES[self._naming_choice(items)][0],
+            )
             for speaker in speakers:
                 result.names[speaker.id] = str(items["Name_" + speaker.id].Text).strip() or speaker.id
                 if request.templates:
@@ -181,16 +197,24 @@ class UIManagerBackend(Backend):
             header.append(ui.Label({"Text": text, "Weight": 0}))
         if request.note:
             header.append(ui.Label({"Text": request.note, "Weight": 0}))
-        buttons = [ui.HGap(0, 1), ui.Button({"ID": "Cancel", "Text": "Cancel", "Weight": 0}), ui.Button({"ID": "Ok", "Text": "Create tracks", "Weight": 0})]
+        buttons = [
+            ui.HGap(0, 1),
+            ui.Button({"ID": "Cancel", "Text": "Cancel", "Weight": 0}),
+            ui.Button({"ID": "Ok", "Text": "Create tracks", "Weight": 0}),
+        ]
         if request.editor is not None:
             buttons.insert(0, ui.Button({"ID": "FixSpeakers", "Text": "Fix speakers…", "Weight": 0}))
         window = disp.AddWindow(
-            {"ID": WINDOW_ID_REVIEW, "WindowTitle": "%s – review speakers" % TITLE, "Geometry": [200, 200, 760, 240 + 48 * len(speakers)]},
+            {
+                "ID": WINDOW_ID_REVIEW,
+                "WindowTitle": "%s – review speakers" % TITLE,
+                "Geometry": [200, 200, 760, 240 + 48 * len(speakers)],
+            },
             [
                 ui.VGroup(
                     {"Spacing": 6},
-                    header
-                    + [
+                    [
+                        *header,
                         ui.HGroup(
                             {"Spacing": 8, "Weight": 0},
                             [
@@ -198,26 +222,58 @@ class UIManagerBackend(Backend):
                                 ui.Label({"Text": "Name (track name)", "Weight": 0.3}),
                                 ui.Label({"Text": "Text+ template", "Weight": 0.45}),
                             ],
-                        )
-                    ]
-                    + rows
-                    + [
-                        ui.CheckBox({"ID": "Subtitles", "Text": "Subtitle tracks: one subtitle track per speaker, named after the speaker",
-                                     "Checked": checked["Subtitles"], "Enabled": bool(request.allow_subtitles), "Weight": 0}),
-                        ui.CheckBox({"ID": "TextPlus", "Text": "Text+ captions: one video track per speaker using the chosen template",
-                                     "Checked": checked["TextPlus"], "Enabled": bool(template_labels), "Weight": 0}),
-                        ui.HGroup({"Spacing": 8, "Weight": 0}, [
-                            ui.HGap(16, 0),
-                            ui.CheckBox({"ID": "Highlight", "Text": HIGHLIGHT_LABEL, "Checked": checked["Highlight"],
-                                         "Enabled": bool(template_labels), "Weight": 1}),
-                            ui.Label({"Text": HIGHLIGHT_COLOR_LABEL, "Weight": 0}),
-                            ui.LineEdit({"ID": "HighlightColor", "Text": str(color), "Enabled": bool(template_labels), "Weight": 0}),
-                        ]),
+                        ),
+                        *rows,
+                        ui.CheckBox(
+                            {
+                                "ID": "Subtitles",
+                                "Text": "Subtitle tracks: one subtitle track per speaker, named after the speaker",
+                                "Checked": checked["Subtitles"],
+                                "Enabled": bool(request.allow_subtitles),
+                                "Weight": 0,
+                            }
+                        ),
+                        ui.CheckBox(
+                            {
+                                "ID": "TextPlus",
+                                "Text": "Text+ captions: one video track per speaker using the chosen template",
+                                "Checked": checked["TextPlus"],
+                                "Enabled": bool(template_labels),
+                                "Weight": 0,
+                            }
+                        ),
+                        ui.HGroup(
+                            {"Spacing": 8, "Weight": 0},
+                            [
+                                ui.HGap(16, 0),
+                                ui.CheckBox(
+                                    {
+                                        "ID": "Highlight",
+                                        "Text": HIGHLIGHT_LABEL,
+                                        "Checked": checked["Highlight"],
+                                        "Enabled": bool(template_labels),
+                                        "Weight": 1,
+                                    }
+                                ),
+                                ui.Label({"Text": HIGHLIGHT_COLOR_LABEL, "Weight": 0}),
+                                ui.LineEdit(
+                                    {
+                                        "ID": "HighlightColor",
+                                        "Text": str(color),
+                                        "Enabled": bool(template_labels),
+                                        "Weight": 0,
+                                    }
+                                ),
+                            ],
+                        ),
                         ui.Label({"Text": "New tracks are added; existing tracks are never changed.", "Weight": 0}),
-                        ui.HGroup({"Spacing": 8, "Weight": 0}, [
-                            ui.Label({"Text": NAMING_LABEL, "Weight": 0}),
-                            ui.ComboBox({"ID": "Naming", "Weight": 1}),
-                        ]),
+                        ui.HGroup(
+                            {"Spacing": 8, "Weight": 0},
+                            [
+                                ui.Label({"Text": NAMING_LABEL, "Weight": 0}),
+                                ui.ComboBox({"ID": "Naming", "Weight": 1}),
+                            ],
+                        ),
                         ui.Label({"ID": "ReviewStatus", "Text": "", "Weight": 0}),
                         ui.HGroup({"Weight": 0}, buttons),
                     ],
@@ -244,7 +300,11 @@ class UIManagerBackend(Backend):
             if not items["Subtitles"].Checked and not items["TextPlus"].Checked:
                 items["ReviewStatus"].Text = "Pick at least one output: subtitle tracks and/or Text+ captions."
                 return
-            if items["Highlight"].Checked and items["TextPlus"].Checked and checked_highlight_color(str(items["HighlightColor"].Text)) is None:
+            if (
+                items["Highlight"].Checked
+                and items["TextPlus"].Checked
+                and checked_highlight_color(str(items["HighlightColor"].Text)) is None
+            ):
                 items["ReviewStatus"].Text = "The highlight colour must look like #FFD400."
                 return
             finish("ok")
@@ -275,42 +335,72 @@ class UIManagerBackend(Backend):
                                     [
                                         ui.Label({"Text": "Speakers", "Weight": 0}),
                                         ui.Tree({"ID": "SpeakerTree", "SortingEnabled": False, "Weight": 1}),
-                                        ui.HGroup({"Weight": 0}, [
-                                            ui.Label({"Text": "Name:", "Weight": 0}),
-                                            ui.LineEdit({"ID": "SpeakerName", "Weight": 1}),
-                                            ui.Button({"ID": "Rename", "Text": "Rename", "Weight": 0}),
-                                        ]),
-                                        ui.HGroup({"Weight": 0}, [
-                                            ui.Label({"Text": "Merge into:", "Weight": 0}),
-                                            ui.ComboBox({"ID": "MergeTarget", "Weight": 1}),
-                                            ui.Button({"ID": "Merge", "Text": "Merge", "Weight": 0}),
-                                        ]),
-                                        ui.Label({"Text": "Merge moves all of the selected speaker's cues;\nthe speaker merged into keeps its name.",
-                                                  "WordWrap": True, "Weight": 0}),
+                                        ui.HGroup(
+                                            {"Weight": 0},
+                                            [
+                                                ui.Label({"Text": "Name:", "Weight": 0}),
+                                                ui.LineEdit({"ID": "SpeakerName", "Weight": 1}),
+                                                ui.Button({"ID": "Rename", "Text": "Rename", "Weight": 0}),
+                                            ],
+                                        ),
+                                        ui.HGroup(
+                                            {"Weight": 0},
+                                            [
+                                                ui.Label({"Text": "Merge into:", "Weight": 0}),
+                                                ui.ComboBox({"ID": "MergeTarget", "Weight": 1}),
+                                                ui.Button({"ID": "Merge", "Text": "Merge", "Weight": 0}),
+                                            ],
+                                        ),
+                                        ui.Label(
+                                            {
+                                                "Text": (
+                                                    "Merge moves all of the selected speaker's cues;\n"
+                                                    "the speaker merged into keeps its name."
+                                                ),
+                                                "WordWrap": True,
+                                                "Weight": 0,
+                                            }
+                                        ),
                                     ],
                                 ),
                                 ui.VGroup(
                                     {"Spacing": 6, "Weight": 0.65},
                                     [
-                                        ui.HGroup({"Weight": 0}, [
-                                            ui.Label({"Text": "Cues    Show:", "Weight": 0}),
-                                            ui.ComboBox({"ID": "Filter", "Weight": 1}),
-                                        ]),
-                                        ui.Tree({"ID": "CueTree", "SortingEnabled": False, "SelectionMode": "ExtendedSelection", "Weight": 1}),
-                                        ui.HGroup({"Weight": 0}, [
-                                            ui.Label({"Text": "Move selected to:", "Weight": 0}),
-                                            ui.ComboBox({"ID": "MoveTarget", "Weight": 1}),
-                                            ui.Button({"ID": "Move", "Text": "Move", "Weight": 0}),
-                                        ]),
+                                        ui.HGroup(
+                                            {"Weight": 0},
+                                            [
+                                                ui.Label({"Text": "Cues    Show:", "Weight": 0}),
+                                                ui.ComboBox({"ID": "Filter", "Weight": 1}),
+                                            ],
+                                        ),
+                                        ui.Tree(
+                                            {
+                                                "ID": "CueTree",
+                                                "SortingEnabled": False,
+                                                "SelectionMode": "ExtendedSelection",
+                                                "Weight": 1,
+                                            }
+                                        ),
+                                        ui.HGroup(
+                                            {"Weight": 0},
+                                            [
+                                                ui.Label({"Text": "Move selected to:", "Weight": 0}),
+                                                ui.ComboBox({"ID": "MoveTarget", "Weight": 1}),
+                                                ui.Button({"ID": "Move", "Text": "Move", "Weight": 0}),
+                                            ],
+                                        ),
                                     ],
                                 ),
                             ],
                         ),
-                        ui.HGroup({"Weight": 0}, [
-                            ui.Button({"ID": "Undo", "Text": "Undo", "Weight": 0}),
-                            ui.Label({"ID": "Status", "Text": "", "Weight": 1}),
-                            ui.Button({"ID": "Done", "Text": "Done", "Weight": 0}),
-                        ]),
+                        ui.HGroup(
+                            {"Weight": 0},
+                            [
+                                ui.Button({"ID": "Undo", "Text": "Undo", "Weight": 0}),
+                                ui.Label({"ID": "Status", "Text": "", "Weight": 1}),
+                                ui.Button({"ID": "Done", "Text": "Done", "Weight": 0}),
+                            ],
+                        ),
                     ],
                 )
             ],
@@ -378,14 +468,18 @@ class UIManagerBackend(Backend):
             def handler(_event=None):
                 action()
                 refresh()
+
             return handler
 
         window.On.SpeakerTree.ItemClicked = on_speaker_clicked
         window.On.Filter.CurrentIndexChanged = on_filter_changed
         window.On.Rename.Clicked = act(lambda: controller.rename(state["speaker"], str(items["SpeakerName"].Text)))
         window.On.Merge.Clicked = act(lambda: controller.merge(state["speaker"], choice("MergeTarget")))
-        window.On.Move.Clicked = act(lambda: controller.move(
-            [cue_index(_item_text(item)) for item in _selected_items(items["CueTree"])], choice("MoveTarget")))
+        window.On.Move.Clicked = act(
+            lambda: controller.move(
+                [cue_index(_item_text(item)) for item in _selected_items(items["CueTree"])], choice("MoveTarget")
+            )
+        )
         window.On.Undo.Clicked = act(controller.undo)
         window.On.Done.Clicked = lambda _event=None: disp.ExitLoop()
         window.On[WINDOW_ID_EDITOR].Close = lambda _event=None: disp.ExitLoop()
@@ -415,7 +509,7 @@ def _add_row(tree, values):
     tree.AddTopLevelItem(item)
 
 
-def _item_text(item, column: int = 0) -> "str | None":
+def _item_text(item, column: int = 0) -> str | None:
     if not item:
         return None
     try:

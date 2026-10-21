@@ -50,10 +50,10 @@ def normalize_hex_color(value) -> str:
     return "#" + digits.upper()
 
 
-def parse_hex_color(value) -> "tuple[float, float, float]":
+def parse_hex_color(value) -> tuple[float, float, float]:
     """``(red, green, blue)`` in Fusion's 0..1 range."""
     digits = normalize_hex_color(value)[1:]
-    return tuple(round(int(digits[i:i + 2], 16) / 255.0, 6) for i in (0, 2, 4))
+    return tuple(round(int(digits[i : i + 2], 16) / 255.0, 6) for i in (0, 2, 4))
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ class CueWord:
     end: float
 
 
-def tokenize_cue(text: str) -> "list[tuple[str, int, int]]":
+def tokenize_cue(text: str) -> list[tuple[str, int, int]]:
     """``(token, first, last)`` for each whitespace-separated token; ``last`` is inclusive."""
     return [(m.group(0), m.start(), m.end() - 1) for m in re.finditer(r"\S+", text)]
 
@@ -100,7 +100,7 @@ def _match_tokens(tokens, pool) -> list:
     return matched
 
 
-def _fill_gaps(matched, start: float, end: float) -> "list[tuple[float, float]]":
+def _fill_gaps(matched, start: float, end: float) -> list[tuple[float, float]]:
     """Times for every token: matched ones keep theirs, runs of unmatched ones share the gap evenly."""
     times = [None] * len(matched)
     index = 0
@@ -123,8 +123,9 @@ def _fill_gaps(matched, start: float, end: float) -> "list[tuple[float, float]]"
     return times
 
 
-def cue_words(text: str, start: float, end: float, words, speaker: "str | None" = None,
-              tolerance: float = 0.3) -> "list[CueWord]":
+def cue_words(
+    text: str, start: float, end: float, words, speaker: str | None = None, tolerance: float = 0.3
+) -> list[CueWord]:
     """The cue's tokens with their times, taken from the transcript's timed ``words``.
 
     The engine builds a cue's text by joining its words' stripped text, so the tokens are
@@ -161,7 +162,7 @@ def cue_words(text: str, start: float, end: float, words, speaker: "str | None" 
 class HighlightStep:
     record_frame: int  # absolute timeline frame
     duration: int  # frames, >= 1
-    word: "CueWord | None" = None  # the word lit during this step; None for a pause
+    word: CueWord | None = None  # the word lit during this step; None for a pause
 
     @property
     def end_frame(self) -> int:
@@ -172,8 +173,9 @@ def hold_frames(clock: TimelineClock, seconds: float = DEFAULT_HOLD_SECONDS) -> 
     return max(0, int(round(seconds * clock.fps)))
 
 
-def highlight_steps(record_frame: int, duration: int, words, clock: TimelineClock,
-                    origin_frame: "int | None" = None, hold: int = 0) -> "list[HighlightStep]":
+def highlight_steps(
+    record_frame: int, duration: int, words, clock: TimelineClock, origin_frame: int | None = None, hold: int = 0
+) -> list[HighlightStep]:
     """Cut a placed cue's frames ``[record_frame, record_frame + duration)`` into steps.
 
     The steps are contiguous and cover the cue exactly, so the caption never blinks. Each
@@ -224,11 +226,14 @@ def highlight_steps(record_frame: int, duration: int, words, clock: TimelineCloc
 # Character Level Styling in an exported comp
 
 
-def cls_entries(char_start: int, char_end: int, rgb) -> "list[tuple[int, int, int, float]]":
+def cls_entries(char_start: int, char_end: int, rgb) -> list[tuple[int, int, int, float]]:
     """The CLS ``Array`` entries that colour ``[char_start, char_end]`` (inclusive)."""
     red, green, blue = rgb
-    return [(CLS_RED, char_start, char_end, red), (CLS_GREEN, char_start, char_end, green),
-            (CLS_BLUE, char_start, char_end, blue)]
+    return [
+        (CLS_RED, char_start, char_end, red),
+        (CLS_GREEN, char_start, char_end, green),
+        (CLS_BLUE, char_start, char_end, blue),
+    ]
 
 
 def lua_string(text: str) -> str:
@@ -260,15 +265,17 @@ def _lua_number(value: float) -> str:
 
 def cls_tool_block(name: str, text: str, entries) -> str:
     """A ``StyledTextCLS`` tool shaped like the one Resolve saves for hand-applied styling."""
-    array = "".join("\t\t\t\t\t\t{ %d, %d, %d, Value = %s },\n" % (pid, first, last, _lua_number(value))
-                    for pid, first, last, value in entries)
+    array = "".join(
+        "\t\t\t\t\t\t{ %d, %d, %d, Value = %s },\n" % (pid, first, last, _lua_number(value))
+        for pid, first, last, value in entries
+    )
     return (
         "%s = StyledTextCLS {\n"
         "\t\t\tInputs = {\n"
         "\t\t\t\tCharacterLevelStyling = Input {\n"
         "\t\t\t\t\tValue = StyledText {\n"
         "\t\t\t\t\t\tArray = {\n%s\t\t\t\t\t\t},\n"
-        "\t\t\t\t\t\tValue = \"\"\n"
+        '\t\t\t\t\t\tValue = ""\n'
         "\t\t\t\t\t},\n"
         "\t\t\t\t},\n"
         "\t\t\t\tText = Input { Value = %s, },\n"
@@ -353,7 +360,7 @@ def _enclosing_open(code: str, position: int) -> int:
 def _find_entry(code: str, open_index: int, close_index: int, key: str):
     """``(key_start, value_start, value_end)`` of ``key = <value>`` directly inside the table."""
     for match in re.compile(r"(?<![\w.])%s\s*=\s*" % re.escape(key)).finditer(code, open_index + 1, close_index):
-        between = code[open_index + 1:match.start()]
+        between = code[open_index + 1 : match.start()]
         if between.count("{") != between.count("}"):
             continue
         value_start = match.end()
@@ -386,7 +393,9 @@ def add_highlight_to_comp(comp_text: str, text: str, entries, tool_name: str = H
     name, number = tool_name, 2
     while re.search(r"(?<![\w.])%s\s*=" % re.escape(name), code):
         name, number = "%s%d" % (tool_name, number), number + 1
-    link = 'StyledText = Input {\n\t\t\t\t\tSourceOp = %s,\n\t\t\t\t\tSource = "StyledText",\n\t\t\t\t}' % lua_string(name)
+    link = 'StyledText = Input {\n\t\t\t\t\tSourceOp = %s,\n\t\t\t\t\tSource = "StyledText",\n\t\t\t\t}' % lua_string(
+        name
+    )
 
     edits = []  # (start, end, replacement)
     inputs = _find_entry(code, tool_open, tool_close, "Inputs")
@@ -394,10 +403,12 @@ def add_highlight_to_comp(comp_text: str, text: str, entries, tool_name: str = H
         inputs_open = code.index("{", inputs[1])
         inputs_close = _matching_brace(code, inputs_open)
         styled = _find_entry(code, inputs_open, inputs_close, "StyledText")
-        if styled and re.search(r"\b(SourceOp|Expression)\b", code[styled[1]:styled[2]]):
-            source = re.search(r"SourceOp\s*=\s*\"([^\"]*)\"", comp_text[styled[1]:styled[2]])
-            raise HighlightUnsupported("the template's text is driven by %s" % (
-                "its own %s tool" % source.group(1) if source else "an expression"))
+        if styled and re.search(r"\b(SourceOp|Expression)\b", code[styled[1] : styled[2]]):
+            source = re.search(r"SourceOp\s*=\s*\"([^\"]*)\"", comp_text[styled[1] : styled[2]])
+            raise HighlightUnsupported(
+                "the template's text is driven by %s"
+                % ("its own %s tool" % source.group(1) if source else "an expression")
+            )
         if styled:
             edits.append((styled[0], styled[2], link))
         else:

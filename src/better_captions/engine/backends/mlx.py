@@ -56,7 +56,9 @@ def transcribe(
         for w in seg.get("words") or []:
             text = w["word"].strip()
             if text:
-                words.append(Word(text=text, start=float(w["start"]), end=float(w["end"]), probability=float(w["probability"])))
+                words.append(
+                    Word(text=text, start=float(w["start"]), end=float(w["end"]), probability=float(w["probability"]))
+                )
         if progress and duration > 0:
             progress(min(float(seg["end"]) / duration, 1.0))
     return result.get("language") or language or "", duration, words

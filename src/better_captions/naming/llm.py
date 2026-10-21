@@ -127,9 +127,7 @@ def parse_reply(text: str, speaker_ids: list[str]) -> dict[str, LLMName | None]:
 
     # Never give two speakers the same name: keep the most confident claim.
     by_name: dict[str, str] = {}
-    for sid, entry in sorted(
-        ((sid, e) for sid, e in result.items() if e), key=lambda item: -item[1].confidence
-    ):
+    for sid, entry in sorted(((sid, e) for sid, e in result.items() if e), key=lambda item: -item[1].confidence):
         key = entry.name.lower()
         if key in by_name:
             result[sid] = None

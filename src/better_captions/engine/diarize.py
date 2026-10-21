@@ -4,13 +4,12 @@ import math
 import os
 import shutil
 import tarfile
-import urllib.request
-from collections.abc import Hashable
+from collections.abc import Callable, Hashable
 from pathlib import Path, PurePosixPath
-from typing import Callable
 
 import numpy as np
 
+from better_captions.engine.download import download
 from better_captions.paths import models_dir
 from better_captions.schema import SpeakerTurn
 
@@ -128,7 +127,9 @@ def resample(x: np.ndarray, sr_in: int, sr_out: int, zeros: int = 8, chunk: int 
     for c0 in range(0, n_out, chunk):
         num = np.arange(c0, min(c0 + chunk, n_out), dtype=np.int64) * down
         base, phase = num // up, num % up
-        out[c0 : c0 + len(num)] = np.einsum("ij,ij->i", padded[base[:, None] + (offsets + half)[None, :]], kernels[phase])
+        out[c0 : c0 + len(num)] = np.einsum(
+            "ij,ij->i", padded[base[:, None] + (offsets + half)[None, :]], kernels[phase]
+        )
     return out
 
 
@@ -153,15 +154,15 @@ def sherpa_models(cache_dir: str | Path | None = None) -> tuple[Path, Path]:
 
 
 def _download(url: str, dest: Path) -> None:
+    """download(), but a failure to move the finished file into place is reported as a download error too."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".part")
     try:
-        with urllib.request.urlopen(url, timeout=60) as resp, open(tmp, "wb") as f:
-            shutil.copyfileobj(resp, f, 1 << 20)
-        os.replace(tmp, dest)
-    except Exception as e:
-        tmp.unlink(missing_ok=True)
-        raise RuntimeError(f"could not download {url} to {dest}: {e} (download it there by hand to work offline)") from e
+        download(url, dest)
+    except OSError as e:  # download() wraps fetch errors in RuntimeError; this is its final os.replace
+        dest.with_name(dest.name + ".part").unlink(missing_ok=True)
+        raise RuntimeError(
+            f"could not download {url} to {dest}: {e} (download it there by hand to work offline)"
+        ) from e
 
 
 def _extract_member(archive: Path, name: str, dest: Path) -> None:
@@ -232,7 +233,9 @@ def _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, prog
         raise RuntimeError("the pyannote backend needs pyannote.audio: pip install pyannote.audio") from e
     token = os.environ.get("HF_TOKEN")
     if not token:
-        raise RuntimeError(f"the pyannote backend needs a Hugging Face token in HF_TOKEN (with {PYANNOTE_PIPELINE} terms accepted)")
+        raise RuntimeError(
+            f"the pyannote backend needs a Hugging Face token in HF_TOKEN (with {PYANNOTE_PIPELINE} terms accepted)"
+        )
     try:
         pipeline = Pipeline.from_pretrained(PYANNOTE_PIPELINE, token=token)
     except TypeError:  # pyannote.audio < 4

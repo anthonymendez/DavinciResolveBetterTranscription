@@ -39,7 +39,10 @@ class BrokenKeyring(keyring.backend.KeyringBackend):
 
 def write_config(tmp_path, **fields):
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"engine": ["py", "-m", "better_captions.cli"], "naming_provider": "auto", **fields}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"engine": ["py", "-m", "better_captions.cli"], "naming_provider": "auto", **fields}),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -78,8 +81,12 @@ def test_missing_backend_raises_clear_error():
 
 def test_erroring_backend_raises_keychain_unavailable():
     keyring.set_keyring(BrokenKeyring())
-    for call in (lambda: secrets.get_key("openai"), lambda: secrets.set_key("openai", "k"), lambda: secrets.delete_key("openai")):
-        with pytest.raises(secrets.KeychainUnavailable, match="KeyringLocked|PasswordSetError"):
+    for call in (
+        lambda: secrets.get_key("openai"),
+        lambda: secrets.set_key("openai", "k"),
+        lambda: secrets.delete_key("openai"),
+    ):
+        with pytest.raises(secrets.KeychainUnavailable, match=r"KeyringLocked|PasswordSetError"):
             call()
 
 
@@ -117,7 +124,9 @@ def test_migrate_moves_keys_and_keeps_other_settings(tmp_path, fake_keyring):
 
 def test_migrate_keeps_existing_keychain_key_and_reads_bom_config(tmp_path):
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"engine": ["py"], "anthropic_api_key": "sk-old"}), encoding="utf-8-sig")  # PowerShell BOM
+    path.write_text(
+        json.dumps({"engine": ["py"], "anthropic_api_key": "sk-old"}), encoding="utf-8-sig"
+    )  # PowerShell BOM
     secrets.set_key("anthropic", "sk-new")
     assert secrets.migrate() == {"anthropic": "kept-existing"}
     assert secrets.get_key("anthropic") == "sk-new"

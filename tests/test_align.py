@@ -100,7 +100,14 @@ def test_group_splits_on_gap_over_max_gap():
 def test_group_splits_after_sentence_end():
     texts = ["Hello", "there.", "How", "are", "you?", "Great!", "Wow…", '"Really?"', "ok"]
     words = [W(t, i, i + 0.5, "SPEAKER_00") for i, t in enumerate(texts)]
-    assert [s.text for s in group_segments(words)] == ["Hello there.", "How are you?", "Great!", "Wow…", '"Really?"', "ok"]
+    assert [s.text for s in group_segments(words)] == [
+        "Hello there.",
+        "How are you?",
+        "Great!",
+        "Wow…",
+        '"Really?"',
+        "ok",
+    ]
 
 
 def test_group_does_not_split_on_abbreviation_or_decimal():

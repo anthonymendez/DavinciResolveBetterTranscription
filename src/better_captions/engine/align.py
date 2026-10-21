@@ -10,7 +10,22 @@ DEFAULT_SPEAKER = "SPEAKER_00"
 _SENTENCE_END = (".", "?", "!", "…", "。", "？", "！")
 _TRAILING_CLOSERS = "\"'”’)]}»"
 # Lower-cased words ending in "." that rarely end a sentence.
-_ABBREVIATIONS = {"mr.", "mrs.", "ms.", "dr.", "prof.", "st.", "jr.", "sr.", "vs.", "etc.", "e.g.", "i.e.", "a.m.", "p.m."}
+_ABBREVIATIONS = {
+    "mr.",
+    "mrs.",
+    "ms.",
+    "dr.",
+    "prof.",
+    "st.",
+    "jr.",
+    "sr.",
+    "vs.",
+    "etc.",
+    "e.g.",
+    "i.e.",
+    "a.m.",
+    "p.m.",
+}
 
 
 def assign_speakers(words: list[Word], turns: list[SpeakerTurn]) -> list[Word]:

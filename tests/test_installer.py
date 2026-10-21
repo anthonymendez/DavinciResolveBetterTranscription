@@ -80,9 +80,7 @@ def sandbox(tmp_path: Path, uv_dirs: dict[str, str], source: Path) -> dict[str, 
 
 
 def _run(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        ["bash", str(INSTALL / script)], env=env, capture_output=True, text=True, timeout=600
-    )
+    result = subprocess.run(["bash", str(INSTALL / script)], env=env, capture_output=True, text=True, timeout=600)
     assert result.returncode == 0, f"{script} failed:\n{result.stdout}\n{result.stderr}"
     return result
 
@@ -92,8 +90,14 @@ def _layout(env: dict[str, str]) -> tuple[Path, Path]:
     if sys.platform == "darwin":
         data = home / "Library" / "Application Support" / "BetterCaptions"
         utility = (
-            home / "Library" / "Application Support" / "Blackmagic Design" / "DaVinci Resolve"
-            / "Fusion" / "Scripts" / "Utility"
+            home
+            / "Library"
+            / "Application Support"
+            / "Blackmagic Design"
+            / "DaVinci Resolve"
+            / "Fusion"
+            / "Scripts"
+            / "Utility"
         )
     else:
         data = Path(env["XDG_DATA_HOME"]) / "BetterCaptions"
@@ -115,7 +119,9 @@ def _assert_installed(env: dict[str, str], source: Path) -> dict:
     assert config["gpu"] in ("cuda", "none")
     version = subprocess.run(
         [str(python), "-c", "import sys, better_captions; print(sys.version_info[:2])"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
     assert version == "(3, 12)"
     for name in _plugin_entries(source):
@@ -135,7 +141,8 @@ def test_ps1_parses(script: str) -> None:
         pytest.skip("pwsh not installed")
     check = (
         "$errs = $null; "
-        f"[System.Management.Automation.Language.Parser]::ParseFile('{INSTALL / script}', [ref]$null, [ref]$errs) | Out-Null; "
+        "[System.Management.Automation.Language.Parser]::"
+        f"ParseFile('{INSTALL / script}', [ref]$null, [ref]$errs) | Out-Null; "
         "if ($errs) { $errs | ForEach-Object { Write-Error $_.ToString() }; exit 1 }"
     )
     subprocess.run([pwsh, "-NoProfile", "-Command", check], check=True)
@@ -238,9 +245,20 @@ def _ensure_resolve_python(
     )
     run_env.update(env)
     return subprocess.run(
-        ["bash", "-c", 'source "$1"; ensure_resolve_python "$2" "$3"', "_",
-         str(INSTALL / "install.sh"), os_name, str(workdir)],
-        env=run_env, capture_output=True, text=True, timeout=60, start_new_session=True,
+        [
+            "bash",
+            "-c",
+            'source "$1"; ensure_resolve_python "$2" "$3"',
+            "_",
+            str(INSTALL / "install.sh"),
+            os_name,
+            str(workdir),
+        ],
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        start_new_session=True,
     )
 
 

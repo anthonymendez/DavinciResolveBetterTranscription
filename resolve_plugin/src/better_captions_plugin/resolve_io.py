@@ -43,11 +43,11 @@ class TrackResult:
     track_type: str
     track_index: int
     placed: int = 0
-    misplaced: "list[str]" = field(default_factory=list)  # human-readable notes
-    text_failures: "list[str]" = field(default_factory=list)
+    misplaced: list[str] = field(default_factory=list)  # human-readable notes
+    text_failures: list[str] = field(default_factory=list)
     highlighted: int = 0  # clips whose spoken word got the highlight colour
-    highlight_failures: "list[str]" = field(default_factory=list)
-    notes: "list[str]" = field(default_factory=list)
+    highlight_failures: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +93,9 @@ def timeline_clock(timeline, project=None) -> TimelineClock:
     drop_setting = _setting(timeline, "timelineDropFrameTimecode")
     if not drop_setting and project is not None:
         drop_setting = _setting(project, "timelineDropFrameTimecode")
-    return TimelineClock.from_settings(frame_rate, start_timecode=start_tc, start_frame=start_frame,
-                                       drop_frame_setting=drop_setting)
+    return TimelineClock.from_settings(
+        frame_rate, start_timecode=start_tc, start_frame=start_frame, drop_frame_setting=drop_setting
+    )
 
 
 def _setting(obj, key):
@@ -105,7 +106,7 @@ def _setting(obj, key):
     return value if value not in ("", None) else None
 
 
-def render_range(timeline, clock: TimelineClock) -> "tuple[int, int | None]":
+def render_range(timeline, clock: TimelineClock) -> tuple[int, int | None]:
     """``(start_frame, end_frame)`` of the in/out range if one is set, else ``(timeline start, None)``."""
     marks = None
     try:
@@ -122,7 +123,7 @@ def render_range(timeline, clock: TimelineClock) -> "tuple[int, int | None]":
     return clock.start_frame, None
 
 
-def existing_track_names(timeline, track_type: str) -> "list[str]":
+def existing_track_names(timeline, track_type: str) -> list[str]:
     names = []
     try:
         count = int(timeline.GetTrackCount(track_type))
@@ -140,8 +141,17 @@ def existing_track_names(timeline, track_type: str) -> "list[str]":
 # Audio render
 
 
-def render_audio(project, timeline, out_dir: str, start_frame: int, end_frame: "int | None",
-                 pump=None, should_cancel=None, timeout: float = 6 * 3600, sleep=time.sleep) -> str:
+def render_audio(
+    project,
+    timeline,
+    out_dir: str,
+    start_frame: int,
+    end_frame: int | None,
+    pump=None,
+    should_cancel=None,
+    timeout: float = 6 * 3600,
+    sleep=time.sleep,
+) -> str:
     """Render the timeline's audio (whole, or ``start_frame``..``end_frame``) as a WAV; return its path."""
     fmt, codec = pick_wav_format(project)
     previous_mode = None
@@ -213,7 +223,7 @@ def render_audio(project, timeline, out_dir: str, start_frame: int, end_frame: "
     return max(candidates, key=os.path.getmtime)
 
 
-def pick_wav_format(project) -> "tuple[str, str]":
+def pick_wav_format(project) -> tuple[str, str]:
     formats = project.GetRenderFormats() or {}
     fmt = None
     for key, ext in formats.items():
@@ -234,7 +244,7 @@ def pick_wav_format(project) -> "tuple[str, str]":
             codec = value
             break
     if codec is None and codecs:
-        codec = list(codecs.values())[0]
+        codec = next(iter(codecs.values()))
     if codec is None:
         raise ResolveError("no audio codec available for the %s render format" % fmt)
     return fmt, codec
@@ -247,15 +257,14 @@ def pick_wav_format(project) -> "tuple[str, str]":
 def iter_media_pool(folder, path=()):
     """Yield ``(item, bin_path)`` for every clip under ``folder`` (recursively, depth first)."""
     name = _name(folder)
-    here = path + (name,)
+    here = (*path, name)
     for clip in folder.GetClipList() or []:
         yield clip, "/".join(here)
     for sub in folder.GetSubFolderList() or []:
-        for pair in iter_media_pool(sub, here):
-            yield pair
+        yield from iter_media_pool(sub, here)
 
 
-def find_text_templates(media_pool) -> "list[Template]":
+def find_text_templates(media_pool) -> list[Template]:
     """Fusion titles / generators anywhere in the media pool: items without a file path.
 
     ``GetClipProperty("Type")`` is localised, so the type string is only used to exclude
@@ -277,10 +286,7 @@ def looks_like_title_template(item) -> bool:
     if file_path:
         return False
     kind = str(_clip_property(item, "Type") or "").lower()
-    for excluded in ("timeline", "compound", "multicam", "multi-cam", "stereo"):
-        if excluded in kind:
-            return False
-    return True
+    return all(excluded not in kind for excluded in ("timeline", "compound", "multicam", "multi-cam", "stereo"))
 
 
 def _clip_property(item, key):
@@ -328,7 +334,7 @@ def delete_track(timeline, track_type: str, index: int) -> bool:
 class HighlightStyle:
     """How to light the spoken word: its colour and where the comps are edited on disk."""
 
-    rgb: "tuple[float, float, float]"
+    rgb: tuple[float, float, float]
     work_dir: str  # the run's temp dir; one file per clip, removed after the import
     _count: int = 0
 
@@ -337,7 +343,9 @@ class HighlightStyle:
         return os.path.join(self.work_dir, "highlight-%d.comp" % self._count)
 
 
-def create_textplus_track(media_pool, timeline, plan: TrackPlan, highlight: "HighlightStyle | None" = None) -> TrackResult:
+def create_textplus_track(
+    media_pool, timeline, plan: TrackPlan, highlight: HighlightStyle | None = None
+) -> TrackResult:
     """A new video track named after the speaker with one Text+ clip per cue.
 
     The template (a MediaPoolItem) is appended once per cue with ``recordFrame``/``trackIndex``;
@@ -364,7 +372,7 @@ def create_textplus_track(media_pool, timeline, plan: TrackPlan, highlight: "Hig
     return _fill_textplus_track(media_pool, timeline, plan, item, None)
 
 
-def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight: "HighlightStyle | None") -> TrackResult:
+def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight: HighlightStyle | None) -> TrackResult:
     if highlight is None:
         clips = [(clip, None) for clip in plan.clips]
     else:
@@ -374,7 +382,9 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
                 clips.append((clip, None))
                 continue
             for step in clip.steps:
-                clips.append((replace(clip, record_frame=step.record_frame, duration=step.duration, steps=()), step.word))
+                clips.append(
+                    (replace(clip, record_frame=step.record_frame, duration=step.duration, steps=()), step.word)
+                )
     index = add_track(timeline, "video", plan.name)
     result = TrackResult(plan=plan, track_type="video", track_index=index)
     try:
@@ -391,7 +401,7 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
         ]
         appended = []
         for start in range(0, len(infos), 100):  # keep each call modest
-            batch = media_pool.AppendToTimeline(infos[start:start + 100]) or []
+            batch = media_pool.AppendToTimeline(infos[start : start + 100]) or []
             appended.extend(batch)
         if len(appended) != len(clips):
             appended = _items_by_start(timeline, "video", index)
@@ -453,11 +463,11 @@ def apply_word_highlight(timeline_item, text: str, word, style: HighlightStyle):
         try:
             exported = timeline_item.ExportFusionComp(path, 1)
         except Exception as exc:
-            raise HighlightUnsupported("Resolve could not export the clip's Fusion comp (%s)" % exc)
+            raise HighlightUnsupported("Resolve could not export the clip's Fusion comp (%s)" % exc) from exc
         if not exported or not os.path.isfile(path):
             raise HighlightUnsupported("Resolve did not export the clip's Fusion comp")
         # surrogateescape: bytes that aren't UTF-8 go back out unchanged.
-        with open(path, "r", encoding="utf-8", errors="surrogateescape", newline="") as handle:
+        with open(path, encoding="utf-8", errors="surrogateescape", newline="") as handle:
             comp_text = handle.read()
         entries = word_highlight.cls_entries(word.char_start, word.char_end, style.rgb)
         edited = word_highlight.add_highlight_to_comp(comp_text, text, entries)
@@ -466,12 +476,12 @@ def apply_word_highlight(timeline_item, text: str, word, style: HighlightStyle):
         try:
             comp = timeline_item.ImportFusionComp(path)
         except Exception as exc:
-            raise HighlightUnsupported("Resolve could not import the highlighted comp (%s)" % exc)
+            raise HighlightUnsupported("Resolve could not import the highlighted comp (%s)" % exc) from exc
         if not comp:
             raise HighlightUnsupported("Resolve did not import the highlighted comp")
         _activate_last_comp(timeline_item)
     except OSError as exc:
-        raise HighlightUnsupported("could not edit the comp file: %s" % exc)
+        raise HighlightUnsupported("could not edit the comp file: %s" % exc) from exc
     finally:
         try:
             os.remove(path)
@@ -522,7 +532,7 @@ def set_textplus_text(timeline_item, text: str):
     try:
         tool.SetInput("StyledText", text)
     except Exception as exc:
-        raise ResolveError("could not set StyledText: %s" % exc)
+        raise ResolveError("could not set StyledText: %s" % exc) from exc
 
 
 def create_subtitle_track(media_pool, timeline, plan: TrackPlan, origin_frame: int) -> TrackResult:
@@ -539,7 +549,7 @@ def create_subtitle_track(media_pool, timeline, plan: TrackPlan, origin_frame: i
     try:
         imported = media_pool.ImportMedia([plan.srt_path]) or []
     except Exception as exc:
-        raise SubtitlePlacementError("ImportMedia failed for %s: %s" % (plan.srt_path, exc))
+        raise SubtitlePlacementError("ImportMedia failed for %s: %s" % (plan.srt_path, exc)) from exc
     if not imported:
         raise SubtitlePlacementError("Resolve did not import %s into the media pool" % plan.srt_path)
     srt_item = imported[0]
@@ -570,7 +580,7 @@ def create_subtitle_track(media_pool, timeline, plan: TrackPlan, origin_frame: i
             pass
         if isinstance(exc, SubtitlePlacementError):
             raise
-        raise SubtitlePlacementError(str(exc))
+        raise SubtitlePlacementError(str(exc)) from exc
 
 
 def _items_by_start(timeline, track_type: str, index: int) -> list:

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from better_captions import cues as cues_mod
 from better_captions import naming
@@ -62,7 +62,9 @@ def _try_put(put: Callable, *args) -> None:
         print(f"better-captions: could not write cache entry: {e}", file=sys.stderr)
 
 
-def run(audio_path: str, out_dir: str | Path, options: RunOptions | None = None, emit: EventFn = json_lines_events) -> Transcript:
+def run(
+    audio_path: str, out_dir: str | Path, options: RunOptions | None = None, emit: EventFn = json_lines_events
+) -> Transcript:
     options = options or RunOptions()
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -76,14 +78,21 @@ def run(audio_path: str, out_dir: str | Path, options: RunOptions | None = None,
             pass  # unreadable audio: let the stages report the real error
 
     p = _stage_progress(emit, "transcribe")
-    words_key = store and cache.transcription_key(digest, model=options.model, language=options.language, backend=options.backend)
+    words_key = store and cache.transcription_key(
+        digest, model=options.model, language=options.language, backend=options.backend
+    )
     hit = store.get_words(words_key) if store else None
     if hit:
         language, duration, words = hit
         p(1.0, cached=True)
     else:
         language, duration, words = transcribe.transcribe(
-            audio_path, model=options.model, language=options.language, device=options.device, progress=p, backend=options.backend
+            audio_path,
+            model=options.model,
+            language=options.language,
+            device=options.device,
+            progress=p,
+            backend=options.backend,
         )
         if store:
             _try_put(store.put_words, words_key, language, duration, words)

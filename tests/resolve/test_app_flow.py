@@ -7,7 +7,6 @@ import pytest
 
 from better_captions_plugin import app
 from better_captions_plugin.ui import ReviewResult
-
 from tests.resolve.fake_engine import TRANSCRIPT
 from tests.resolve.fake_resolve import FakeMediaPoolItem, make_world
 from tests.resolve.fake_ui import FakeBackend, accept_all
@@ -27,7 +26,11 @@ def _run(resolve, backend, config, **kwargs):
 
 def _cue_frames(timeline, speaker_id, origin=None):
     origin = timeline.start_frame if origin is None else origin
-    return [(origin + int(round(c["start"] * timeline.fps)), "\n".join(c["lines"])) for c in TRANSCRIPT["cues"] if c["speaker"] == speaker_id]
+    return [
+        (origin + int(round(c["start"] * timeline.fps)), "\n".join(c["lines"]))
+        for c in TRANSCRIPT["cues"]
+        if c["speaker"] == speaker_id
+    ]
 
 
 def test_full_flow_subtitle_tracks_with_renamed_speakers(config):
@@ -44,14 +47,24 @@ def test_full_flow_subtitle_tracks_with_renamed_speakers(config):
     assert any("not json: model loaded" in line for line in view.lines)
     assert view.progress[-1] == 100
     # The engine was invoked per the contract with the rendered WAV and the user's settings.
-    assert resolve.project.render_settings["ExportAudio"] is True and resolve.project.render_settings["ExportVideo"] is False
+    assert (
+        resolve.project.render_settings["ExportAudio"] is True
+        and resolve.project.render_settings["ExportVideo"] is False
+    )
     engine_line = next(line for line in view.lines if line.startswith("Engine: "))
     assert "--model fake-model --naming heuristic" in engine_line and ".wav --out" in engine_line
     # The review dialog got the engine's name guess, cue counts, samples and the templates from all bins.
     request = backend.requests[0]
-    assert [(r.id, r.name, r.cue_count) for r in request.speakers] == [("SPEAKER_00", "Maria", 2), ("SPEAKER_01", "SPEAKER_01", 2)]
+    assert [(r.id, r.name, r.cue_count) for r in request.speakers] == [
+        ("SPEAKER_00", "Maria", 2),
+        ("SPEAKER_01", "SPEAKER_01", 2),
+    ]
     assert request.speakers[0].sample == "Hey Jordan,\nhow are you?"
-    assert request.templates == ["Plain Text+  (Master/Templates)", "Caption Style A  (Master/Templates/Lower Thirds)", "Caption Style B  (Master/Templates/Lower Thirds)"]
+    assert request.templates == [
+        "Plain Text+  (Master/Templates)",
+        "Caption Style A  (Master/Templates/Lower Thirds)",
+        "Caption Style B  (Master/Templates/Lower Thirds)",
+    ]
     assert request.timeline_name == "Timeline 1" and request.range_label == "whole timeline (from 01:00:00:00)"
     # One subtitle track per speaker, named after the (renamed) speaker, cues at the right frames.
     assert [t.name for t in tl.tracks["subtitle"]] == ["Maria", "Jordan"]
@@ -74,7 +87,10 @@ def test_full_flow_textplus_tracks_on_drop_frame_timeline_with_in_out_range(conf
     outcome = _run(resolve, backend, config)
 
     assert outcome.error is None, backend.errors
-    assert (resolve.project.render_settings["MarkIn"], resolve.project.render_settings["MarkOut"]) == (mark_in, mark_out)
+    assert (resolve.project.render_settings["MarkIn"], resolve.project.render_settings["MarkOut"]) == (
+        mark_in,
+        mark_out,
+    )
     assert backend.requests[0].range_label == "01:00:10;00 – 01:00:30;00"
     assert [t.name for t in tl.tracks["video"]] == ["Video 1", "Maria", "SPEAKER_01"]
     assert tl.GetTrackCount("subtitle") == 0

@@ -23,7 +23,7 @@ import tempfile
 from dataclasses import dataclass
 
 from better_captions import secrets
-from better_captions.naming.llm import CHARS_PER_TOKEN, SYSTEM_PROMPT, LLMName, NamingError, build_prompt, parse_reply
+from better_captions.naming.llm import SYSTEM_PROMPT, LLMName, NamingError, build_prompt, parse_reply
 from better_captions.schema import Segment, Speaker
 
 log = logging.getLogger(__name__)
@@ -86,7 +86,9 @@ def _is_program(path: str, platform: str) -> bool:
     return platform == "win32" or os.access(path, os.X_OK)
 
 
-def find_cli(cli: AgentCLI, options: dict | None = None, platform: str | None = None, environ=None, home: str | None = None) -> str | None:
+def find_cli(
+    cli: AgentCLI, options: dict | None = None, platform: str | None = None, environ=None, home: str | None = None
+) -> str | None:
     """The CLI's path: ``<key>_cli_path`` option/config, then PATH, then common install dirs; or None."""
     options = options or {}
     platform = platform or sys.platform
@@ -159,8 +161,12 @@ def unwrap_cmd_shim(path: str, which=shutil.which) -> tuple[list[str], dict[str,
         runner = expand(quoted[index - 1]) if index else ""
         if "%" in script or not os.path.isfile(script):
             continue
-        if (runner.lower().endswith(".exe") and "%" not in runner and os.path.basename(runner).lower() != "node.exe"
-                and os.path.isfile(runner)):
+        if (
+            runner.lower().endswith(".exe")
+            and "%" not in runner
+            and os.path.basename(runner).lower() != "node.exe"
+            and os.path.isfile(runner)
+        ):
             return [runner, script], {"ELECTRON_RUN_AS_NODE": "1"}
         node = os.path.join(base, "node.exe")
         if not os.path.isfile(node):
@@ -183,17 +189,29 @@ def _program(binary: str, platform: str) -> tuple[list[str], dict[str, str]]:
 def _argv_too_long(argv: list[str], platform: str, limit: int | None) -> bool:
     if platform == "win32":
         batch = argv[0].lower().endswith((".cmd", ".bat"))
-        return len(subprocess.list2cmdline(argv)) > (limit or (WINDOWS_BATCH_ARGV_LIMIT if batch else WINDOWS_ARGV_LIMIT))
+        return len(subprocess.list2cmdline(argv)) > (
+            limit or (WINDOWS_BATCH_ARGV_LIMIT if batch else WINDOWS_ARGV_LIMIT)
+        )
     return max(len(a.encode("utf-8")) for a in argv) > (limit or POSIX_ARG_LIMIT)
 
 
 def build_command(
-    cli: AgentCLI, prefix: list[str], speakers: list[Speaker], segments: list[Segment], options: dict,
-    platform: str | None = None, limit: int | None = None,
+    cli: AgentCLI,
+    prefix: list[str],
+    speakers: list[Speaker],
+    segments: list[Segment],
+    options: dict,
+    platform: str | None = None,
+    limit: int | None = None,
 ) -> list[str]:
     """The full argv, the transcript cut down until the command line fits the OS limit."""
     platform = platform or sys.platform
-    model = options.get(f"{cli.key}_cli_model") or options.get("model") or _setting({}, f"{cli.key}_cli_model") or cli.default_model
+    model = (
+        options.get(f"{cli.key}_cli_model")
+        or options.get("model")
+        or _setting({}, f"{cli.key}_cli_model")
+        or cli.default_model
+    )
     budget = min(int(options.get("token_budget") or DEFAULT_CLI_TOKEN_BUDGET), DEFAULT_CLI_TOKEN_BUDGET)
     while True:
         prompt = f"{SYSTEM_PROMPT}\n\n{build_prompt(speakers, segments, budget)}"
@@ -251,7 +269,9 @@ def reply_text(cli: AgentCLI, stdout: str) -> str:
     return result
 
 
-def run_cli(cli: AgentCLI, argv: list[str], extra_env: dict[str, str], timeout: float, platform: str | None = None) -> str:
+def run_cli(
+    cli: AgentCLI, argv: list[str], extra_env: dict[str, str], timeout: float, platform: str | None = None
+) -> str:
     """Run the CLI and return its stdout; NamingError on start failure, timeout or nonzero exit."""
     platform = platform or sys.platform
     env = dict(os.environ)
@@ -264,8 +284,16 @@ def run_cli(cli: AgentCLI, argv: list[str], extra_env: dict[str, str], timeout: 
     with tempfile.TemporaryDirectory(prefix="better-captions-naming-") as cwd:
         try:
             proc = subprocess.run(
-                argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=timeout, cwd=cwd, env=env, **kwargs,
+                argv,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                cwd=cwd,
+                env=env,
+                **kwargs,
             )
         except subprocess.TimeoutExpired as exc:
             raise NamingError(f"{cli.executable} timed out after {timeout:g} s") from exc
@@ -283,7 +311,12 @@ def ask(cli: AgentCLI, speakers: list[Speaker], segments: list[Segment], options
         raise NamingError(f"{cli.label} CLI ({cli.executable}) not found; set {cli.key}_cli_path in config.json")
     prefix, extra_env = _program(binary, sys.platform)
     argv = build_command(cli, prefix, speakers, segments, options)
-    timeout = float(options.get("naming_cli_timeout") or options.get("timeout") or _setting({}, "naming_cli_timeout") or DEFAULT_TIMEOUT)
+    timeout = float(
+        options.get("naming_cli_timeout")
+        or options.get("timeout")
+        or _setting({}, "naming_cli_timeout")
+        or DEFAULT_TIMEOUT
+    )
     stdout = run_cli(cli, argv, extra_env, timeout)
     return parse_reply(reply_text(cli, stdout), [s.id for s in speakers])
 

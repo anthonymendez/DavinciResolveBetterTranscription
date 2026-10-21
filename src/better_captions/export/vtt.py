@@ -5,8 +5,5 @@ from better_captions.schema import Cue
 
 
 def to_vtt(cues: list[Cue]) -> str:
-    blocks = [
-        f"{format_timestamp(cue.start, '.')} --> {format_timestamp(cue.end, '.')}\n{cue.text}\n"
-        for cue in cues
-    ]
+    blocks = [f"{format_timestamp(cue.start, '.')} --> {format_timestamp(cue.end, '.')}\n{cue.text}\n" for cue in cues]
     return "WEBVTT\n\n" + "\n".join(blocks)

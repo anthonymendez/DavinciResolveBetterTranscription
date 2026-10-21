@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from better_captions.engine import download
 from better_captions.engine.backends import whispercpp as wc
 
 # --- helpers -----------------------------------------------------------------------
@@ -55,7 +56,7 @@ def fake_downloads(monkeypatch):
             raise OSError(f"unexpected url {url}")
         return io.BytesIO(payloads[url])
 
-    monkeypatch.setattr(wc.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(download.urllib.request, "urlopen", urlopen)
     return NS(fetched=fetched, payloads=payloads)
 
 
@@ -94,8 +95,21 @@ def pin(monkeypatch, name, payload, platform="linux"):
 def test_parse_result_words_from_token_offsets():
     data = full_json(
         [
-            (0, 7940, [tok("[_BEG_]", 0, 0, p=0.8), tok(" And", 320, 400, p=0.6), tok(" so", 400, 520, p=1.0), tok("[_TT_397]", 7940, 7940, p=0.01)]),
-            (7940, 10760, [tok(" country", 10000, 10740, p=0.9), tok(".", 10740, 10760, p=0.5), tok("[_TT_538]", 10760, 10760)]),
+            (
+                0,
+                7940,
+                [
+                    tok("[_BEG_]", 0, 0, p=0.8),
+                    tok(" And", 320, 400, p=0.6),
+                    tok(" so", 400, 520, p=1.0),
+                    tok("[_TT_397]", 7940, 7940, p=0.01),
+                ],
+            ),
+            (
+                7940,
+                10760,
+                [tok(" country", 10000, 10740, p=0.9), tok(".", 10740, 10760, p=0.5), tok("[_TT_538]", 10760, 10760)],
+            ),
         ]
     )
     language, words, last_end = wc.parse_result(data)
@@ -109,7 +123,16 @@ def test_parse_result_words_from_token_offsets():
 
 
 def test_merge_sub_word_tokens_and_punctuation():
-    words = wc.merge_tokens([tok(" Hel", 0, 100, p=0.8), tok("lo", 100, 200, p=0.6), tok(",", 200, 210), tok(" wor", 300, 400), tok("ld", 400, 500), tok("!", 500, 510)])
+    words = wc.merge_tokens(
+        [
+            tok(" Hel", 0, 100, p=0.8),
+            tok("lo", 100, 200, p=0.6),
+            tok(",", 200, 210),
+            tok(" wor", 300, 400),
+            tok("ld", 400, 500),
+            tok("!", 500, 510),
+        ]
+    )
     assert [(w.text, w.start, w.end) for w in words] == [("Hello,", 0.0, 0.21), ("world!", 0.3, 0.51)]
     assert words[0].probability == pytest.approx((0.8 + 0.6 + 0.9) / 3)
 
@@ -151,7 +174,13 @@ def test_no_space_languages_split_every_token():
 def test_dtw_times_are_used_when_present():
     # t_dtw is in centiseconds and marks roughly where the token ends.
     words = wc.merge_tokens(
-        [tok(" And", 320, 400, dtw=76), tok(" so", 400, 520, dtw=106), tok(" ask", 3290, 3650, dtw=388), tok(" not", 4000, 4300, dtw=458), tok(".", 4300, 4310, dtw=458)]
+        [
+            tok(" And", 320, 400, dtw=76),
+            tok(" so", 400, 520, dtw=106),
+            tok(" ask", 3290, 3650, dtw=388),
+            tok(" not", 4000, 4300, dtw=458),
+            tok(".", 4300, 4310, dtw=458),
+        ]
     )
     assert [(w.text, w.start, w.end) for w in words] == [
         ("And", 0.32, 0.76),  # first word: whisper's own start estimate
@@ -189,7 +218,9 @@ def test_parse_progress_line(line, expected):
 
 def test_build_command(monkeypatch):
     monkeypatch.setattr(wc.os, "cpu_count", lambda: 32)
-    cmd = wc.build_command(Path("/b/whisper-cli"), Path("/m/ggml-small.bin"), "in.wav", None, "auto", Path("/t/out"), "small")
+    cmd = wc.build_command(
+        Path("/b/whisper-cli"), Path("/m/ggml-small.bin"), "in.wav", None, "auto", Path("/t/out"), "small"
+    )
     assert cmd == [
         str(Path("/b/whisper-cli")), "-m", str(Path("/m/ggml-small.bin")), "-f", "in.wav", "-l", "auto",
         "-ojf", "-of", str(Path("/t/out")), "-pp", "-np", "-t", "8", "-dtw", "small", "-nfa",
@@ -199,7 +230,10 @@ def test_build_command(monkeypatch):
     assert cmd[cmd.index("-l") + 1] == "en" and cmd[-2:] == ["-dev", "1"]
 
 
-@pytest.mark.parametrize("device,expected", [("cpu", ["-ng"]), ("auto", []), ("vulkan", []), ("gpu:2", ["-dev", "2"]), ("cuda:1", ["-dev", "1"])])
+@pytest.mark.parametrize(
+    "device,expected",
+    [("cpu", ["-ng"]), ("auto", []), ("vulkan", []), ("gpu:2", ["-dev", "2"]), ("cuda:1", ["-dev", "1"])],
+)
 def test_device_args(device, expected):
     assert wc.device_args(device) == expected
 
@@ -214,20 +248,32 @@ def test_unknown_device_rejected():
 
 @pytest.mark.parametrize(
     "model,expected",
-    [("large-v3-turbo", "ggml-large-v3-turbo.bin"), ("small.en", "ggml-small.en.bin"), ("large", "ggml-large-v3.bin"), ("turbo", "ggml-large-v3-turbo.bin"), ("medium-q5_0", "ggml-medium-q5_0.bin")],
+    [
+        ("large-v3-turbo", "ggml-large-v3-turbo.bin"),
+        ("small.en", "ggml-small.en.bin"),
+        ("large", "ggml-large-v3.bin"),
+        ("turbo", "ggml-large-v3-turbo.bin"),
+        ("medium-q5_0", "ggml-medium-q5_0.bin"),
+    ],
 )
 def test_ggml_model_name(model, expected):
     assert wc.ggml_model_name(model) == expected
 
 
 def test_unknown_model_rejected():
-    with pytest.raises(ValueError, match="unknown whisper.cpp model"):
+    with pytest.raises(ValueError, match=r"unknown whisper\.cpp model"):
         wc.ggml_model_name("distil-large-v3")
 
 
 @pytest.mark.parametrize(
     "model,preset",
-    [("large-v3-turbo", "large.v3.turbo"), ("large-v3-turbo-q8_0", "large.v3.turbo"), ("tiny.en", "tiny.en"), ("large", "large.v3"), ("/models/custom.bin", None)],
+    [
+        ("large-v3-turbo", "large.v3.turbo"),
+        ("large-v3-turbo-q8_0", "large.v3.turbo"),
+        ("tiny.en", "tiny.en"),
+        ("large", "large.v3"),
+        ("/models/custom.bin", None),
+    ],
 )
 def test_dtw_preset(model, preset):
     assert wc.dtw_preset(model) == preset
@@ -324,7 +370,7 @@ def test_checksum_mismatch_removes_download_and_raises(home, fake_downloads, mon
 
 
 def test_download_failure_leaves_no_partial_file(home, fake_downloads, monkeypatch):
-    asset = pin(monkeypatch, "whisper-linux.tar.gz", b"x")
+    pin(monkeypatch, "whisper-linux.tar.gz", b"x")
     with pytest.raises(RuntimeError, match="could not download"):
         wc.ensure_binary()
     assert not [p for p in (home / "bin").rglob("*") if p.is_file()]
@@ -344,7 +390,7 @@ def no_downloads(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("available() must never download")
 
-    monkeypatch.setattr(wc.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(download.urllib.request, "urlopen", boom)
 
 
 def gpu_setup(monkeypatch, devices, platform="linux", machine="x86_64"):
@@ -445,7 +491,10 @@ def fake_cli(home, monkeypatch, tmp_path):
     FakePopen.calls = []
     FakePopen.returncode = 0
     FakePopen.stderr_lines = PROGRESS_LINES
-    FakePopen.result = full_json([(0, 2000, [tok(" Hello", 0, 500, p=0.9), tok(" world", 600, 2000, p=0.8), tok(".", 2000, 2000, p=0.4)])], language="en")
+    FakePopen.result = full_json(
+        [(0, 2000, [tok(" Hello", 0, 500, p=0.9), tok(" world", 600, 2000, p=0.8), tok(".", 2000, 2000, p=0.4)])],
+        language="en",
+    )
     monkeypatch.setattr(wc.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(wc.subprocess, "run", lambda cmd, **k: NS(stdout="--dtw", stderr="", returncode=0))
     binary = home / "bin" / f"whispercpp-{wc.RELEASE}" / wc.BINARY_NAME
@@ -461,9 +510,14 @@ def fake_cli(home, monkeypatch, tmp_path):
 
 def test_transcribe_runs_cli_and_parses_output(fake_cli):
     seen = []
-    language, duration, words = wc.transcribe(fake_cli.audio, model="small", language=None, device="auto", progress=seen.append)
+    language, duration, words = wc.transcribe(
+        fake_cli.audio, model="small", language=None, device="auto", progress=seen.append
+    )
     assert language == "en" and duration == 3.0  # duration from the audio file, not the last segment
-    assert [(w.text, w.start, w.end, round(w.probability, 2), w.speaker) for w in words] == [("Hello", 0.0, 0.5, 0.9, None), ("world.", 0.6, 2.0, 0.6, None)]
+    assert [(w.text, w.start, w.end, round(w.probability, 2), w.speaker) for w in words] == [
+        ("Hello", 0.0, 0.5, 0.9, None),
+        ("world.", 0.6, 2.0, 0.6, None),
+    ]
     assert seen == [0.05, 0.5, 1.0]  # repeated 50% not re-reported
     (call,) = FakePopen.calls
     assert call.cmd[0] == str(fake_cli.binary)
@@ -480,7 +534,9 @@ def test_transcribe_cpu_language_and_duration_fallback(fake_cli, monkeypatch):
     monkeypatch.setattr(wc, "audio_duration", lambda path: None)
     FakePopen.stderr_lines = ["whisper_print_progress_callback: progress =  40%\n"]
     seen = []
-    language, duration, words = wc.transcribe(fake_cli.audio, model="small", language="de", device="cpu", progress=seen.append)
+    language, duration, _words = wc.transcribe(
+        fake_cli.audio, model="small", language="de", device="cpu", progress=seen.append
+    )
     assert language == "en" and duration == 2.0  # language from the JSON, duration = end of the last segment
     assert seen == [0.4, 1.0]  # completion reported even when whisper-cli stopped at 40%
     (call,) = FakePopen.calls
@@ -490,7 +546,9 @@ def test_transcribe_cpu_language_and_duration_fallback(fake_cli, monkeypatch):
 def test_dtw_can_be_disabled_by_env(fake_cli, monkeypatch):
     monkeypatch.setenv("BETTER_CAPTIONS_WHISPERCPP_DTW", "0")
     probed = []
-    monkeypatch.setattr(wc.subprocess, "run", lambda cmd, **k: probed.append(cmd) or NS(stdout="--dtw", stderr="", returncode=0))
+    monkeypatch.setattr(
+        wc.subprocess, "run", lambda cmd, **k: probed.append(cmd) or NS(stdout="--dtw", stderr="", returncode=0)
+    )
     wc.transcribe(fake_cli.audio, model="small")
     (call,) = FakePopen.calls
     assert "-dtw" not in call.cmd and "-nfa" not in call.cmd
@@ -508,7 +566,7 @@ def test_transcribe_without_dtw_support(fake_cli, monkeypatch):
 def test_transcribe_failure_raises_with_stderr(fake_cli):
     FakePopen.returncode = 3
     FakePopen.stderr_lines = ["error: failed to initialize whisper context\n"]
-    with pytest.raises(RuntimeError, match="exit 3.*failed to initialize whisper context"):
+    with pytest.raises(RuntimeError, match=r"exit 3.*failed to initialize whisper context"):
         wc.transcribe(fake_cli.audio, model="small")
 
 

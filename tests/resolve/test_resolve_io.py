@@ -8,8 +8,13 @@ from better_captions_plugin import resolve_io
 from better_captions_plugin.planning import ClipPlacement, TrackPlan
 from better_captions_plugin.resolve_io import ResolveError, SubtitlePlacementError
 from better_captions_plugin.timing import TimelineClock
-
-from tests.resolve.fake_resolve import FakeMediaPoolItem, FakeProject, FakeResolve, FakeTimeline, make_media_pool, make_world
+from tests.resolve.fake_resolve import (
+    FakeMediaPoolItem,
+    FakeProject,
+    FakeTimeline,
+    make_media_pool,
+    make_world,
+)
 
 
 def _srt(path, cues):
@@ -17,7 +22,9 @@ def _srt(path, cues):
         ms = int(round(s * 1000))
         return "%02d:%02d:%02d,%03d" % (ms // 3600000, ms // 60000 % 60, ms // 1000 % 60, ms % 1000)
 
-    path.write_text("\n".join("%d\n%s --> %s\n%s\n" % (i, ts(a), ts(b), t) for i, (a, b, t) in enumerate(cues, 1)), encoding="utf-8")
+    path.write_text(
+        "\n".join("%d\n%s --> %s\n%s\n" % (i, ts(a), ts(b), t) for i, (a, b, t) in enumerate(cues, 1)), encoding="utf-8"
+    )
     return str(path)
 
 
@@ -82,7 +89,15 @@ def test_render_audio_writes_wav_with_audio_only_settings(tmp_path):
     resolve = make_world()
     project = resolve.project
     pumps = []
-    wav = resolve_io.render_audio(project, project.timeline, str(tmp_path / "audio"), 86400, None, pump=lambda: pumps.append(1), sleep=lambda s: None)
+    wav = resolve_io.render_audio(
+        project,
+        project.timeline,
+        str(tmp_path / "audio"),
+        86400,
+        None,
+        pump=lambda: pumps.append(1),
+        sleep=lambda s: None,
+    )
     assert os.path.isfile(wav) and wav.endswith(".wav")
     assert pumps
     settings = project.jobs or {}
@@ -118,7 +133,9 @@ def test_render_audio_cancel(tmp_path):
     project = make_world().project
     project.polls_until_done = 50
     with pytest.raises(ResolveError, match="cancelled"):
-        resolve_io.render_audio(project, project.timeline, str(tmp_path), 0, None, should_cancel=lambda: True, sleep=lambda s: None)
+        resolve_io.render_audio(
+            project, project.timeline, str(tmp_path), 0, None, should_cancel=lambda: True, sleep=lambda s: None
+        )
     assert project.deleted_jobs == ["job-1"]
 
 
@@ -174,15 +191,28 @@ def test_create_textplus_track_places_clips_and_sets_text():
     resolve = make_world()
     tl, mp = resolve.project.timeline, resolve.project.media_pool
     template = resolve_io.find_text_templates(mp)[1]
-    clips = [ClipPlacement(86412, 36, "Hey Jordan,\nhow are you?", 0.5, 2.0), ClipPlacement(86496, 60, "Ready?", 4.0, 6.5)]
+    clips = [
+        ClipPlacement(86412, 36, "Hey Jordan,\nhow are you?", 0.5, 2.0),
+        ClipPlacement(86496, 60, "Ready?", 4.0, 6.5),
+    ]
     result = resolve_io.create_textplus_track(mp, tl, _plan("Maria", clips, template=template))
     assert (result.track_type, result.track_index, result.placed) == ("video", 2, 2)
     assert result.misplaced == [] and result.text_failures == []
     track = tl.track("video", "Maria")
-    assert [(i.GetStart(), i.GetDuration(), i.text()) for i in track.items] == [(86412, 36, "Hey Jordan,\nhow are you?"), (86496, 60, "Ready?")]
+    assert [(i.GetStart(), i.GetDuration(), i.text()) for i in track.items] == [
+        (86412, 36, "Hey Jordan,\nhow are you?"),
+        (86496, 60, "Ready?"),
+    ]
     assert tl.tracks["video"][0].name == "Video 1" and len(tl.tracks["video"][0].items) == 1
     info = mp.append_calls[0][0]
-    assert info == {"mediaPoolItem": template.item, "startFrame": 0, "endFrame": 35, "trackIndex": 2, "recordFrame": 86412, "mediaType": 1}
+    assert info == {
+        "mediaPoolItem": template.item,
+        "startFrame": 0,
+        "endFrame": 35,
+        "trackIndex": 2,
+        "recordFrame": 86412,
+        "mediaType": 1,
+    }
 
 
 def test_create_textplus_track_recovers_items_from_track_when_append_returns_nothing():
@@ -190,7 +220,9 @@ def test_create_textplus_track_recovers_items_from_track_when_append_returns_not
     tl, mp = resolve.project.timeline, resolve.project.media_pool
     mp.append_returns_items = False
     template = resolve_io.find_text_templates(mp)[0]
-    result = resolve_io.create_textplus_track(mp, tl, _plan("S", [ClipPlacement(86400, 10, "a", 0, 0.4)], template=template))
+    result = resolve_io.create_textplus_track(
+        mp, tl, _plan("S", [ClipPlacement(86400, 10, "a", 0, 0.4)], template=template)
+    )
     assert result.placed == 1 and tl.track("video", "S").items[0].text() == "a"
 
 
@@ -199,8 +231,10 @@ def test_create_textplus_track_reports_duration_mismatch():
     tl, mp = resolve.project.timeline, resolve.project.media_pool
     quirky = FakeMediaPoolItem("Fixed length", kind="Generator", placed_duration=120)
     mp.root.clips.append(quirky)
-    template = [t for t in resolve_io.find_text_templates(mp) if t.name == "Fixed length"][0]
-    result = resolve_io.create_textplus_track(mp, tl, _plan("S", [ClipPlacement(86400, 10, "a", 0, 0.4)], template=template))
+    template = next(t for t in resolve_io.find_text_templates(mp) if t.name == "Fixed length")
+    result = resolve_io.create_textplus_track(
+        mp, tl, _plan("S", [ClipPlacement(86400, 10, "a", 0, 0.4)], template=template)
+    )
     assert result.placed == 1 and result.misplaced == ["a: 120 frames instead of 10"]
 
 
@@ -209,7 +243,7 @@ def test_create_textplus_track_without_textplus_node_removes_track():
     tl, mp = resolve.project.timeline, resolve.project.media_pool
     bad = FakeMediaPoolItem("Not a title", kind="Generator", has_textplus=False)
     mp.root.clips.append(bad)
-    template = [t for t in resolve_io.find_text_templates(mp) if t.name == "Not a title"][0]
+    template = next(t for t in resolve_io.find_text_templates(mp) if t.name == "Not a title")
     with pytest.raises(ResolveError, match="no Text\\+ node"):
         resolve_io.create_textplus_track(mp, tl, _plan("S", [ClipPlacement(86400, 10, "a", 0, 0.4)], template=template))
     assert tl.GetTrackCount("video") == 1 and tl.deleted_tracks == [("video", 2, "S")]
@@ -238,7 +272,12 @@ def test_create_subtitle_track_imports_srt_and_verifies(tmp_path):
     resolve = make_world()
     tl, mp = resolve.project.timeline, resolve.project.media_pool
     srt = _srt(tmp_path / "SPEAKER_00.srt", [(0.5, 2.0, "Hey"), (4.0, 6.5, "Ready?")])
-    plan = _plan("Maria", [ClipPlacement(86412, 36, "Hey", 0.5, 2.0), ClipPlacement(86496, 60, "Ready?", 4.0, 6.5)], srt_path=srt, mode="subtitles")
+    plan = _plan(
+        "Maria",
+        [ClipPlacement(86412, 36, "Hey", 0.5, 2.0), ClipPlacement(86496, 60, "Ready?", 4.0, 6.5)],
+        srt_path=srt,
+        mode="subtitles",
+    )
     result = resolve_io.create_subtitle_track(mp, tl, plan, origin_frame=86400)
     assert (result.track_type, result.track_index, result.placed) == ("subtitle", 1, 2)
     track = tl.track("subtitle", "Maria")
@@ -263,9 +302,13 @@ def test_create_subtitle_track_missing_srt_or_import_failure(tmp_path):
     resolve = make_world()
     tl, mp = resolve.project.timeline, resolve.project.media_pool
     with pytest.raises(SubtitlePlacementError, match="no SRT"):
-        resolve_io.create_subtitle_track(mp, tl, _plan("M", [], srt_path=str(tmp_path / "missing.srt"), mode="subtitles"), 0)
+        resolve_io.create_subtitle_track(
+            mp, tl, _plan("M", [], srt_path=str(tmp_path / "missing.srt"), mode="subtitles"), 0
+        )
     srt = _srt(tmp_path / "a.srt", [(0, 1, "x")])
     mp.ImportMedia = lambda paths: []
     with pytest.raises(SubtitlePlacementError, match="did not import"):
-        resolve_io.create_subtitle_track(mp, tl, _plan("M", [ClipPlacement(0, 24, "x", 0, 1)], srt_path=srt, mode="subtitles"), 0)
+        resolve_io.create_subtitle_track(
+            mp, tl, _plan("M", [ClipPlacement(0, 24, "x", 0, 1)], srt_path=srt, mode="subtitles"), 0
+        )
     assert tl.GetTrackCount("subtitle") == 0

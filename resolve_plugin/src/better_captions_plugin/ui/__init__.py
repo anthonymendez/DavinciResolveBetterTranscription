@@ -29,7 +29,7 @@ def naming_index(provider) -> int:
     return values.index(provider) if provider in values else 0
 
 
-def checked_highlight_color(text: str) -> "str | None":
+def checked_highlight_color(text: str) -> str | None:
     """The colour typed in the review dialog as ``#RRGGBB``, or None when it isn't one."""
     try:
         return normalize_hex_color(text)
@@ -43,13 +43,13 @@ class SpeakerRow:
     name: str  # suggested name (engine's guess or the id)
     cue_count: int
     sample: str  # a short example of what they say
-    source: "str | None" = None  # "heuristic", "llm", ...
+    source: str | None = None  # "heuristic", "llm", ...
 
 
 @dataclass
 class ReviewRequest:
-    speakers: "list[SpeakerRow]"
-    templates: "list[str]"  # labels, in order; indexes are what ReviewResult refers to
+    speakers: list[SpeakerRow]
+    templates: list[str]  # labels, in order; indexes are what ReviewResult refers to
     timeline_name: str = ""
     range_label: str = ""
     allow_subtitles: bool = True
@@ -67,20 +67,23 @@ class ReviewRequest:
     naming_provider: str = "auto"
 
 
-def speaker_rows(editor) -> "list[SpeakerRow]":
+def speaker_rows(editor) -> list[SpeakerRow]:
     """Review rows for the editor's current speakers."""
-    return [SpeakerRow(id=s.id, name=s.name, cue_count=s.cue_count, sample=s.sample, source=s.source) for s in editor.speakers()]
+    return [
+        SpeakerRow(id=s.id, name=s.name, cue_count=s.cue_count, sample=s.sample, source=s.source)
+        for s in editor.speakers()
+    ]
 
 
 @dataclass
 class ReviewResult:
-    names: "dict[str, str]" = field(default_factory=dict)  # speaker id -> name
+    names: dict[str, str] = field(default_factory=dict)  # speaker id -> name
     subtitles: bool = True
     textplus: bool = False
-    template_index: "dict[str, int]" = field(default_factory=dict)  # speaker id -> index into templates
+    template_index: dict[str, int] = field(default_factory=dict)  # speaker id -> index into templates
     highlight_words: bool = False
     highlight_color: str = DEFAULT_HIGHLIGHT_COLOR  # "#RRGGBB"
-    naming_provider: "str | None" = None  # a NAMING_CHOICES value; None leaves config.json's as is
+    naming_provider: str | None = None  # a NAMING_CHOICES value; None leaves config.json's as is
 
 
 class ProgressView:
@@ -89,7 +92,7 @@ class ProgressView:
     def set_status(self, text: str):
         raise NotImplementedError
 
-    def set_progress(self, pct: "float | None"):
+    def set_progress(self, pct: float | None):
         raise NotImplementedError
 
     def log(self, line: str):
@@ -112,7 +115,7 @@ class Backend:
     def progress(self, title: str) -> ProgressView:
         raise NotImplementedError
 
-    def review(self, request: ReviewRequest) -> "ReviewResult | None":
+    def review(self, request: ReviewRequest) -> ReviewResult | None:
         """Return None when the user cancels."""
         raise NotImplementedError
 
@@ -126,7 +129,9 @@ class Backend:
         pass
 
 
-def choose_backend(resolve=None, fusion=None, bmd=None, preference: str = "auto", studio: "bool | None" = None) -> Backend:
+def choose_backend(
+    resolve=None, fusion=None, bmd=None, preference: str = "auto", studio: bool | None = None
+) -> Backend:
     """``preference``: "auto" (UIManager on Studio, tkinter otherwise), "uimanager" or "tk"."""
     preference = (preference or "auto").lower()
     if studio is None:
@@ -143,7 +148,7 @@ def choose_backend(resolve=None, fusion=None, bmd=None, preference: str = "auto"
             return UIManagerBackend(fusion, bmd)
         except Exception as exc:
             if preference != "auto":
-                raise RuntimeError("UIManager UI unavailable: %s" % exc)
+                raise RuntimeError("UIManager UI unavailable: %s" % exc) from exc
     from better_captions_plugin.ui.tk_ui import TkBackend
 
     return TkBackend()

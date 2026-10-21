@@ -25,8 +25,20 @@ class FakeWhisperModel:
     def transcribe(self, audio, **kwargs):
         self.audio, self.transcribe_kwargs = audio, kwargs
         segments = [
-            NS(end=2.0, words=[NS(word=" Hello", start=0.0, end=0.5, probability=0.9), NS(word=" world.", start=0.6, end=2.0, probability=0.8)]),
-            NS(end=5.0, words=[NS(word=" ", start=2.5, end=2.6, probability=0.1), NS(word=" Bye", start=4.0, end=5.0, probability=0.7)]),
+            NS(
+                end=2.0,
+                words=[
+                    NS(word=" Hello", start=0.0, end=0.5, probability=0.9),
+                    NS(word=" world.", start=0.6, end=2.0, probability=0.8),
+                ],
+            ),
+            NS(
+                end=5.0,
+                words=[
+                    NS(word=" ", start=2.5, end=2.6, probability=0.1),
+                    NS(word=" Bye", start=4.0, end=5.0, probability=0.7),
+                ],
+            ),
             NS(end=10.5, words=None),
         ]
         return (s for s in segments), NS(language="en", duration=10.0)

@@ -22,9 +22,9 @@ def _srt_seconds(text: str) -> float:
     return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
 
 
-def parse_srt(path: str) -> "list[tuple[float, float, str]]":
+def parse_srt(path: str) -> list[tuple[float, float, str]]:
     cues = []
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         blocks = re.split(r"\n\s*\n", handle.read().strip())
     for block in blocks:
         lines = block.strip().splitlines()
@@ -85,25 +85,31 @@ class FakeComp:
         """What ExportFusionComp writes, shaped like a Resolve 21 Text+ title's comp."""
         tool = self.FindToolByID("TextPlus")
         if tool is None:
-            body = "\t\tBackground1 = Background {\n\t\t\tInputs = {\n\t\t\t\tWidth = Input { Value = 1920, },\n\t\t\t},\n\t\t},\n"
+            body = (
+                "\t\tBackground1 = Background {\n\t\t\tInputs = {\n"
+                "\t\t\t\tWidth = Input { Value = 1920, },\n\t\t\t},\n\t\t},\n"
+            )
         else:
             text = tool.GetInput("StyledText") or ""
             follower = ""
             if self.styled_text_source:
-                styled = 'StyledText = Input {\n\t\t\t\t\tSourceOp = "%s",\n\t\t\t\t\tSource = "StyledText",\n\t\t\t\t},' % self.styled_text_source
-                follower = ("\t\t%s = StyledTextFollower {\n\t\t\tInputs = {\n\t\t\t\tText = Input { Value = %s, },\n"
-                            "\t\t\t},\n\t\t},\n" % (self.styled_text_source, _lua_quote(text)))
+                styled = (
+                    'StyledText = Input {\n\t\t\t\t\tSourceOp = "%s",\n\t\t\t\t\tSource = "StyledText",\n\t\t\t\t},'
+                    % self.styled_text_source
+                )
+                follower = (
+                    "\t\t%s = StyledTextFollower {\n\t\t\tInputs = {\n\t\t\t\tText = Input { Value = %s, },\n"
+                    "\t\t\t},\n\t\t},\n" % (self.styled_text_source, _lua_quote(text))
+                )
             else:
                 styled = "StyledText = Input { Value = %s, }," % _lua_quote(text)
             body = (
-                follower
-                + "\t\t%s = TextPlus {\n" % tool.name
-                + "\t\t\tInputs = {\n"
-                "\t\t\t\tGlobalOut = Input { Value = %d, },\n" % (duration - 1)
+                follower + "\t\t%s = TextPlus {\n" % tool.name + "\t\t\tInputs = {\n"
+                "\t\t\t\tGlobalOut = Input { Value = %d, },\n"
+                % (duration - 1)
                 + "\t\t\t\tWidth = Input { Value = 1920, },\n"
-                "\t\t\t\t%s\n" % styled
-                + "\t\t\t\tFont = Input { Value = \"Open Sans\", },\n"
-                "\t\t\t\tStyle = Input { Value = \"Bold\", },\n"
+                "\t\t\t\t%s\n" % styled + '\t\t\t\tFont = Input { Value = "Open Sans", },\n'
+                '\t\t\t\tStyle = Input { Value = "Bold", },\n'
                 "\t\t\t\tRed1 = Input { Value = 0.95, },\n"
                 "\t\t\t},\n"
                 "\t\t\tViewInfo = OperatorInfo { Pos = { 220, 49.5 } },\n"
@@ -111,8 +117,7 @@ class FakeComp:
                 "\t\tMediaOut1 = Saver {\n"
                 "\t\t\tInputs = {\n"
                 "\t\t\t\tInput = Input {\n"
-                "\t\t\t\t\tSourceOp = \"%s\",\n" % tool.name
-                + "\t\t\t\t\tSource = \"Output\",\n"
+                '\t\t\t\t\tSourceOp = "%s",\n' % tool.name + '\t\t\t\t\tSource = "Output",\n'
                 "\t\t\t\t}\n"
                 "\t\t\t},\n"
                 "\t\t},\n"
@@ -120,17 +125,15 @@ class FakeComp:
         return (
             "Composition {\n"
             "\tCurrentTime = 0,\n"
-            "\tRenderRange = { 0, %d },\n" % (duration - 1)
-            + "\tCustomData = {\n\t\tTEMPLATE_ID = \"Text+\"\n\t},\n"
-            "\tTools = ordered() {\n%s\t},\n" % body
-            + "\tPrefs = {\n\t\tComp = {\n\t\t\tPaths = {\n\t\t\t\tMap = {\n"
-            "\t\t\t\t\t[\"ResolveCaches:\"] = \"C:\\\\Cache {v2} = TextPlus {\",\n"  # braces inside a string
+            "\tRenderRange = { 0, %d },\n" % (duration - 1) + '\tCustomData = {\n\t\tTEMPLATE_ID = "Text+"\n\t},\n'
+            "\tTools = ordered() {\n%s\t},\n" % body + "\tPrefs = {\n\t\tComp = {\n\t\t\tPaths = {\n\t\t\t\tMap = {\n"
+            '\t\t\t\t\t["ResolveCaches:"] = "C:\\\\Cache {v2} = TextPlus {",\n'  # braces inside a string
             "\t\t\t\t},\n\t\t\t},\n\t\t}\n\t},\n"
             "}\n"
         )
 
 
-def parse_imported_comp(text: str) -> "FakeComp | None":
+def parse_imported_comp(text: str) -> FakeComp | None:
     """What ImportFusionComp makes of a comp file: None unless it is well formed and its Text+ tool's
     StyledText comes from a StyledTextCLS tool (the only edit the plugin makes)."""
     code = re.sub(_LUA_STRING, '""', text)
@@ -143,13 +146,15 @@ def parse_imported_comp(text: str) -> "FakeComp | None":
     cls = re.search(r"(?<![\w])%s = StyledTextCLS \{" % link.group(1), text)
     if not cls:
         return None
-    block = text[cls.start():]
+    block = text[cls.start() :]
     text_value = re.search(r"(?<![\w])Text = Input \{ Value = %s, \}" % _LUA_STRING, block)
     array = re.search(r"Array = \{(.*?)\n\s*\},", block, re.S)
     if not text_value or not array:
         return None
-    entries = [(int(a), int(b), int(c), float(v)) for a, b, c, v in
-               re.findall(r"\{ (\d+), (\d+), (\d+), Value = ([\d.]+) \}", array.group(1))]
+    entries = [
+        (int(a), int(b), int(c), float(v))
+        for a, b, c, v in re.findall(r"\{ (\d+), (\d+), (\d+), Value = ([\d.]+) \}", array.group(1))
+    ]
     shown = _lua_unquote(text_value.group(1))
     comp = FakeComp([FakeTool("TextPlus", tool.group(1))])
     comp.tools[0].SetInput("StyledText", shown)
@@ -216,7 +221,7 @@ class FakeTimelineItem:
     def ImportFusionComp(self, path):
         if self.import_fails or not os.path.isfile(path):
             return None
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             comp = parse_imported_comp(handle.read())
         if comp is None:
             return None
@@ -234,7 +239,7 @@ class FakeTimelineItem:
 
     def text(self):
         """Test helper: the StyledText of the current comp's Text+ node."""
-        for comp in self.comps[self.active:] + self.comps[:self.active]:
+        for comp in self.comps[self.active :] + self.comps[: self.active]:
             tool = comp.FindToolByID("TextPlus")
             if tool:
                 return tool.GetInput("StyledText")
@@ -246,8 +251,16 @@ class FakeTimelineItem:
 
 
 class FakeMediaPoolItem:
-    def __init__(self, name: str, kind: str = "Video + Audio", file_path: "str | None" = None,
-                 has_textplus: bool = True, srt_cues=None, placed_duration=None, styled_text_source=None):
+    def __init__(
+        self,
+        name: str,
+        kind: str = "Video + Audio",
+        file_path: str | None = None,
+        has_textplus: bool = True,
+        srt_cues=None,
+        placed_duration=None,
+        styled_text_source=None,
+    ):
         self.name = name
         self.props = {"Clip Name": name, "Type": kind, "File Path": "" if file_path is None else file_path}
         self.has_textplus = has_textplus
@@ -286,12 +299,19 @@ class FakeFolder:
 @dataclass
 class FakeTrack:
     name: str
-    items: "list[FakeTimelineItem]" = field(default_factory=list)
+    items: list[FakeTimelineItem] = field(default_factory=list)
 
 
 class FakeTimeline:
-    def __init__(self, name="Timeline 1", frame_rate="24", start_timecode="01:00:00:00", drop_frame=False,
-                 mark_in_out=None, has_mark_in_out_api=True):
+    def __init__(
+        self,
+        name="Timeline 1",
+        frame_rate="24",
+        start_timecode="01:00:00:00",
+        drop_frame=False,
+        mark_in_out=None,
+        has_mark_in_out_api=True,
+    ):
         self.name = name
         self.settings = {"timelineFrameRate": frame_rate, "timelineDropFrameTimecode": "1" if drop_frame else "0"}
         fps = float(str(frame_rate).replace("DF", "").strip())
@@ -369,7 +389,7 @@ class FakeTimeline:
             return []
         return list(self.tracks[track_type][index - 1].items)
 
-    def track(self, track_type, name) -> "FakeTrack | None":
+    def track(self, track_type, name) -> FakeTrack | None:
         return next((t for t in self.tracks[track_type] if t.name == name), None)
 
     def _video_content_end(self):
@@ -381,7 +401,7 @@ class FakeTimeline:
 
 
 class FakeMediaPool:
-    def __init__(self, timeline: FakeTimeline, root: "FakeFolder | None" = None):
+    def __init__(self, timeline: FakeTimeline, root: FakeFolder | None = None):
         self.timeline = timeline
         self.root = root or FakeFolder("Master")
         self.imported = []
@@ -401,7 +421,9 @@ class FakeMediaPool:
             if not os.path.isfile(path):
                 continue
             if path.lower().endswith(".srt"):
-                item = FakeMediaPoolItem(os.path.basename(path), kind="Subtitle", file_path=path, srt_cues=parse_srt(path))
+                item = FakeMediaPoolItem(
+                    os.path.basename(path), kind="Subtitle", file_path=path, srt_cues=parse_srt(path)
+                )
             else:
                 item = FakeMediaPoolItem(os.path.basename(path), file_path=path)
             self.root.clips.append(item)
@@ -460,8 +482,12 @@ class FakeMediaPool:
         if item.placed_duration is not None:
             duration = item.placed_duration
         record = int(info.get("recordFrame", track.items[-1].GetEnd() if track.items else timeline.start_frame))
-        comps = [FakeComp([FakeTool("TextPlus", "Template")] if item.has_textplus else [FakeTool("Background", "Background1")],
-                          styled_text_source=item.styled_text_source)]
+        comps = [
+            FakeComp(
+                [FakeTool("TextPlus", "Template")] if item.has_textplus else [FakeTool("Background", "Background1")],
+                styled_text_source=item.styled_text_source,
+            )
+        ]
         clip = FakeTimelineItem(item.name, record, duration, comps=comps, media_pool_item=item)
         track.items.append(clip)
         track.items.sort(key=lambda c: c.start)
@@ -469,7 +495,7 @@ class FakeMediaPool:
 
 
 class FakeProject:
-    def __init__(self, timeline: FakeTimeline, media_pool: "FakeMediaPool | None" = None, name="Project"):
+    def __init__(self, timeline: FakeTimeline, media_pool: FakeMediaPool | None = None, name="Project"):
         self.name = name
         self.timeline = timeline
         self.media_pool = media_pool or FakeMediaPool(timeline)
@@ -595,23 +621,38 @@ class FakeResolve:
 
 def make_media_pool(timeline: FakeTimeline) -> FakeMediaPool:
     """Master/{footage.mov, Timeline 1} + Master/Templates/Lower Thirds/{Caption Style A, Caption Style B}"""
-    lower_thirds = FakeFolder("Lower Thirds", clips=[
-        FakeMediaPoolItem("Caption Style A", kind="Generator"),
-        FakeMediaPoolItem("Caption Style B", kind="Generator"),
-    ])
-    templates = FakeFolder("Templates", subfolders=[lower_thirds], clips=[FakeMediaPoolItem("Plain Text+", kind="Generator")])
-    root = FakeFolder("Master", clips=[
-        FakeMediaPoolItem("footage.mov", file_path="/media/footage.mov"),
-        FakeMediaPoolItem("Timeline 1", kind="Timeline"),
-    ], subfolders=[templates])
+    lower_thirds = FakeFolder(
+        "Lower Thirds",
+        clips=[
+            FakeMediaPoolItem("Caption Style A", kind="Generator"),
+            FakeMediaPoolItem("Caption Style B", kind="Generator"),
+        ],
+    )
+    templates = FakeFolder(
+        "Templates", subfolders=[lower_thirds], clips=[FakeMediaPoolItem("Plain Text+", kind="Generator")]
+    )
+    root = FakeFolder(
+        "Master",
+        clips=[
+            FakeMediaPoolItem("footage.mov", file_path="/media/footage.mov"),
+            FakeMediaPoolItem("Timeline 1", kind="Timeline"),
+        ],
+        subfolders=[templates],
+    )
     return FakeMediaPool(timeline, root)
 
 
-def make_world(frame_rate="24", start_timecode="01:00:00:00", drop_frame=False, product="DaVinci Resolve", **timeline_kwargs):
-    timeline = FakeTimeline(frame_rate=frame_rate, start_timecode=start_timecode, drop_frame=drop_frame, **timeline_kwargs)
+def make_world(
+    frame_rate="24", start_timecode="01:00:00:00", drop_frame=False, product="DaVinci Resolve", **timeline_kwargs
+):
+    timeline = FakeTimeline(
+        frame_rate=frame_rate, start_timecode=start_timecode, drop_frame=drop_frame, **timeline_kwargs
+    )
     # Some existing content on Video 1 so "never modify existing tracks" is observable.
     footage = FakeMediaPoolItem("footage.mov", file_path="/media/footage.mov")
-    timeline.tracks["video"][0].items.append(FakeTimelineItem("footage.mov", timeline.start_frame, int(timeline.fps * 60), media_pool_item=footage))
+    timeline.tracks["video"][0].items.append(
+        FakeTimelineItem("footage.mov", timeline.start_frame, int(timeline.fps * 60), media_pool_item=footage)
+    )
     media_pool = make_media_pool(timeline)
     project = FakeProject(timeline, media_pool)
     return FakeResolve(project, product=product)

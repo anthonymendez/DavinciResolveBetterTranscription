@@ -14,7 +14,6 @@ from better_captions import naming, secrets
 from better_captions.naming import agent_cli, llm
 from better_captions.naming.agent_cli import ANTIGRAVITY, CLAUDE
 from better_captions.schema import Segment, Speaker, Transcript
-
 from tests.test_naming import DIALOGUE, LLM_REPLY, FakeAnthropic, FakeOpenAI, make_transcript, names
 
 
@@ -107,7 +106,9 @@ def test_antigravity_cli_command_line_and_reply(clis, monkeypatch):
 
 def test_model_and_timeout_options(clis, monkeypatch):
     run = fake_run(monkeypatch, stdout=AGY_OUT)
-    naming.name_speakers(DIALOGUE, provider="antigravity-cli", antigravity_cli_model="gemini-3-pro", naming_cli_timeout=30)
+    naming.name_speakers(
+        DIALOGUE, provider="antigravity-cli", antigravity_cli_model="gemini-3-pro", naming_cli_timeout=30
+    )
     argv, kwargs = run.calls[-1]
     assert argv[-2:] == ["--model", "gemini-3-pro"] and kwargs["timeout"] == 30
 
@@ -165,7 +166,11 @@ def test_reply_text_rejects_bad_output(cli, stdout):
         ("claude-cli", {"stdout": "<html>"}, "not JSON"),
         ("claude-cli", {"error": FileNotFoundError("gone")}, "could not start"),
         ("antigravity-cli", {"stdout": json.dumps({"status": "FAILED", "error": "not signed in"})}, "not signed in"),
-        ("antigravity-cli", {"stdout": json.dumps({"status": "SUCCESS", "response": "Maria and Jordan"})}, "no JSON object"),
+        (
+            "antigravity-cli",
+            {"stdout": json.dumps({"status": "SUCCESS", "response": "Maria and Jordan"})},
+            "no JSON object",
+        ),
         ("antigravity-cli", {"error": subprocess.TimeoutExpired(["agy"], 120)}, "agy timed out"),
     ],
 )
@@ -176,7 +181,9 @@ def test_failures_fall_back_to_heuristic(clis, monkeypatch, caplog, provider, ru
     assert run.calls
     assert names(result) == {"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"}
     assert {s.name_source for s in result} == {"heuristic"}
-    assert f"{provider} speaker naming failed" in caplog.text and "NamingError" in caplog.text and message in caplog.text
+    assert (
+        f"{provider} speaker naming failed" in caplog.text and "NamingError" in caplog.text and message in caplog.text
+    )
 
 
 def test_missing_cli_falls_back_to_heuristic(monkeypatch, tmp_path, caplog):
@@ -209,22 +216,31 @@ def test_discovery_order_option_config_path_then_install_dirs(tmp_path, caplog):
     assert find({"claude_cli_path": option}) == option
     assert find() == configured
     write_config()
-    assert find() == on_path
+    # On Windows, shutil.which returns the PATHEXT casing (claude.EXE).
+    assert os.path.normcase(find()) == os.path.normcase(on_path)
     assert find(environ={"PATH": "/usr/bin/nothing-here"}) == local_bin  # Resolve's minimal PATH
     os.remove(local_bin)
     assert find(environ={"PATH": ""}) == claude_local
     os.remove(claude_local)
-    assert find(environ={"PATH": ""}) is None or find(environ={"PATH": ""}) in ("/opt/homebrew/bin/claude", "/usr/local/bin/claude")
+    assert find(environ={"PATH": ""}) is None or find(environ={"PATH": ""}) in (
+        "/opt/homebrew/bin/claude",
+        "/usr/local/bin/claude",
+    )
 
     # A configured path that isn't there is reported and skipped.
     with caplog.at_level(logging.WARNING):
-        assert find({"claude_cli_path": str(tmp_path / "missing")}) == on_path
+        assert os.path.normcase(find({"claude_cli_path": str(tmp_path / "missing")})) == os.path.normcase(on_path)
     assert "is not a program" in caplog.text
 
 
 def test_posix_install_dirs_include_homebrew_and_usr_local(tmp_path):
     dirs = agent_cli._search_dirs("darwin", {}, str(tmp_path))
-    assert dirs == [str(tmp_path / ".local" / "bin"), str(tmp_path / ".claude" / "local"), "/opt/homebrew/bin", "/usr/local/bin"]
+    assert dirs == [
+        str(tmp_path / ".local" / "bin"),
+        str(tmp_path / ".claude" / "local"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+    ]
 
 
 def test_windows_discovery_prefers_exe_and_checks_appdata(tmp_path):
@@ -281,7 +297,7 @@ IF EXIST "%dp0%\node.exe" (
 )
 
 endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_modules\@anthropic-ai\claude-code\cli.js" %*
-"""
+"""  # noqa: E501 (a verbatim npm shim)
 
 ELECTRON_SHIM = r"""@echo off
 setlocal
@@ -338,13 +354,20 @@ def test_cli_token_budget_is_lower_than_the_api_default():
     assert agent_cli.DEFAULT_CLI_TOKEN_BUDGET < llm.DEFAULT_TOKEN_BUDGET
     assert len(argv[2]) <= len(llm.SYSTEM_PROMPT) + 100 + agent_cli.DEFAULT_CLI_TOKEN_BUDGET * llm.CHARS_PER_TOKEN
     # A bigger requested budget is capped too.
-    big = agent_cli.build_command(CLAUDE, ["claude"], LONG.speakers, LONG.segments, {"token_budget": 50000}, platform="linux")
+    big = agent_cli.build_command(
+        CLAUDE, ["claude"], LONG.speakers, LONG.segments, {"token_budget": 50000}, platform="linux"
+    )
     assert big == argv
 
 
-@pytest.mark.parametrize("program, limit", [("C:\\bin\\claude.exe", agent_cli.WINDOWS_ARGV_LIMIT), ("C:\\npm\\agy.cmd", agent_cli.WINDOWS_BATCH_ARGV_LIMIT)])
+@pytest.mark.parametrize(
+    "program, limit",
+    [("C:\\bin\\claude.exe", agent_cli.WINDOWS_ARGV_LIMIT), ("C:\\npm\\agy.cmd", agent_cli.WINDOWS_BATCH_ARGV_LIMIT)],
+)
 def test_windows_command_line_is_truncated_to_fit(program, limit):
-    quoted = make_transcript(*[(f"SPEAKER_0{i % 2}", 'she said "hi" ' * 40) for i in range(400)])  # quotes grow when escaped
+    quoted = make_transcript(
+        *[(f"SPEAKER_0{i % 2}", 'she said "hi" ' * 40) for i in range(400)]
+    )  # quotes grow when escaped
     argv = agent_cli.build_command(ANTIGRAVITY, [program], quoted.speakers, quoted.segments, {}, platform="win32")
     assert _cmdline_len(argv) <= limit
     assert "[... transcript truncated ...]" in argv[2] and argv[2].startswith(llm.SYSTEM_PROMPT)
@@ -427,7 +450,8 @@ def test_providers_list_and_cli_help():
 def test_user_names_are_kept(clis, monkeypatch):
     fake_run(monkeypatch, stdout=CLAUDE_OUT)
     t = Transcript(
-        language="en", duration=2.0,
+        language="en",
+        duration=2.0,
         speakers=[Speaker("SPEAKER_00", name="Ann", name_confidence=1.0, name_source="user"), Speaker("SPEAKER_01")],
         segments=DIALOGUE.segments,
     )
@@ -437,6 +461,8 @@ def test_user_names_are_kept(clis, monkeypatch):
 
 def test_no_speakers_runs_nothing(clis, monkeypatch):
     run = fake_run(monkeypatch, stdout=CLAUDE_OUT)
-    empty = Transcript(language="en", duration=0.0, speakers=[], segments=[Segment(speaker="SPEAKER_00", start=0, end=1, text="")])
+    empty = Transcript(
+        language="en", duration=0.0, speakers=[], segments=[Segment(speaker="SPEAKER_00", start=0, end=1, text="")]
+    )
     assert naming.name_speakers(empty, provider="claude-cli") == []
     assert not run.calls
