@@ -27,7 +27,10 @@ cuda = [
 better-captions = "better_captions.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "pyyaml>=6",
+]
 
 [build-system]
 requires = ["hatchling"]

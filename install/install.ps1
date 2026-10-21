@@ -9,7 +9,9 @@
 #
 # Environment:
 #   BETTER_CAPTIONS_HOME       data dir override (default: %LOCALAPPDATA%\BetterCaptions)
-#   BETTER_CAPTIONS_REF        git ref to install from GitHub (default: main)
+#   BETTER_CAPTIONS_REF        git ref (branch, tag or commit SHA) to install from GitHub (default: the
+#                              latest release, or main if there is none or GitHub's API can't be reached)
+#   BETTER_CAPTIONS_RELEASE_API  URL of GitHub's releases/latest API, or a local file with its JSON response (tests)
 #   BETTER_CAPTIONS_SOURCE     install from this local source dir instead of GitHub (dev/tests)
 #   BETTER_CAPTIONS_SKIP_DEPS  =1: install the package with --no-deps (tests only)
 #   BETTER_CAPTIONS_GPU        auto (default): install the NVIDIA CUDA runtime when an NVIDIA GPU is
@@ -71,19 +73,51 @@
         }
     }
 
-    # Returns the source dir to install from. Downloads into $WorkDir unless
-    # BETTER_CAPTIONS_SOURCE is set.
-    function Get-Source([string]$WorkDir) {
+    # The latest release's tag from GitHub's releases/latest API, or $null if
+    # there is no release or the API can't be reached (offline, rate-limited).
+    # BETTER_CAPTIONS_RELEASE_API may name a local file holding the response (tests).
+    function Get-LatestReleaseTag {
+        $api = if ($env:BETTER_CAPTIONS_RELEASE_API) { $env:BETTER_CAPTIONS_RELEASE_API } else { "https://api.github.com/repos/$Repo/releases/latest" }
+        try {
+            if ($api -match '^https?://') {
+                $release = Invoke-RestMethod -Uri $api -UseBasicParsing -TimeoutSec 20 -Headers @{ Accept = 'application/vnd.github+json' }
+            } else {
+                $release = Get-Content -Raw -Path $api -ErrorAction Stop | ConvertFrom-Json
+            }
+        } catch {
+            return $null
+        }
+        $tag = "$($release.tag_name)"
+        if ($tag -match '^[A-Za-z0-9._-]+$') { return $tag }
+        return $null
+    }
+
+    # The git ref to install: BETTER_CAPTIONS_REF when set (a branch such as
+    # main, a tag or a commit SHA), else the latest release, else main.
+    function Get-InstallRef {
+        if ($env:BETTER_CAPTIONS_REF) { return $env:BETTER_CAPTIONS_REF }
+        $tag = Get-LatestReleaseTag
+        if ($tag) {
+            Say "Latest release: $tag"
+            return $tag
+        }
+        Warn "could not find the latest release (none published yet, or GitHub's API failed or is rate-limited);"
+        Warn 'installing the development version from main. Set BETTER_CAPTIONS_REF to pick a release.'
+        return 'main'
+    }
+
+    # Returns the source dir to install from: BETTER_CAPTIONS_SOURCE if set,
+    # else git ref $Ref downloaded from GitHub into $WorkDir.
+    function Get-Source([string]$WorkDir, [string]$Ref) {
         if ($env:BETTER_CAPTIONS_SOURCE) {
             if (-not (Test-Path (Join-Path $env:BETTER_CAPTIONS_SOURCE 'pyproject.toml'))) {
                 throw "BETTER_CAPTIONS_SOURCE=$env:BETTER_CAPTIONS_SOURCE has no pyproject.toml"
             }
             return (Resolve-Path $env:BETTER_CAPTIONS_SOURCE).Path
         }
-        $ref = if ($env:BETTER_CAPTIONS_REF) { $env:BETTER_CAPTIONS_REF } else { 'main' }
-        $url = "https://github.com/$Repo/archive/$ref.zip"
+        $url = "https://github.com/$Repo/archive/$Ref.zip"
         $zip = Join-Path $WorkDir 'src.zip'
-        Say "Downloading $Repo@$ref"
+        Say "Downloading $Repo@$Ref"
         try {
             Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
         } catch {
@@ -319,7 +353,13 @@
         }
     }
 
-    function Show-NextSteps([string]$Data, [string]$Gpu) {
+    function Get-InstalledVersion([string]$Data) {
+        $version = & (Get-VenvPython $Data) -c "import importlib.metadata as m; print(m.version('better-captions'))"
+        if ($LASTEXITCODE -ne 0) { throw 'could not read the installed engine version' }
+        return "$version".Trim()
+    }
+
+    function Show-NextSteps([string]$Data, [string]$Gpu, [string]$Version, [string]$Origin) {
         if ($Gpu -eq 'cuda') {
             $gpuNote = "The NVIDIA GPU runtime (CUDA) is installed; the engine uses your GPU`n" +
                 "automatically and falls back to the CPU if it can't."
@@ -330,7 +370,7 @@
         $py = Get-VenvPython $Data
         Write-Host @"
 
-Better Captions is installed.
+Better Captions $Version is installed (from $Origin).
   Engine:  $Data\venv
   Config:  $Data\config.json
 
@@ -361,13 +401,20 @@ Re-run this installer any time to upgrade.
         New-Item -ItemType Directory -Force -Path $workDir | Out-Null
         $gpu = Get-GpuChoice
         Ensure-Uv
-        $src = Get-Source $workDir
+        if ($env:BETTER_CAPTIONS_SOURCE) {
+            $ref = ''
+            $origin = $env:BETTER_CAPTIONS_SOURCE
+        } else {
+            $ref = Get-InstallRef
+            $origin = "$Repo@$ref"
+        }
+        $src = Get-Source $workDir $ref
         New-EngineVenv $data
         Install-Package $data $src $gpu
         Write-Config $data $gpu
         Install-Plugin $data $src
         Ensure-ResolvePython $workDir
-        Show-NextSteps $data $gpu
+        Show-NextSteps $data $gpu (Get-InstalledVersion $data) $origin
     } catch {
         Write-Host "error: $_" -ForegroundColor Red
     } finally {

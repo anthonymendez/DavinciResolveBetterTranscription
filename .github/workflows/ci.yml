@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
+    # Branches only: release.yml runs this workflow for v*.*.* tags.
+    branches: ["**"]
   pull_request:
+  workflow_call:
 
 jobs:
   test:
