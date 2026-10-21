@@ -13,6 +13,7 @@ EDITS_DIR = "edits"
 # Review-dialog choices remembered between runs (save_settings).
 HIGHLIGHT_WORDS = "highlight_words"  # bool, off by default
 HIGHLIGHT_COLOR = "highlight_color"  # "#RRGGBB"
+NAMING_PROVIDER = "naming_provider"  # engine --naming for the next run (ui.NAMING_CHOICES)
 
 # config.json key -> engine CLI flag. Values are passed through as strings.
 ENGINE_FLAGS = (
@@ -23,7 +24,7 @@ ENGINE_FLAGS = (
     ("min_speakers", "--min-speakers"),
     ("max_speakers", "--max-speakers"),
     ("diarization_backend", "--diarization-backend"),
-    ("naming_provider", "--naming"),
+    (NAMING_PROVIDER, "--naming"),
     ("max_chars", "--max-chars"),
     ("max_lines", "--max-lines"),
     ("max_duration", "--max-duration"),

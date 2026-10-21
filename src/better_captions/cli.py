@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--min-speakers", type=int)
     r.add_argument("--max-speakers", type=int)
     r.add_argument("--diarization-backend", default="sherpa")
-    r.add_argument("--naming", default="auto", help="none|heuristic|anthropic|openai|auto")
+    r.add_argument("--naming", default="auto", help="none|heuristic|anthropic|openai|claude-cli|antigravity-cli|auto")
     r.add_argument("--max-chars", type=int, default=42)
     r.add_argument("--max-lines", type=int, default=2)
     r.add_argument("--max-duration", type=float, default=6.0)
@@ -101,11 +101,13 @@ def key_command(args) -> int:
 
 
 def doctor() -> dict:
-    """What the engine detects on this machine: NVIDIA GPUs, the CUDA runtime, and the backend it would use."""
+    """What the engine detects on this machine: NVIDIA GPUs, the CUDA runtime, the backend it would use,
+    and the coding-agent CLIs speaker naming can use."""
     import importlib.util
     import platform
 
     from better_captions.engine import gpu, transcribe
+    from better_captions.naming import agent_cli
 
     runtime = gpu.setup()  # as a run would, so the CUDA checks below see the `cuda` extra
     backends = {"faster-whisper": importlib.util.find_spec("faster_whisper") is not None}
@@ -119,6 +121,7 @@ def doctor() -> dict:
         "cuda_runtime": runtime,
         "cuda": gpu.cuda_info(),
         "backends": backends,
+        "naming_clis": agent_cli.found_clis(),  # {"claude": path or null, "antigravity": path or null}
     }
     try:
         report["backend"] = transcribe.choose_backend("auto")

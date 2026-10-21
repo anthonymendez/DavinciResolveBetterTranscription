@@ -5,8 +5,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from better_captions_plugin.ui import (HIGHLIGHT_COLOR_LABEL, HIGHLIGHT_LABEL, Backend, ProgressView, ReviewRequest, ReviewResult,
-                                       checked_highlight_color, speaker_rows)
+from better_captions_plugin.ui import (HIGHLIGHT_COLOR_LABEL, HIGHLIGHT_LABEL, NAMING_CHOICES, NAMING_LABEL, Backend, ProgressView,
+                                       ReviewRequest, ReviewResult, checked_highlight_color, naming_index, speaker_rows)
 from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
 
 TITLE = "Better Captions"
@@ -162,9 +162,15 @@ class _ReviewDialog:
         self._sync_highlight_state()
         ttk.Label(frame, text="New tracks are added; existing tracks are never changed.", foreground="#666").grid(
             row=row_index + 4, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        naming_row = ttk.Frame(frame)
+        naming_row.grid(row=row_index + 5, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ttk.Label(naming_row, text=NAMING_LABEL).pack(side="left")
+        self.naming_box = ttk.Combobox(naming_row, values=[label for _value, label in NAMING_CHOICES], state="readonly", width=60)
+        self.naming_box.current(naming_index(request.naming_provider))
+        self.naming_box.pack(side="left", padx=(6, 0))
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=row_index + 5, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        buttons.grid(row=row_index + 6, column=0, columnspan=4, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="right", padx=(8, 0))
         ttk.Button(buttons, text="Create tracks", command=self._ok).pack(side="right")
         if request.editor is not None:
@@ -234,7 +240,8 @@ class _ReviewDialog:
             messagebox.showwarning(TITLE, "The highlight colour must look like #FFD400.", parent=self.window)
             return
         result = ReviewResult(subtitles=bool(self.subtitles_var.get()), textplus=bool(self.textplus_var.get()),
-                              highlight_words=bool(self.highlight_var.get()), highlight_color=color or self.request.highlight_color)
+                              highlight_words=bool(self.highlight_var.get()), highlight_color=color or self.request.highlight_color,
+                              naming_provider=NAMING_CHOICES[max(0, int(self.naming_box.current()))][0])
         for speaker in self.speakers:
             result.names[speaker.id] = self.name_vars[speaker.id].get().strip() or speaker.id
             if self.request.templates:
