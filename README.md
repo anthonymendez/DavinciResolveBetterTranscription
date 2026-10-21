@@ -24,8 +24,12 @@ Then in Resolve: **Workspace > Scripts > Better Captions**.
 
 The installer sets up [uv](https://docs.astral.sh/uv/) if missing, puts the
 engine in its own Python 3.12 venv in your user data dir, and copies the plugin
-into Resolve's `Scripts/Utility` folder. An NVIDIA GPU with CUDA is used
-automatically if available. Re-run the same command to upgrade.
+into Resolve's `Scripts/Utility` folder. On Windows and Linux, if it finds an
+NVIDIA GPU it also installs the CUDA runtime (cuBLAS + cuDNN, about 1.5 GB) into
+the engine venv, so the GPU works without a separate CUDA install. Without one,
+the engine runs on the CPU. Run `better-captions doctor` (the installer prints
+the full command) to see what the engine detects, and see [docs/GPU.md](docs/GPU.md).
+Re-run the same command to upgrade.
 
 Requirements: Resolve runs the plugin with a system Python it finds by itself,
 a 64-bit Python 3.10–3.12 with tkinter. If you already have one where Resolve
@@ -44,13 +48,77 @@ Restart Resolve after Python is installed.
 
 Options (environment variables):
 
-- `BETTER_CAPTIONS_REF`: git branch/tag to install (default `main`)
+- `BETTER_CAPTIONS_REF`: git branch, tag or commit to install. By default the
+  installer picks the [latest release](https://github.com/anthonymendez/DavinciResolveBetterTranscription/releases/latest),
+  falling back to `main` (with a warning) if there is none or GitHub's API can't
+  be reached; set `BETTER_CAPTIONS_REF=main` for the development version
 - `BETTER_CAPTIONS_HOME`: install somewhere other than the default data dir
 - `BETTER_CAPTIONS_SOURCE`: install from a local checkout instead of GitHub
 - `BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON=1`: skip the system Python check/install
+- `BETTER_CAPTIONS_GPU`: `auto` (default) installs the NVIDIA CUDA runtime only when
+  an NVIDIA GPU is found, `cuda` always installs it, `none` never does
 
 To uninstall, run `install/uninstall.ps1` or `install/uninstall.sh` the same
 way (e.g. `curl -fsSL .../install/uninstall.sh | bash`).
+
+### API keys for LLM speaker naming
+
+Naming speakers with Claude or an OpenAI-compatible service needs an API key
+(local servers such as Ollama don't). Store it in your OS keychain (Windows
+Credential Manager, macOS Keychain, or the Secret Service on Linux) rather
+than in a file:
+
+    better-captions key set anthropic      # prompts for the key; or pipe it in with --stdin
+    better-captions key set openai
+    better-captions key status             # where each key is set; never prints the key
+    better-captions key delete anthropic
+
+The engine looks for a key in this order: an explicit option, the
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` environment variable, the keychain
+(service `better-captions`), and finally a plain-text `anthropic_api_key` /
+`openai_api_key` in `config.json` from older setups, which logs a warning. Move
+those into the keychain with `better-captions key migrate`; it removes them from
+`config.json` and keeps your other settings.
+
+On a headless Linux machine without a Secret Service there is no keychain;
+the `key` commands say so, and you set the environment variables instead.
+
+### Speaker naming with Claude Code or Antigravity (no API key)
+
+If you already use a coding-agent CLI that you're signed in to, speaker naming
+can use it instead of an API key:
+
+- `claude-cli`: [Claude Code](https://claude.com/claude-code) (`claude`). The
+  transcript is sent to **Anthropic** under your Claude account and counts
+  towards that account's usage. Runs `claude -p … --output-format json --tools ""`
+  with the `haiku` model by default.
+- `antigravity-cli`: Google's Antigravity CLI (`agy`). The transcript is sent to
+  **Google** under your Antigravity/Google account and its terms. Runs
+  `agy -p … --output-format json`.
+
+Pick one in the review dialog under *Speaker naming (next run)*, or set
+`"naming_provider"` in `config.json` (`better-captions run --naming claude-cli`
+on the command line). With the default `auto`, the engine uses an Anthropic API
+key if it has one, then an OpenAI-compatible setup, then `claude`, then `agy`,
+and otherwise the local rules. Choose *Rules only* to keep the transcript on
+your machine.
+
+The CLI runs non-interactively in an empty temporary folder with no tools and
+no permission bypass, with a 120-second time limit. The transcript is passed on
+the command line, so long recordings are shortened (the start and end are kept)
+to fit the operating system's limit. If the CLI is missing, not signed in,
+fails or times out, naming falls back to the local rules.
+
+Resolve starts the engine with a minimal `PATH`, so the CLIs are also looked for
+in `~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin`, `/usr/local/bin`,
+`%LOCALAPPDATA%\Programs` and `%APPDATA%\npm`. `better-captions doctor` shows
+what it found under `naming_clis`. Optional `config.json` settings:
+
+| Key | Meaning |
+| --- | --- |
+| `claude_cli_path`, `antigravity_cli_path` | full path to `claude` / `agy` when it isn't found |
+| `claude_cli_model`, `antigravity_cli_model` | model to ask for (`--model`); claude defaults to `haiku` |
+| `naming_cli_timeout` | seconds before giving up (default 120) |
 
 ## How it works
 
@@ -94,8 +162,8 @@ flowchart LR
    words are grouped into sentences per speaker.
 5. **Name speakers.** The engine looks for names in the conversation, such as
    self-introductions ("I'm Sam") and people addressing each other ("thanks,
-   Maria"). Optionally it asks Claude, OpenAI, or a local model through Ollama
-   for better guesses. If no name is found, the speaker stays `SPEAKER_00` and
+   Maria"). Optionally it asks Claude, OpenAI, a local model through Ollama,
+   or your signed-in Claude Code / Antigravity CLI for better guesses. If no name is found, the speaker stays `SPEAKER_00` and
    so on, and you can type one in.
 6. **Build captions.** Sentences are split into readable captions (at most 42
    characters per line, 2 lines, 6 seconds by default).
@@ -140,6 +208,7 @@ because the models download.
 │                                                                                      │
 │  [x] Subtitle tracks: one subtitle track per speaker, named after the speaker        │
 │  [x] Text+ captions: one video track per speaker using the chosen template           │
+│      [ ] Highlight words as they're spoken     Highlight colour: [#FFD400] [Pick…]   │
 │  New tracks are added; existing tracks are never changed.                            │
 │                                                          [ Create tracks ] [ Cancel ]│
 └──────────────────────────────────────────────────────────────────────────────────────┘
@@ -152,6 +221,10 @@ because the models download.
   and pick it here.
 - **Says, e.g.:** a sample line, so you can tell who is who.
 - **Outputs:** tick either output or both.
+- **Highlight words as they're spoken** (Text+ only, off by default): each caption becomes
+  one clip per word, each showing the whole caption in your template with the spoken word
+  in the highlight colour. Your choice and colour are remembered for the next run. See
+  `docs/RESOLVE_INTEGRATION.md` §8 for how it works and its limits.
 
 **Result on the timeline:**
 
@@ -190,5 +263,3 @@ gets it wrong:
 
 Your fixes are saved per audio file, so re-running on the same audio applies
 them again.
-
-> Coming soon: an optional word-by-word highlight for Text+ captions.

@@ -200,6 +200,92 @@ UIManager has no list-with-columns widget besides `ui.Tree`, so both lists are T
 `SelectedItems()`); the review window is closed and rebuilt around the editor rather than
 edited in place.
 
+## 8. Highlighting words as they're spoken (Text+)
+
+An optional review-dialog toggle, **Highlight words as they're spoken**, off by default, with a
+highlight colour (default `#FFD400`, a bright accent; the other words keep the template's own
+colour). Both are remembered in `config.json` (`"highlight_words"`, `"highlight_color"`,
+written by `config.save_settings`, which re-reads the file and changes only those keys). It
+applies to Text+ captions only; subtitle tracks can't be styled per word.
+
+### Options considered
+
+1. **One clip per cue, keyframed Character Level Styling (CLS).** One clip, but the styling
+   would have to be animated. Nobody has shown this working from a script: KathaCut's live
+   spike on Resolve Studio 21 never got a keyframed CLS write to render ([KathaCut ADR 0011][kc-adr]
+   "Keyframing (W3)": no data). Forum users report hand-keyframed CLS keeping only the last
+   value ([forum p=741898][forum-cls-keys]) and crashing Resolve ([forum t=131845][forum-cls-crash]).
+   Fusion's `SetInput(name, value, time)` only keys an input that already has a spline
+   ([Fusion 8 Scripting Guide][fusion-scripting]), and text modifiers on `StyledText` only attach
+   by registry id ([davinci-resolve-mcp #250][mcp-250]). AutoSubs, the best-known open-source
+   Resolve captioner, lights words only inside its own bundled macro, whose Lua callback writes
+   the keys. User templates get plain text ([auto-subs caption_style.lua][autosubs-style]).
+2. **One clip per word step, static CLS (chosen).** Each cue becomes contiguous clips, one per
+   word (and one per long pause), each a copy of the user's template showing the **whole cue**,
+   with only the spoken word recoloured. This needs no keyframes, works with any Text+ template,
+   and every clip is an ordinary Text+ title. KathaCut reached the same conclusion
+   ("split clips") after its spikes ([ADR 0011][kc-adr], "Consequences").
+
+### How the colour is written
+
+`SetInput("CharacterLevelStyling", …)`, `LoadSettings` (table or file) and `comp:Paste` all
+return without error but render plain. KathaCut tested each on Resolve Studio 21.0.0.47
+([ADR 0011][kc-adr], "Write spike result"). What works there is a comp file round trip
+(method D), which `resolve_io.apply_word_highlight` does for each lit clip:
+
+```python
+item.ExportFusionComp(path, 1)                 # README: (path, compIndex) --> Bool
+text = word_highlight.add_highlight_to_comp(open(path).read(), cue_text, entries)
+item.ImportFusionComp(path)                    # README: --> fusionComp ("creating and adding a new" comp)
+item.LoadFusionCompByName(newest)              # only if the import added a comp instead of replacing it
+```
+
+The edit (`word_highlight.add_highlight_to_comp`, pure and tested) adds a `StyledTextCLS`
+tool shaped like the one Resolve saves for hand-applied styling, and points the Text+ tool's
+`StyledText` at it:
+
+```lua
+BetterCaptionsHighlight = StyledTextCLS { Inputs = {
+  CharacterLevelStyling = Input { Value = StyledText { Array = {
+    { 2401, 4, 10, Value = 1 }, { 2402, 4, 10, Value = 0.831373 }, { 2403, 4, 10, Value = 0 },
+  }, Value = "" } },
+  Text = Input { Value = "Hey Jordan,\nhow are you?" }, ... } },
+Template = TextPlus { Inputs = { StyledText = Input { SourceOp = "BetterCaptionsHighlight", Source = "StyledText" }, ... } }
+```
+
+`2401`/`2402`/`2403` are fill red/green/blue (0..1). Ranges are 0-based code points, end
+inclusive ([ADR 0011][kc-adr], "Property ids", "Counting unit"); `"\n"` between lines is
+counted as one. Everything else in the exported comp is left byte for byte, so font, size,
+outline, shadow, position and any animation are the template's. A template whose
+`StyledText` is already driven by another tool (its own CLS, a Follower, an expression) is not
+overridden: the track is rebuilt with one plain clip per cue and the summary says why. The
+same fallback applies when the first round trip fails (for example `ExportFusionComp` missing
+or refused). A failure later in the track leaves that clip showing the cue unlit, and the
+summary lists it.
+
+Editing afterwards: each clip's text is now in the *Character Level Styling* modifier (Inspector
+> Modifiers), and the colour can be changed there. Retiming is ordinary clip trimming. Changing
+the look of all clips at once means changing the template and re-running.
+
+### Timing (`word_highlight.py`, pure)
+
+- `cue_words`: the engine builds a cue's text by joining its words' stripped text, so cue
+  tokens are matched in order to the transcript words (`segments[].words`) around the cue,
+  trying the cue speaker's words first and then anyone's (speaker fixes relabel segments only
+  roughly). Punctuation and case are ignored when matching. Tokens without a word share the
+  time between their neighbours. A cue with no matching word stays one plain clip; its times
+  are never guessed.
+- `highlight_steps`: the placed cue's frames (after `place_cues` trimmed overlaps) are cut into
+  steps that are contiguous and cover the cue exactly, so the caption never blinks. A word is
+  lit from its first frame. A pause of up to 0.5 s after it, or before the first word, stays on
+  that word; a longer one is an unlit step. Words are clamped to the cue's frames, so words
+  spanning a cue boundary are cut and words wholly outside are dropped. A word shorter than a
+  frame still gets one frame when there is room.
+
+Cost: one clip per word, and the round trip takes about 0.5 s per clip, mostly the clip insert
+([ADR 0011][kc-adr], "Timing"). A long timeline takes minutes to write, during which Resolve is
+busy.
+
 ## Still to verify on a real Resolve (free and Studio)
 
 1. Subtitle placement (§2) and whether `ImportMedia` returns the SRT item.
@@ -211,6 +297,10 @@ edited in place.
 6. The UIManager "Fix speakers" window (§7): `ui.Tree` selection (`SelectionMode`
    `"ExtendedSelection"`, `SelectedItems()` returning a 1-based table), `ItemClicked`'s
    `item`, and `ComboBox.Clear()` firing `CurrentIndexChanged` (guarded).
+7. Word highlighting (§8): that the comp round trip renders the lit word through the Python
+   bridge on 19/20 (KathaCut verified it from Lua on Studio 21), whether `ImportFusionComp`
+   adds or replaces the comp on a Text+ title, how `"\n"` counts in CLS ranges on two-line
+   cues, and wall-clock time per clip on a long timeline.
 
 [xraym-gist]: https://gist.github.com/X-Raym/2f2bf453fc481b9cca624d7ca0e19de8
 [xraym-docs]: https://extremraym.com/cloud/resolve-scripting-doc/
@@ -230,3 +320,9 @@ edited in place.
 [wildlion]: https://wildlion.media/davinci-resolve-python-scripting-the-complete-guide-to-the-api/
 [pulseedit]: https://pulseedit.com/davinci-resolve-19-scripting-api-fix.html
 [ayon]: https://docs.ayon.dev/docs/addon_resolve_admin
+[kc-adr]: https://github.com/vxlabs/KathaCut/blob/main/docs/decisions/0011-resolve-character-level-styling.md
+[autosubs-style]: https://github.com/tmoroney/auto-subs/blob/main/AutoSubs-App/src-tauri/resources/modules/caption_style.lua
+[forum-cls-keys]: https://forum.blackmagicdesign.com/viewtopic.php?p=741898
+[forum-cls-crash]: https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=131845
+[fusion-scripting]: https://documents.blackmagicdesign.com/UserManuals/Fusion8_Scripting_Guide.pdf
+[mcp-250]: https://github.com/samuelgursky/davinci-resolve-mcp/issues/250

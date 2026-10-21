@@ -8,7 +8,10 @@
    speakers…" merges / reassigns / splits speakers (``speaker_edits``), saved as
    ``edits.json`` next to ``transcript.json`` and in ``<data>/edits/<audio sha256>.json`` so a
    re-run on the same audio re-applies them
-6. create new tracks (subtitle and/or Text+) from the edited transcript, never touching existing ones
+6. create new tracks (subtitle and/or Text+) from the edited transcript, never touching existing ones;
+   with "Highlight words as they're spoken" each Text+ cue becomes one clip per word step
+   (``word_highlight``); the toggle and colour, and the speaker-naming provider picked for the
+   next run, are remembered in config.json
 7. summary; the temp dir is kept only when the user still needs the SRT files
 """
 
@@ -20,8 +23,10 @@ import tempfile
 import traceback
 
 from better_captions_plugin import config as config_mod
-from better_captions_plugin import engine_runner, planning, resolve_io, speaker_edits, transcript as transcript_mod
-from better_captions_plugin.ui import Backend, ReviewRequest, ReviewResult, SpeakerRow, choose_backend, speaker_rows
+from better_captions_plugin import engine_runner, planning, resolve_io, speaker_edits, word_highlight
+from better_captions_plugin import transcript as transcript_mod
+from better_captions_plugin.ui import (NAMING_CHOICES, Backend, ReviewRequest, ReviewResult, SpeakerRow, choose_backend, naming_index,
+                                       speaker_rows)
 
 TITLE = "Better Captions"
 
@@ -53,6 +58,14 @@ class Outcome:
                 lines.append("    ... and %d more placement notes" % (len(result.misplaced) - 5))
             for note in result.text_failures[:5]:
                 lines.append("    text not set: " + note)
+            if result.highlighted:
+                lines.append("    spoken word highlighted in %d clips" % result.highlighted)
+            for note in result.highlight_failures[:5]:
+                lines.append("    not highlighted: " + note)
+            if len(result.highlight_failures) > 5:
+                lines.append("    ... and %d more clips not highlighted" % (len(result.highlight_failures) - 5))
+            for note in result.notes:
+                lines.append("    note: " + note)
         if self.subtitle_fallbacks:
             lines.append("")
             lines.append("Resolve's API could not place these SRT files on a subtitle track; nothing was left behind.")
@@ -181,6 +194,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
 
     editor.record_names(review.names)
     save_edits(editor, edits_paths, audio_sha, outcome)
+    remember_review_choices(config, review, outcome)
     transcript = editor.transcript()
     if editor.relabelled:  # the engine's per-speaker SRTs no longer match
         srt_paths = transcript_mod.write_speaker_srts(transcript, os.path.join(out_dir, "edited"))
@@ -240,6 +254,10 @@ def build_review_request(transcript, templates, timeline_name, clock, range_star
     else:
         range_label = "%s – %s" % (clock.timecode(range_start), clock.timecode(range_end))
     default_mode = str(config.get("default_output", "subtitles")).lower()
+    try:
+        highlight_color = word_highlight.normalize_hex_color(config.get(config_mod.HIGHLIGHT_COLOR) or word_highlight.DEFAULT_HIGHLIGHT_COLOR)
+    except ValueError:
+        highlight_color = word_highlight.DEFAULT_HIGHLIGHT_COLOR
     return ReviewRequest(
         speakers=rows,
         templates=[t.label for t in templates],
@@ -250,7 +268,21 @@ def build_review_request(transcript, templates, timeline_name, clock, range_star
         editor=editor,
         time_label=lambda seconds: clock.timecode(clock.frame_at(seconds, range_start)),
         note=note,
+        highlight_words=config.get(config_mod.HIGHLIGHT_WORDS) is True,
+        highlight_color=highlight_color,
+        naming_provider=NAMING_CHOICES[naming_index(config.get(config_mod.NAMING_PROVIDER))][0],
     )
+
+
+def remember_review_choices(config: dict, review: ReviewResult, outcome: Outcome):
+    """Keep the highlight toggle and colour, and the naming provider for the next run, in config.json."""
+    updates = {config_mod.HIGHLIGHT_WORDS: bool(review.highlight_words), config_mod.HIGHLIGHT_COLOR: review.highlight_color}
+    if review.naming_provider is not None:
+        updates[config_mod.NAMING_PROVIDER] = review.naming_provider
+    try:
+        config_mod.save_settings(config, updates)
+    except (OSError, config_mod.ConfigError) as exc:
+        outcome.warnings.append("review settings not remembered: %s" % exc)
 
 
 def create_tracks(media_pool, timeline, transcript, review: ReviewResult, templates, clock, origin_frame, srt_paths, outcome: Outcome):
@@ -269,14 +301,20 @@ def create_tracks(media_pool, timeline, transcript, review: ReviewResult, templa
         for speaker_id, index in review.template_index.items():
             if 0 <= index < len(templates):
                 chosen[speaker_id] = templates[index]
+        highlight = None
+        if review.highlight_words:
+            highlight = resolve_io.HighlightStyle(rgb=word_highlight.parse_hex_color(review.highlight_color),
+                                                  work_dir=os.path.join(outcome.work_dir or tempfile.gettempdir(), "highlight"))
         plans = planning.plan_tracks(transcript, review.names, planning.MODE_TEXTPLUS, clock, origin_frame,
-                                     existing_track_names=taken_video, templates=chosen)
+                                     existing_track_names=taken_video, templates=chosen, highlight=highlight is not None)
         for plan in plans:
             if plan.template is None:
                 outcome.warnings.append("no Text+ template chosen for %s; skipped" % plan.name)
                 continue
+            if highlight is not None and not any(clip.steps for clip in plan.clips):
+                outcome.warnings.append("no word timings for %s's captions; placed without highlighting" % plan.name)
             try:
-                outcome.created.append(resolve_io.create_textplus_track(media_pool, timeline, plan))
+                outcome.created.append(resolve_io.create_textplus_track(media_pool, timeline, plan, highlight=highlight))
             except resolve_io.ResolveError as exc:
                 outcome.warnings.append("Text+ track for %s not created: %s" % (plan.name, exc))
 

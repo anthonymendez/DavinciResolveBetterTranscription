@@ -6,6 +6,36 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from better_captions_plugin.word_highlight import DEFAULT_HIGHLIGHT_COLOR, normalize_hex_color
+
+HIGHLIGHT_LABEL = "Highlight words as they're spoken (Text+ captions; one clip per word)"
+HIGHLIGHT_COLOR_LABEL = "Highlight colour:"
+NAMING_LABEL = "Speaker naming (next run):"
+# Engine ``--naming`` values and their labels, in the order shown.
+NAMING_CHOICES = (
+    ("auto", "Automatic (API key, then Claude Code / Antigravity CLI, then rules)"),
+    ("heuristic", "Rules only (nothing leaves this computer)"),
+    ("claude-cli", "Claude Code CLI (your Anthropic login)"),
+    ("antigravity-cli", "Antigravity CLI (your Google login)"),
+    ("anthropic", "Anthropic API key"),
+    ("openai", "OpenAI-compatible API (OpenAI, Ollama, LM Studio)"),
+    ("none", "Off (keep SPEAKER_00, ...)"),
+)
+
+
+def naming_index(provider) -> int:
+    """Position of ``provider`` in NAMING_CHOICES; unknown values show as "auto"."""
+    values = [value for value, _label in NAMING_CHOICES]
+    return values.index(provider) if provider in values else 0
+
+
+def checked_highlight_color(text: str) -> "str | None":
+    """The colour typed in the review dialog as ``#RRGGBB``, or None when it isn't one."""
+    try:
+        return normalize_hex_color(text)
+    except ValueError:
+        return None
+
 
 @dataclass
 class SpeakerRow:
@@ -30,6 +60,11 @@ class ReviewRequest:
     editor: object = None
     time_label: object = None  # callable(seconds) -> str for the cue list (e.g. timeline timecode)
     note: str = ""  # shown under the header, e.g. "re-applied 3 earlier speaker fixes"
+    # Word highlighting (Text+ only), as remembered in config.json.
+    highlight_words: bool = False
+    highlight_color: str = DEFAULT_HIGHLIGHT_COLOR
+    # Speaker naming provider for the next engine run, as remembered in config.json.
+    naming_provider: str = "auto"
 
 
 def speaker_rows(editor) -> "list[SpeakerRow]":
@@ -43,6 +78,9 @@ class ReviewResult:
     subtitles: bool = True
     textplus: bool = False
     template_index: "dict[str, int]" = field(default_factory=dict)  # speaker id -> index into templates
+    highlight_words: bool = False
+    highlight_color: str = DEFAULT_HIGHLIGHT_COLOR  # "#RRGGBB"
+    naming_provider: "str | None" = None  # a NAMING_CHOICES value; None leaves config.json's as is
 
 
 class ProgressView:

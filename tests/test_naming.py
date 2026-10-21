@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from better_captions import naming
+from better_captions import naming, secrets
 from better_captions.naming import heuristic, llm
 from better_captions.schema import Segment, Speaker, Transcript
 
@@ -22,9 +22,10 @@ DIALOGUE = make_transcript(("SPEAKER_00", "Hey Jordan, how are you?"), ("SPEAKER
 
 
 @pytest.fixture(autouse=True)
-def no_env_keys(monkeypatch):
+def no_env_keys(monkeypatch, tmp_path):
     for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"):
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("BETTER_CAPTIONS_HOME", str(tmp_path))  # no real config.json; keychain is faked in conftest
 
 
 def names(speakers):
@@ -423,3 +424,53 @@ def test_auto_falls_back_to_heuristic_on_provider_error(monkeypatch, caplog):
 def test_heuristic_module_is_usable_directly():
     result = heuristic.name_speakers(DIALOGUE.speakers, DIALOGUE.segments)
     assert names(result) == {"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"}
+
+
+# --- API key lookup: option > env > keychain > legacy config.json -----------------------------
+
+
+def write_config(tmp_path, **fields):
+    (tmp_path / "config.json").write_text(json.dumps({"engine": ["py"], **fields}), encoding="utf-8")
+
+
+def test_keychain_key_is_used_by_anthropic_and_auto(fake_anthropic):
+    secrets.set_key("anthropic", "sk-keychain")
+    result = naming.name_speakers(DIALOGUE, provider="auto")
+    assert {s.name_source for s in result} == {"llm"}
+    assert fake_anthropic.init["api_key"] == "sk-keychain"
+
+
+def test_keychain_openai_key_selects_openai_in_auto(fake_anthropic, fake_openai):
+    secrets.set_key("openai", "sk-oa-keychain")
+    naming.name_speakers(DIALOGUE, provider="auto")
+    assert fake_openai.init["api_key"] == "sk-oa-keychain" and not fake_anthropic.calls
+
+
+def test_key_precedence_option_env_keychain_legacy(monkeypatch, tmp_path, caplog):
+    write_config(tmp_path, anthropic_api_key="sk-config", openai_api_key="sk-oa-config")
+    with caplog.at_level(logging.WARNING):
+        assert llm.anthropic_api_key({}) == "sk-config"
+        assert llm.openai_settings({})[0] == "sk-oa-config"
+    assert "better-captions key migrate" in caplog.text and "sk-config" not in caplog.text
+
+    secrets.set_key("anthropic", "sk-keychain")
+    assert llm.anthropic_api_key({}) == "sk-keychain"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env")
+    assert llm.anthropic_api_key({}) == "sk-env"
+    assert llm.anthropic_api_key({"api_key": "sk-opt"}) == "sk-opt"
+    assert llm.anthropic_api_key({"anthropic_api_key": "sk-opt2", "api_key": "sk-opt"}) == "sk-opt2"
+
+
+def test_failing_keychain_falls_back_to_env_with_clear_message(fake_anthropic, monkeypatch, caplog):
+    import keyring
+    from keyring.backends import fail
+
+    keyring.set_keyring(fail.Keyring())  # headless Linux: no Secret Service
+    with caplog.at_level(logging.WARNING):
+        result = naming.name_speakers(DIALOGUE, provider="anthropic")
+    assert {s.name_source for s in result} == {"heuristic"} and not fake_anthropic.calls
+    assert "OS keychain unavailable" in caplog.text and "ANTHROPIC_API_KEY" in caplog.text
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env")
+    result = naming.name_speakers(DIALOGUE, provider="anthropic")
+    assert {s.name_source for s in result} == {"llm"} and fake_anthropic.init["api_key"] == "sk-env"

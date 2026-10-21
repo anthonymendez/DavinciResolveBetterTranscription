@@ -10,6 +10,11 @@ APP_DIR_NAME = "BetterCaptions"
 CONFIG_FILE = "config.json"
 EDITS_DIR = "edits"
 
+# Review-dialog choices remembered between runs (save_settings).
+HIGHLIGHT_WORDS = "highlight_words"  # bool, off by default
+HIGHLIGHT_COLOR = "highlight_color"  # "#RRGGBB"
+NAMING_PROVIDER = "naming_provider"  # engine --naming for the next run (ui.NAMING_CHOICES)
+
 # config.json key -> engine CLI flag. Values are passed through as strings.
 ENGINE_FLAGS = (
     ("model", "--model"),
@@ -19,7 +24,7 @@ ENGINE_FLAGS = (
     ("min_speakers", "--min-speakers"),
     ("max_speakers", "--max-speakers"),
     ("diarization_backend", "--diarization-backend"),
-    ("naming_provider", "--naming"),
+    (NAMING_PROVIDER, "--naming"),
     ("max_chars", "--max-chars"),
     ("max_lines", "--max-lines"),
     ("max_duration", "--max-duration"),
@@ -73,6 +78,35 @@ def load_config(path=None, environ=None) -> dict:
         raise ConfigError("%s does not contain a JSON object. Re-run the installer." % path)
     config.setdefault("_path", path)
     return config
+
+
+def save_settings(config: dict, updates: dict) -> bool:
+    """Remember review-dialog choices in config.json; returns whether the file changed.
+
+    The file is re-read first and only ``updates`` are changed, so whatever the installer or
+    the user wrote meanwhile is kept; it is replaced atomically. ``config`` is updated too.
+    Raises OSError or ConfigError (an unreadable file is never overwritten).
+    """
+    config.update(updates)
+    path = config.get("_path")
+    if not path:
+        return False
+    with open(path, "r", encoding="utf-8-sig") as handle:
+        try:
+            current = json.load(handle)
+        except ValueError as exc:
+            raise ConfigError("%s is not valid JSON (%s); settings not saved" % (path, exc))
+    if not isinstance(current, dict):
+        raise ConfigError("%s does not contain a JSON object; settings not saved" % path)
+    if all(current.get(key) == value for key, value in updates.items()):
+        return False
+    current.update(updates)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(current, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    os.replace(tmp, path)
+    return True
 
 
 def engine_command(config: dict, audio_path: str, out_dir: str) -> "list[str]":

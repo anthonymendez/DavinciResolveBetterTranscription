@@ -39,12 +39,23 @@ class Cue:
 
 
 @dataclass
+class Word:
+    """A timed word from ``segments[].words`` (whisper keeps a leading space in ``text``)."""
+
+    text: str
+    start: float
+    end: float
+    speaker: "str | None" = None
+
+
+@dataclass
 class Transcript:
     language: str
     duration: float
     speakers: "list[Speaker]" = field(default_factory=list)
     cues: "list[Cue]" = field(default_factory=list)
     meta: dict = field(default_factory=dict)
+    words: "list[Word]" = field(default_factory=list)  # every segment's words, sorted by start
 
     def speaker(self, speaker_id: str) -> "Speaker | None":
         for speaker in self.speakers:
@@ -85,12 +96,25 @@ def from_dict(data: dict) -> Transcript:
         if lines is None:
             lines = str(c.get("text", "")).split("\n")
         cues.append(Cue(speaker=str(c["speaker"]), start=float(c["start"]), end=float(c["end"]), lines=[str(x) for x in lines]))
+    words = []
+    for segment in data.get("segments", []) or []:
+        for w in segment.get("words", []) or []:
+            try:
+                start, end = float(w["start"]), float(w["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not str(w.get("text", "")).strip():
+                continue
+            speaker = segment.get("speaker") or w.get("speaker")  # speaker edits relabel segments
+            words.append(Word(text=str(w["text"]), start=start, end=end, speaker=str(speaker) if speaker else None))
+    words.sort(key=lambda w: (w.start, w.end))
     return Transcript(
         language=str(data.get("language", "")),
         duration=float(data.get("duration", 0.0) or 0.0),
         speakers=speakers,
         cues=cues,
         meta=dict(data.get("meta", {}) or {}),
+        words=words,
     )
 
 

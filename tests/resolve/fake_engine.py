@@ -1,6 +1,6 @@
 """A stand-in for `better-captions run` used as a real subprocess by the plugin tests.
 
-Usage: python fake_engine.py run AUDIO --out DIR [--fail] [--crash] [--slow] [...ignored flags]
+Usage: python fake_engine.py run AUDIO --out DIR [--fail] [--crash] [--slow] [--with-words] [...ignored flags]
 
 Emits the same JSON-line events as the engine and writes transcript.json plus one SRT per
 speaker from the fixture below (the shape matches src/better_captions/schema.py, see
@@ -30,6 +30,18 @@ TRANSCRIPT = {
     "meta": {"audio": "", "model": "fake"},
     "schema_version": 1,
 }
+
+
+def with_words(transcript):
+    """``transcript`` with one segment per cue whose words share the cue's time evenly (``--with-words``)."""
+    segments = []
+    for cue in transcript["cues"]:
+        tokens = " ".join(cue["lines"]).split()
+        step = (cue["end"] - cue["start"]) / len(tokens)
+        words = [{"text": " " + token, "start": round(cue["start"] + i * step, 3), "end": round(cue["start"] + (i + 0.8) * step, 3),
+                  "probability": 0.9, "speaker": cue["speaker"]} for i, token in enumerate(tokens)]
+        segments.append({"speaker": cue["speaker"], "start": cue["start"], "end": cue["end"], "text": " ".join(tokens), "words": words})
+    return dict(transcript, segments=segments)
 
 
 def _ts(seconds):
@@ -71,6 +83,8 @@ def main(argv):
         emit({"event": "error", "message": "RuntimeError: no speech found"})
         return 1
     transcript = json.loads(json.dumps(TRANSCRIPT))
+    if "--with-words" in argv:
+        transcript = with_words(transcript)
     transcript["meta"]["audio"] = audio
     transcript["meta"]["argv"] = argv
     path = os.path.join(out, "transcript.json")
