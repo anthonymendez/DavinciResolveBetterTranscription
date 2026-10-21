@@ -8,6 +8,7 @@ import sys
 
 APP_DIR_NAME = "BetterCaptions"
 CONFIG_FILE = "config.json"
+EDITS_DIR = "edits"
 
 # config.json key -> engine CLI flag. Values are passed through as strings.
 ENGINE_FLAGS = (
@@ -48,6 +49,12 @@ def data_dir(environ=None, platform=None, home=None) -> str:
 
 def config_path(environ=None) -> str:
     return os.path.join(data_dir(environ), CONFIG_FILE)
+
+
+def edits_dir(config: dict) -> "str | None":
+    """``<data>/edits``: speaker fixes kept per rendered audio, so a re-run can re-apply them."""
+    path = config.get("_path")
+    return os.path.join(os.path.dirname(str(path)), EDITS_DIR) if path else None
 
 
 def load_config(path=None, environ=None) -> dict:

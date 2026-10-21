@@ -167,6 +167,39 @@ and parsed line by line (`engine_runner.py`); `PYTHONPATH`/`PYTHONHOME` from Res
 script host are stripped from the child's environment so the engine venv is clean; on
 Windows `CREATE_NO_WINDOW` avoids a console flashing up. Cancel terminates the process.
 
+## 7. Fixing speakers before tracks are written
+
+Diarization mistakes (one person split into two speakers, a line given to the wrong
+person, two people heard as one) are fixed in the review dialog's **Fix speakers…** window,
+before anything touches the timeline. The model is `speaker_edits.py` (pure, stdlib): edits
+are operations on the parsed `transcript.json` dict, kept on a stack and replayed from the
+original, so every one is undoable:
+
+- *rename*: the speaker's name (`name_source: "user"`)
+- *merge B into A*: B's cues, segments and words become A's; A keeps its name
+- *reassign*: selected cues move to another existing speaker (their segments follow)
+- *split*: selected cues move to a new speaker (`SPEAKER_NN`, the first free id)
+
+The window (`ui/speaker_editor.py` holds the logic both backends share) has a speaker list
+with rename and "merge into…", a cue list (number, timeline timecode, speaker, text) that
+can be filtered by speaker, "move selected to" another or a new speaker, and Undo. Names
+typed in the review rows go into the editor as renames, and the review rows are rebuilt
+from it when the window closes. Planning then uses the edited transcript; when cues changed
+speaker, the per-speaker SRTs are rewritten (`out/edited/<id>.srt`) because the engine's no
+longer match.
+
+When the user clicks Create tracks, the operations are saved as `edits.json` next to the
+run's `transcript.json` and as `<data>/edits/<sha256 of the rendered WAV>.json` (the temp
+run dir is normally deleted). A later run whose rendered audio has the same hash re-applies
+them: cues are found by index when their times still match, otherwise by time (±50 ms);
+operations that no longer fit are skipped and the dialog says how many. Undoing every fix
+and creating tracks removes the saved file.
+
+UIManager has no list-with-columns widget besides `ui.Tree`, so both lists are Trees
+(`NewItem` / `Text[n]` / `AddTopLevelItem` / `SetHeaderItem`, `CurrentItem()` /
+`SelectedItems()`); the review window is closed and rebuilt around the editor rather than
+edited in place.
+
 ## Still to verify on a real Resolve (free and Studio)
 
 1. Subtitle placement (§2) and whether `ImportMedia` returns the SRT item.
@@ -175,6 +208,9 @@ Windows `CREATE_NO_WINDOW` avoids a console flashing up. Cancel terminates the p
 3. `GetMarkInOut()` shape on 19.0 (older builds may lack it; handled).
 4. The exact format/codec names for WAV on each OS (`Wave` / `Linear PCM` expected).
 5. tkinter dialogs appearing in front of Resolve's window (topmost is requested).
+6. The UIManager "Fix speakers" window (§7): `ui.Tree` selection (`SelectionMode`
+   `"ExtendedSelection"`, `SelectedItems()` returning a 1-based table), `ItemClicked`'s
+   `item`, and `ComboBox.Clear()` firing `CurrentIndexChanged` (guarded).
 
 [xraym-gist]: https://gist.github.com/X-Raym/2f2bf453fc481b9cca624d7ca0e19de8
 [xraym-docs]: https://extremraym.com/cloud/resolve-scripting-doc/
