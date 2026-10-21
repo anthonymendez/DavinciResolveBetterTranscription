@@ -1,5 +1,6 @@
 """UI backends: UIManager against a fake Fusion UI; tkinter only when a display is available."""
 
+import sys
 import pytest
 
 from better_captions_plugin.ui import ReviewRequest, ReviewResult, SpeakerRow, choose_backend
@@ -201,6 +202,18 @@ def test_uimanager_backend_requires_fusion_objects():
         UIManagerBackend(None, None)
 
 
+def stub_tk_module(monkeypatch, stub_cls):
+    """Stand in for ui.tk_ui so backend selection is testable without tkinter installed."""
+    import types
+
+    import better_captions_plugin.ui as ui_pkg
+
+    mod = types.ModuleType("better_captions_plugin.ui.tk_ui")
+    mod.TkBackend = stub_cls
+    monkeypatch.setitem(sys.modules, mod.__name__, mod)
+    monkeypatch.setattr(ui_pkg, "tk_ui", mod, raising=False)
+
+
 def test_choose_backend_prefers_uimanager_on_studio_only(monkeypatch):
     import better_captions_plugin.ui as ui_pkg
 
@@ -218,10 +231,9 @@ def test_choose_backend_prefers_uimanager_on_studio_only(monkeypatch):
         def __init__(self, fusion, bmd):
             created.append("uimanager")
 
-    import better_captions_plugin.ui.tk_ui as tk_ui
     import better_captions_plugin.ui.uimanager_ui as uim
 
-    monkeypatch.setattr(tk_ui, "TkBackend", StubTk)
+    stub_tk_module(monkeypatch, StubTk)
     monkeypatch.setattr(uim, "UIManagerBackend", StubUIM)
     fusion = FakeFusion()
     assert ui_pkg.choose_backend(make_world(product="DaVinci Resolve Studio"), fusion, FakeBmd()).name == "uimanager"
@@ -233,12 +245,11 @@ def test_choose_backend_prefers_uimanager_on_studio_only(monkeypatch):
 
 def test_choose_backend_falls_back_to_tk_when_uimanager_fails(monkeypatch):
     import better_captions_plugin.ui as ui_pkg
-    import better_captions_plugin.ui.tk_ui as tk_ui
 
     class StubTk:
         name = "tk"
 
-    monkeypatch.setattr(tk_ui, "TkBackend", StubTk)
+    stub_tk_module(monkeypatch, StubTk)
     broken_fusion = type("F", (), {"UIManager": None})()
     assert ui_pkg.choose_backend(make_world(product="DaVinci Resolve Studio"), broken_fusion, FakeBmd()).name == "tk"
     with pytest.raises(RuntimeError):
