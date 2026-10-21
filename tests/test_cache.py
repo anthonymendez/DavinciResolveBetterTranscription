@@ -196,3 +196,17 @@ def test_cache_write_failure_does_not_fail_run(audio, tmp_path, calls, monkeypat
     monkeypatch.setattr(cache.TranscriptCache, "_write", boom)
     _, events = run(audio, tmp_path)
     assert events[-1]["event"] == "done"
+
+
+def test_cli_no_cache_flag_and_clear(monkeypatch, capsys):
+    from better_captions import cli
+    from better_captions.engine import cache as cache_mod
+
+    seen = {}
+    monkeypatch.setattr(cli, "run", lambda audio, out, options: seen.setdefault("use_cache", options.use_cache))
+    assert cli.main(["run", "a.wav", "--out", "o", "--no-cache"]) == 0
+    assert seen["use_cache"] is False
+
+    monkeypatch.setattr(cache_mod, "clear", lambda root=None: 3)
+    assert cli.main(["cache", "clear"]) == 0
+    assert '"removed": 3' in capsys.readouterr().out
