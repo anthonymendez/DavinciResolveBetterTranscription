@@ -180,7 +180,7 @@ def test_uimanager_review_collects_edits():
     backend = UIManagerBackend(FakeFusion(), bmd)
     result = backend.review(_request())
     assert result == ReviewResult(names={"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"}, subtitles=False, textplus=True,
-                                  template_index={"SPEAKER_00": 0, "SPEAKER_01": 1})
+                                  template_index={"SPEAKER_00": 0, "SPEAKER_01": 1}, naming_provider="auto")
     window = bmd.dispatcher.windows[-1]
     assert window.shown is False  # hidden after the loop
     assert window.GetItems()["Template_SPEAKER_00"].items == ["Style A  (Master)", "Style B  (Master)"]
@@ -287,7 +287,8 @@ def test_uimanager_fix_speakers_merges_moves_undoes_and_rebuilds_the_review():
     bmd = FakeBmd(script)
     request = _editable_request()
     result = UIManagerBackend(FakeFusion(), bmd).review(request)
-    assert result == ReviewResult(names={"SPEAKER_00": "Maria R"}, subtitles=True, textplus=True, template_index={"SPEAKER_00": 1})
+    assert result == ReviewResult(names={"SPEAKER_00": "Maria R"}, subtitles=True, textplus=True, template_index={"SPEAKER_00": 1},
+                                  naming_provider="auto")
     assert [w.props["ID"] for w in bmd.dispatcher.windows] == ["BetterCaptionsReview", "BetterCaptionsSpeakers", "BetterCaptionsReview"]
     assert [op["op"] for op in request.editor.ops] == ["rename", "merge"]
     assert not any(w.shown for w in bmd.dispatcher.windows)
@@ -437,7 +438,7 @@ def test_tk_review_dialog_round_trip(tk_root):
     dialog.textplus_var.set(True)
     dialog._ok()
     assert dialog.result == ReviewResult(names={"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"}, subtitles=True, textplus=True,
-                                         template_index={"SPEAKER_00": 0, "SPEAKER_01": 1})
+                                         template_index={"SPEAKER_00": 0, "SPEAKER_01": 1}, naming_provider="auto")
     view = backend.progress("t")
     view.set_status("x")
     view.set_progress(10)
@@ -482,4 +483,5 @@ def test_tk_fix_speakers_edits_and_rebuilds_the_review(tk_root, monkeypatch):
     assert list(dialog.name_vars) == ["SPEAKER_00"] and dialog.name_vars["SPEAKER_00"].get() == "Maria R"
     assert dialog.template_boxes["SPEAKER_00"].current() == 1
     dialog._ok()
-    assert dialog.result == ReviewResult(names={"SPEAKER_00": "Maria R"}, subtitles=True, textplus=False, template_index={"SPEAKER_00": 1})
+    assert dialog.result == ReviewResult(names={"SPEAKER_00": "Maria R"}, subtitles=True, textplus=False, template_index={"SPEAKER_00": 1},
+                                         naming_provider="auto")

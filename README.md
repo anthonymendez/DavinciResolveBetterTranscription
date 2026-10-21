@@ -83,6 +83,43 @@ those into the keychain with `better-captions key migrate`; it removes them from
 On a headless Linux machine without a Secret Service there is no keychain;
 the `key` commands say so, and you set the environment variables instead.
 
+### Speaker naming with Claude Code or Antigravity (no API key)
+
+If you already use a coding-agent CLI that you're signed in to, speaker naming
+can use it instead of an API key:
+
+- `claude-cli`: [Claude Code](https://claude.com/claude-code) (`claude`). The
+  transcript is sent to **Anthropic** under your Claude account and counts
+  towards that account's usage. Runs `claude -p … --output-format json --tools ""`
+  with the `haiku` model by default.
+- `antigravity-cli`: Google's Antigravity CLI (`agy`). The transcript is sent to
+  **Google** under your Antigravity/Google account and its terms. Runs
+  `agy -p … --output-format json`.
+
+Pick one in the review dialog under *Speaker naming (next run)*, or set
+`"naming_provider"` in `config.json` (`better-captions run --naming claude-cli`
+on the command line). With the default `auto`, the engine uses an Anthropic API
+key if it has one, then an OpenAI-compatible setup, then `claude`, then `agy`,
+and otherwise the local rules. Choose *Rules only* to keep the transcript on
+your machine.
+
+The CLI runs non-interactively in an empty temporary folder with no tools and
+no permission bypass, with a 120-second time limit. The transcript is passed on
+the command line, so long recordings are shortened (the start and end are kept)
+to fit the operating system's limit. If the CLI is missing, not signed in,
+fails or times out, naming falls back to the local rules.
+
+Resolve starts the engine with a minimal `PATH`, so the CLIs are also looked for
+in `~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin`, `/usr/local/bin`,
+`%LOCALAPPDATA%\Programs` and `%APPDATA%\npm`. `better-captions doctor` shows
+what it found under `naming_clis`. Optional `config.json` settings:
+
+| Key | Meaning |
+| --- | --- |
+| `claude_cli_path`, `antigravity_cli_path` | full path to `claude` / `agy` when it isn't found |
+| `claude_cli_model`, `antigravity_cli_model` | model to ask for (`--model`); claude defaults to `haiku` |
+| `naming_cli_timeout` | seconds before giving up (default 120) |
+
 ## How it works
 
 The plugin has two halves. The **Resolve plugin** runs inside Resolve and only
@@ -125,8 +162,8 @@ flowchart LR
    words are grouped into sentences per speaker.
 5. **Name speakers.** The engine looks for names in the conversation, such as
    self-introductions ("I'm Sam") and people addressing each other ("thanks,
-   Maria"). Optionally it asks Claude, OpenAI, or a local model through Ollama
-   for better guesses. If no name is found, the speaker stays `SPEAKER_00` and
+   Maria"). Optionally it asks Claude, OpenAI, a local model through Ollama,
+   or your signed-in Claude Code / Antigravity CLI for better guesses. If no name is found, the speaker stays `SPEAKER_00` and
    so on, and you can type one in.
 6. **Build captions.** Sentences are split into readable captions (at most 42
    characters per line, 2 lines, 6 seconds by default).

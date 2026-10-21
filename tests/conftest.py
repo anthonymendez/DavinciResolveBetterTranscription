@@ -1,4 +1,5 @@
-"""Shared fixtures. No test touches the real OS keychain: an in-memory backend is installed for all."""
+"""Shared fixtures. No test touches the real OS keychain (an in-memory backend is installed for all)
+or a real coding-agent CLI."""
 
 import keyring
 import pytest
@@ -21,6 +22,14 @@ class MemoryKeyring(KeyringBackend):
     def delete_password(self, service, username):
         if self.store.pop((service, username), None) is None:
             raise keyring.errors.PasswordDeleteError(username)
+
+
+@pytest.fixture(autouse=True)
+def no_agent_clis(monkeypatch):
+    """"auto" naming must never find (and run) a real claude / agy installed on this machine."""
+    from better_captions.naming import agent_cli
+
+    monkeypatch.setattr(agent_cli, "available", lambda cli, options: None)
 
 
 @pytest.fixture(autouse=True)

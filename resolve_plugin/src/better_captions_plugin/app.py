@@ -10,7 +10,8 @@
    re-run on the same audio re-applies them
 6. create new tracks (subtitle and/or Text+) from the edited transcript, never touching existing ones;
    with "Highlight words as they're spoken" each Text+ cue becomes one clip per word step
-   (``word_highlight``); the toggle and colour are remembered in config.json
+   (``word_highlight``); the toggle and colour, and the speaker-naming provider picked for the
+   next run, are remembered in config.json
 7. summary; the temp dir is kept only when the user still needs the SRT files
 """
 
@@ -24,7 +25,8 @@ import traceback
 from better_captions_plugin import config as config_mod
 from better_captions_plugin import engine_runner, planning, resolve_io, speaker_edits, word_highlight
 from better_captions_plugin import transcript as transcript_mod
-from better_captions_plugin.ui import Backend, ReviewRequest, ReviewResult, SpeakerRow, choose_backend, speaker_rows
+from better_captions_plugin.ui import (NAMING_CHOICES, Backend, ReviewRequest, ReviewResult, SpeakerRow, choose_backend, naming_index,
+                                       speaker_rows)
 
 TITLE = "Better Captions"
 
@@ -268,16 +270,19 @@ def build_review_request(transcript, templates, timeline_name, clock, range_star
         note=note,
         highlight_words=config.get(config_mod.HIGHLIGHT_WORDS) is True,
         highlight_color=highlight_color,
+        naming_provider=NAMING_CHOICES[naming_index(config.get(config_mod.NAMING_PROVIDER))][0],
     )
 
 
 def remember_review_choices(config: dict, review: ReviewResult, outcome: Outcome):
-    """Keep the highlight toggle and colour in config.json for the next run."""
+    """Keep the highlight toggle and colour, and the naming provider for the next run, in config.json."""
     updates = {config_mod.HIGHLIGHT_WORDS: bool(review.highlight_words), config_mod.HIGHLIGHT_COLOR: review.highlight_color}
+    if review.naming_provider is not None:
+        updates[config_mod.NAMING_PROVIDER] = review.naming_provider
     try:
         config_mod.save_settings(config, updates)
     except (OSError, config_mod.ConfigError) as exc:
-        outcome.warnings.append("highlight settings not remembered: %s" % exc)
+        outcome.warnings.append("review settings not remembered: %s" % exc)
 
 
 def create_tracks(media_pool, timeline, transcript, review: ReviewResult, templates, clock, origin_frame, srt_paths, outcome: Outcome):
