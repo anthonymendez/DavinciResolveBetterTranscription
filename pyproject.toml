@@ -30,3 +30,4 @@ packages = ["src/better_captions"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["resolve_plugin/src", "."]
