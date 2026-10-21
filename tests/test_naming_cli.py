@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -193,7 +194,8 @@ def test_missing_cli_falls_back_to_heuristic(monkeypatch, tmp_path, caplog):
 
 def test_discovery_order_option_config_path_then_install_dirs(tmp_path, caplog):
     home = tmp_path / "home"
-    on_path = make_program(tmp_path / "pathdir" / "claude")
+    # The PATH lookup is the host's shutil.which, which on a Windows host only matches PATHEXT names.
+    on_path = make_program(tmp_path / "pathdir" / ("claude.exe" if sys.platform == "win32" else "claude"))
     local_bin = make_program(home / ".local" / "bin" / "claude")
     claude_local = make_program(home / ".claude" / "local" / "claude")
     configured = make_program(tmp_path / "configured" / "claude")
