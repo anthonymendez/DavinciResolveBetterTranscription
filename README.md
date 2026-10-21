@@ -48,7 +48,10 @@ Restart Resolve after Python is installed.
 
 Options (environment variables):
 
-- `BETTER_CAPTIONS_REF`: git branch/tag to install (default `main`)
+- `BETTER_CAPTIONS_REF`: git branch, tag or commit to install. By default the
+  installer picks the [latest release](https://github.com/anthonymendez/DavinciResolveBetterTranscription/releases/latest),
+  falling back to `main` (with a warning) if there is none or GitHub's API can't
+  be reached; set `BETTER_CAPTIONS_REF=main` for the development version
 - `BETTER_CAPTIONS_HOME`: install somewhere other than the default data dir
 - `BETTER_CAPTIONS_SOURCE`: install from a local checkout instead of GitHub
 - `BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON=1`: skip the system Python check/install

@@ -1,0 +1,75 @@
+name: Release
+
+# Pushing a vMAJOR.MINOR.PATCH tag runs the full CI matrix, checks the tag
+# against pyproject.toml's version, builds the package and publishes a GitHub
+# Release with notes generated from the commits since the previous tag.
+# How to cut one: docs/RELEASING.md.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: publish release
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags, for the release notes.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Check the tag matches the package version
+        id: version
+        run: echo "version=$(uv run --no-project --python 3.12 .github/scripts/check_release_version.py "$GITHUB_REF_NAME")" >> "$GITHUB_OUTPUT"
+      - name: Build wheel and sdist
+        run: uv build
+      - name: Add source zip and installers
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git archive --format=zip --prefix="better-captions-$VERSION/" -o "dist/better-captions-$VERSION-source.zip" "$GITHUB_REF_NAME"
+          cp install/install.sh install/install.ps1 dist/
+          ls -l dist
+      - name: Generate release notes from commits
+        run: |
+          prev="$(git describe --tags --abbrev=0 --match 'v*.*.*' "$GITHUB_REF_NAME^" 2>/dev/null || true)"
+          {
+            if [ -n "$prev" ]; then
+              echo "## Changes since $prev"
+              range="$prev..$GITHUB_REF_NAME"
+            else
+              echo "## Changes"
+              range="$GITHUB_REF_NAME"
+            fi
+            echo
+            git log --no-merges --pretty='- %s (%h)' "$range"
+            echo
+            echo "## Install"
+            echo
+            echo "macOS / Linux: \`curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install/install.sh | bash\`"
+            echo
+            echo "Windows (PowerShell): \`irm https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install/install.ps1 | iex\`"
+            echo
+            echo "The installers install the latest release by default; set \`BETTER_CAPTIONS_REF=$GITHUB_REF_NAME\` to pin this one."
+          } > release-notes.md
+          cat release-notes.md
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "Better Captions $VERSION" \
+            --notes-file release-notes.md \
+            dist/*.whl dist/*.tar.gz dist/*-source.zip dist/install.sh dist/install.ps1

@@ -147,6 +147,7 @@ def test_install_upgrade_uninstall(sandbox: dict[str, str], source: Path) -> Non
     first = _run("install.sh", sandbox)
     _assert_installed(sandbox, source)
     assert "Workspace > Scripts" in first.stdout
+    assert f"Better Captions 0.1.0 is installed (from {source})" in first.stdout
     assert "Skipping the system Python check" in first.stdout
     assert "GPU" in first.stdout
     if not Path("/opt/resolve").exists() and not Path("/Applications/DaVinci Resolve").exists():
