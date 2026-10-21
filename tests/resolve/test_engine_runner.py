@@ -54,7 +54,8 @@ def test_run_engine_streams_events_and_returns_done(wav, tmp_path):
     pcts = [e["pct"] for e in events if e["event"] == "progress"]
     assert pcts == sorted(pcts) and pcts[-1] == 100.0
     assert pumps  # the UI got a chance to repaint while waiting
-    transcript = json.load(open(done["transcript"], encoding="utf-8"))
+    with open(done["transcript"], encoding="utf-8") as handle:
+        transcript = json.load(handle)
     assert transcript["meta"]["audio"] == str(wav)
 
 

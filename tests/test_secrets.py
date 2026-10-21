@@ -86,7 +86,7 @@ def test_erroring_backend_raises_keychain_unavailable():
         lambda: secrets.set_key("openai", "k"),
         lambda: secrets.delete_key("openai"),
     ):
-        with pytest.raises(secrets.KeychainUnavailable, match="KeyringLocked|PasswordSetError"):
+        with pytest.raises(secrets.KeychainUnavailable, match=r"KeyringLocked|PasswordSetError"):
             call()
 
 

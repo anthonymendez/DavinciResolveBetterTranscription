@@ -27,7 +27,8 @@ def test_zip_is_up_to_date_with_source():
     build = _build_module()
     assert os.path.isfile(ZIP), "run: uv run python resolve_plugin/build_plugin_zip.py"
     assert build.is_up_to_date(), (
-        "resolve_plugin/Utility/better_captions_plugin.zip is stale; run: uv run python resolve_plugin/build_plugin_zip.py"
+        "resolve_plugin/Utility/better_captions_plugin.zip is stale; "
+        "run: uv run python resolve_plugin/build_plugin_zip.py"
     )
 
 

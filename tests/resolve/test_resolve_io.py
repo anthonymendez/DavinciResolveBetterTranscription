@@ -8,11 +8,9 @@ from better_captions_plugin import resolve_io
 from better_captions_plugin.planning import ClipPlacement, TrackPlan
 from better_captions_plugin.resolve_io import ResolveError, SubtitlePlacementError
 from better_captions_plugin.timing import TimelineClock
-
 from tests.resolve.fake_resolve import (
     FakeMediaPoolItem,
     FakeProject,
-    FakeResolve,
     FakeTimeline,
     make_media_pool,
     make_world,
@@ -233,7 +231,7 @@ def test_create_textplus_track_reports_duration_mismatch():
     tl, mp = resolve.project.timeline, resolve.project.media_pool
     quirky = FakeMediaPoolItem("Fixed length", kind="Generator", placed_duration=120)
     mp.root.clips.append(quirky)
-    template = [t for t in resolve_io.find_text_templates(mp) if t.name == "Fixed length"][0]
+    template = next(t for t in resolve_io.find_text_templates(mp) if t.name == "Fixed length")
     result = resolve_io.create_textplus_track(
         mp, tl, _plan("S", [ClipPlacement(86400, 10, "a", 0, 0.4)], template=template)
     )
@@ -245,7 +243,7 @@ def test_create_textplus_track_without_textplus_node_removes_track():
     tl, mp = resolve.project.timeline, resolve.project.media_pool
     bad = FakeMediaPoolItem("Not a title", kind="Generator", has_textplus=False)
     mp.root.clips.append(bad)
-    template = [t for t in resolve_io.find_text_templates(mp) if t.name == "Not a title"][0]
+    template = next(t for t in resolve_io.find_text_templates(mp) if t.name == "Not a title")
     with pytest.raises(ResolveError, match="no Text\\+ node"):
         resolve_io.create_textplus_track(mp, tl, _plan("S", [ClipPlacement(86400, 10, "a", 0, 0.4)], template=template))
     assert tl.GetTrackCount("video") == 1 and tl.deleted_tracks == [("video", 2, "S")]

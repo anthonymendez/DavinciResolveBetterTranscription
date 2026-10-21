@@ -33,7 +33,7 @@ class UIManagerProgress(ProgressView):
         self.ui = ui
         self.disp = dispatcher
         self._cancelled = False
-        self._lines: "list[str]" = []
+        self._lines: list[str] = []
         self.window = dispatcher.AddWindow(
             {"ID": WINDOW_ID_PROGRESS, "WindowTitle": title, "Geometry": [200, 200, 560, 320]},
             [
@@ -129,10 +129,10 @@ class UIManagerBackend(Backend):
         disp.RunLoop()
         window.Hide()
 
-    def review(self, request: ReviewRequest) -> "ReviewResult | None":
+    def review(self, request: ReviewRequest) -> ReviewResult | None:
         """The review window; "Fix speakers…" closes it, runs the editor and reopens it rebuilt."""
         speakers = list(request.speakers)
-        template_choice: "dict[str, int]" = {}
+        template_choice: dict[str, int] = {}
         checked = {
             "Subtitles": bool(request.default_subtitles and request.allow_subtitles),
             "TextPlus": bool(request.default_textplus and request.templates),
@@ -213,8 +213,8 @@ class UIManagerBackend(Backend):
             [
                 ui.VGroup(
                     {"Spacing": 6},
-                    header
-                    + [
+                    [
+                        *header,
                         ui.HGroup(
                             {"Spacing": 8, "Weight": 0},
                             [
@@ -222,10 +222,8 @@ class UIManagerBackend(Backend):
                                 ui.Label({"Text": "Name (track name)", "Weight": 0.3}),
                                 ui.Label({"Text": "Text+ template", "Weight": 0.45}),
                             ],
-                        )
-                    ]
-                    + rows
-                    + [
+                        ),
+                        *rows,
                         ui.CheckBox(
                             {
                                 "ID": "Subtitles",
@@ -355,7 +353,10 @@ class UIManagerBackend(Backend):
                                         ),
                                         ui.Label(
                                             {
-                                                "Text": "Merge moves all of the selected speaker's cues;\nthe speaker merged into keeps its name.",
+                                                "Text": (
+                                                    "Merge moves all of the selected speaker's cues;\n"
+                                                    "the speaker merged into keeps its name."
+                                                ),
                                                 "WordWrap": True,
                                                 "Weight": 0,
                                             }
@@ -508,7 +509,7 @@ def _add_row(tree, values):
     tree.AddTopLevelItem(item)
 
 
-def _item_text(item, column: int = 0) -> "str | None":
+def _item_text(item, column: int = 0) -> str | None:
     if not item:
         return None
     try:

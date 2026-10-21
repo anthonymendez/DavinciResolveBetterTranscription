@@ -20,7 +20,7 @@ from dataclasses import dataclass
 _TC_RE = re.compile(r"^\s*(\d{1,2})[:;.](\d{2})[:;.](\d{2})([:;.,])(\d{2,3})\s*$")
 
 
-def parse_frame_rate(value) -> "tuple[float, bool]":
+def parse_frame_rate(value) -> tuple[float, bool]:
     """Parse a Resolve frame-rate setting into ``(fps, drop_frame)``.
 
     ``Timeline.GetSetting("timelineFrameRate")`` returns strings like ``"24"``,
@@ -115,8 +115,8 @@ class TimelineClock:
 
     @classmethod
     def from_settings(
-        cls, frame_rate, start_timecode: "str | None" = None, start_frame: "int | None" = None, drop_frame_setting=None
-    ) -> "TimelineClock":
+        cls, frame_rate, start_timecode: str | None = None, start_frame: int | None = None, drop_frame_setting=None
+    ) -> TimelineClock:
         """Build from raw Resolve values; ``start_frame`` wins over ``start_timecode``."""
         fps, drop = parse_frame_rate(frame_rate)
         if drop_frame_setting is not None:
@@ -128,7 +128,7 @@ class TimelineClock:
             start_frame = timecode_to_frames(start_timecode, fps, drop) if start_timecode else 0
         return cls(fps=fps, drop_frame=drop, start_frame=int(start_frame))
 
-    def frame_at(self, seconds: float, origin_frame: "int | None" = None) -> int:
+    def frame_at(self, seconds: float, origin_frame: int | None = None) -> int:
         """Absolute frame for ``seconds`` after ``origin_frame`` (default: the timeline start)."""
         origin = self.start_frame if origin_frame is None else origin_frame
         return origin + seconds_to_frames(seconds, self.fps)

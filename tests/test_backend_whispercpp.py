@@ -260,7 +260,7 @@ def test_ggml_model_name(model, expected):
 
 
 def test_unknown_model_rejected():
-    with pytest.raises(ValueError, match="unknown whisper.cpp model"):
+    with pytest.raises(ValueError, match=r"unknown whisper\.cpp model"):
         wc.ggml_model_name("distil-large-v3")
 
 
@@ -369,7 +369,7 @@ def test_checksum_mismatch_removes_download_and_raises(home, fake_downloads, mon
 
 
 def test_download_failure_leaves_no_partial_file(home, fake_downloads, monkeypatch):
-    asset = pin(monkeypatch, "whisper-linux.tar.gz", b"x")
+    pin(monkeypatch, "whisper-linux.tar.gz", b"x")
     with pytest.raises(RuntimeError, match="could not download"):
         wc.ensure_binary()
     assert not [p for p in (home / "bin").rglob("*") if p.is_file()]
@@ -533,7 +533,7 @@ def test_transcribe_cpu_language_and_duration_fallback(fake_cli, monkeypatch):
     monkeypatch.setattr(wc, "audio_duration", lambda path: None)
     FakePopen.stderr_lines = ["whisper_print_progress_callback: progress =  40%\n"]
     seen = []
-    language, duration, words = wc.transcribe(
+    language, duration, _words = wc.transcribe(
         fake_cli.audio, model="small", language="de", device="cpu", progress=seen.append
     )
     assert language == "en" and duration == 2.0  # language from the JSON, duration = end of the last segment
@@ -565,7 +565,7 @@ def test_transcribe_without_dtw_support(fake_cli, monkeypatch):
 def test_transcribe_failure_raises_with_stderr(fake_cli):
     FakePopen.returncode = 3
     FakePopen.stderr_lines = ["error: failed to initialize whisper context\n"]
-    with pytest.raises(RuntimeError, match="exit 3.*failed to initialize whisper context"):
+    with pytest.raises(RuntimeError, match=r"exit 3.*failed to initialize whisper context"):
         wc.transcribe(fake_cli.audio, model="small")
 
 

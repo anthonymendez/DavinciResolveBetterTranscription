@@ -5,9 +5,8 @@ import os
 import shutil
 import tarfile
 import urllib.request
-from collections.abc import Hashable
+from collections.abc import Callable, Hashable
 from pathlib import Path, PurePosixPath
-from typing import Callable
 
 import numpy as np
 

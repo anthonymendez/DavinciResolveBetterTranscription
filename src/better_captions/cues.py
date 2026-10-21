@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import combinations
+from itertools import combinations, pairwise
 
 from better_captions.schema import Cue, Segment, Transcript, Word
 
@@ -98,9 +98,9 @@ def _split_lines(words: list[Word], max_lines: int, max_chars: int) -> list[list
         best: tuple[tuple[int, int], list[list[str]]] | None = None
         for cuts in combinations(range(1, n), lines - 1):
             bounds = (0, *cuts, n)
-            groups = [texts[a:b] for a, b in zip(bounds, bounds[1:])]
+            groups = [texts[a:b] for a, b in pairwise(bounds)]
             widths = [len(" ".join(g)) for g in groups]
-            if any(width > max_chars and len(g) > 1 for width, g in zip(widths, groups)):
+            if any(width > max_chars and len(g) > 1 for width, g in zip(widths, groups, strict=False)):
                 continue
             # Minimise the longest line (balance), then prefer breaks after punctuation.
             punct = sum(_ends_with(texts[c - 1], SENTENCE_END + CLAUSE_END) for c in cuts)

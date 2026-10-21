@@ -22,9 +22,9 @@ def _srt_seconds(text: str) -> float:
     return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
 
 
-def parse_srt(path: str) -> "list[tuple[float, float, str]]":
+def parse_srt(path: str) -> list[tuple[float, float, str]]:
     cues = []
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         blocks = re.split(r"\n\s*\n", handle.read().strip())
     for block in blocks:
         lines = block.strip().splitlines()
@@ -85,7 +85,10 @@ class FakeComp:
         """What ExportFusionComp writes, shaped like a Resolve 21 Text+ title's comp."""
         tool = self.FindToolByID("TextPlus")
         if tool is None:
-            body = "\t\tBackground1 = Background {\n\t\t\tInputs = {\n\t\t\t\tWidth = Input { Value = 1920, },\n\t\t\t},\n\t\t},\n"
+            body = (
+                "\t\tBackground1 = Background {\n\t\t\tInputs = {\n"
+                "\t\t\t\tWidth = Input { Value = 1920, },\n\t\t\t},\n\t\t},\n"
+            )
         else:
             text = tool.GetInput("StyledText") or ""
             follower = ""
@@ -130,7 +133,7 @@ class FakeComp:
         )
 
 
-def parse_imported_comp(text: str) -> "FakeComp | None":
+def parse_imported_comp(text: str) -> FakeComp | None:
     """What ImportFusionComp makes of a comp file: None unless it is well formed and its Text+ tool's
     StyledText comes from a StyledTextCLS tool (the only edit the plugin makes)."""
     code = re.sub(_LUA_STRING, '""', text)
@@ -218,7 +221,7 @@ class FakeTimelineItem:
     def ImportFusionComp(self, path):
         if self.import_fails or not os.path.isfile(path):
             return None
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             comp = parse_imported_comp(handle.read())
         if comp is None:
             return None
@@ -252,7 +255,7 @@ class FakeMediaPoolItem:
         self,
         name: str,
         kind: str = "Video + Audio",
-        file_path: "str | None" = None,
+        file_path: str | None = None,
         has_textplus: bool = True,
         srt_cues=None,
         placed_duration=None,
@@ -296,7 +299,7 @@ class FakeFolder:
 @dataclass
 class FakeTrack:
     name: str
-    items: "list[FakeTimelineItem]" = field(default_factory=list)
+    items: list[FakeTimelineItem] = field(default_factory=list)
 
 
 class FakeTimeline:
@@ -386,7 +389,7 @@ class FakeTimeline:
             return []
         return list(self.tracks[track_type][index - 1].items)
 
-    def track(self, track_type, name) -> "FakeTrack | None":
+    def track(self, track_type, name) -> FakeTrack | None:
         return next((t for t in self.tracks[track_type] if t.name == name), None)
 
     def _video_content_end(self):
@@ -398,7 +401,7 @@ class FakeTimeline:
 
 
 class FakeMediaPool:
-    def __init__(self, timeline: FakeTimeline, root: "FakeFolder | None" = None):
+    def __init__(self, timeline: FakeTimeline, root: FakeFolder | None = None):
         self.timeline = timeline
         self.root = root or FakeFolder("Master")
         self.imported = []
@@ -492,7 +495,7 @@ class FakeMediaPool:
 
 
 class FakeProject:
-    def __init__(self, timeline: FakeTimeline, media_pool: "FakeMediaPool | None" = None, name="Project"):
+    def __init__(self, timeline: FakeTimeline, media_pool: FakeMediaPool | None = None, name="Project"):
         self.name = name
         self.timeline = timeline
         self.media_pool = media_pool or FakeMediaPool(timeline)

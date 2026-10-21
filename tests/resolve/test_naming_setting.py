@@ -13,7 +13,6 @@ from better_captions_plugin.timing import TimelineClock
 from better_captions_plugin.transcript import from_dict
 from better_captions_plugin.ui import NAMING_CHOICES, ReviewRequest, ReviewResult, SpeakerRow, naming_index
 from better_captions_plugin.ui.uimanager_ui import UIManagerBackend
-
 from tests.resolve.fake_engine import TRANSCRIPT
 from tests.resolve.fake_resolve import make_world
 from tests.resolve.fake_ui import FakeBackend, accept_all

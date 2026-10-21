@@ -14,7 +14,6 @@ from better_captions import naming, secrets
 from better_captions.naming import agent_cli, llm
 from better_captions.naming.agent_cli import ANTIGRAVITY, CLAUDE
 from better_captions.schema import Segment, Speaker, Transcript
-
 from tests.test_naming import DIALOGUE, LLM_REPLY, FakeAnthropic, FakeOpenAI, make_transcript, names
 
 
@@ -298,7 +297,7 @@ IF EXIST "%dp0%\node.exe" (
 )
 
 endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_modules\@anthropic-ai\claude-code\cli.js" %*
-"""
+"""  # noqa: E501 (a verbatim npm shim)
 
 ELECTRON_SHIM = r"""@echo off
 setlocal

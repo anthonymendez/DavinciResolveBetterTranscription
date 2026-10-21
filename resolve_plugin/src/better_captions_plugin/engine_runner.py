@@ -49,7 +49,7 @@ def parse_event(line: str) -> dict:
     return {"event": "log", "line": line.rstrip("\r\n")}
 
 
-def _reader(stream, sink: "queue.Queue"):
+def _reader(stream, sink: queue.Queue):
     try:
         for line in iter(stream.readline, ""):
             sink.put(("line", line))
@@ -85,10 +85,10 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
     try:
         process = popen(list(argv), **kwargs)
     except OSError as exc:
-        raise EngineError("could not start the engine (%s): %s" % (argv[0], exc))
+        raise EngineError("could not start the engine (%s): %s" % (argv[0], exc)) from exc
 
-    events: "queue.Queue" = queue.Queue()
-    stderr_lines: "list[str]" = []
+    events: queue.Queue = queue.Queue()
+    stderr_lines: list[str] = []
     threads = [
         threading.Thread(target=_reader, args=(process.stdout, events), daemon=True),
         threading.Thread(target=_stderr_reader, args=(process.stderr, stderr_lines, events), daemon=True),
@@ -138,7 +138,7 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
     return done
 
 
-def _stderr_reader(stream, store: "list[str]", sink: "queue.Queue"):
+def _stderr_reader(stream, store: list[str], sink: queue.Queue):
     try:
         for line in iter(stream.readline, ""):
             line = line.rstrip("\r\n")

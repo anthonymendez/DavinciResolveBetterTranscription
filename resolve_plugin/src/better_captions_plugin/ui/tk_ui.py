@@ -88,7 +88,7 @@ class TkProgress(ProgressView):
 class TkBackend(Backend):
     name = "tk"
 
-    def __init__(self, root: "tk.Tk | None" = None):
+    def __init__(self, root: tk.Tk | None = None):
         self.root = root or tk.Tk()
         self.root.withdraw()
         try:
@@ -107,7 +107,7 @@ class TkBackend(Backend):
         self.root.update()
         messagebox.showerror(title, text, parent=self.root)
 
-    def review(self, request: ReviewRequest) -> "ReviewResult | None":
+    def review(self, request: ReviewRequest) -> ReviewResult | None:
         dialog = _ReviewDialog(self.root, request)
         return dialog.run()
 
@@ -202,7 +202,7 @@ class _ReviewDialog:
         self.window.update_idletasks()
         _center(self.window)
 
-    def _build_rows(self, template_choice: "dict[str, int]"):
+    def _build_rows(self, template_choice: dict[str, int]):
         """(Re)build one row per speaker in ``self.speakers``; template picks carry over by speaker id."""
         for child in self.table.winfo_children():
             child.destroy()
@@ -375,14 +375,14 @@ class _SpeakerEditorDialog:
 
     # selection
 
-    def selected_speaker(self) -> "str | None":
+    def selected_speaker(self) -> str | None:
         selection = self.speaker_tree.selection()
         return selection[0] if selection else None
 
-    def selected_cues(self) -> "list[int]":
+    def selected_cues(self) -> list[int]:
         return [cue_index(iid) for iid in self.cue_tree.selection()]
 
-    def _choice(self, box) -> "str | None":
+    def _choice(self, box) -> str | None:
         ids = self._choice_ids.get(str(box), [])
         index = box.current()
         return ids[index] if 0 <= index < len(ids) else None

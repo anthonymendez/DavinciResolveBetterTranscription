@@ -7,7 +7,6 @@ import pytest
 
 from better_captions_plugin import app
 from better_captions_plugin.ui import ReviewResult
-
 from tests.resolve.fake_engine import TRANSCRIPT
 from tests.resolve.fake_resolve import FakeMediaPoolItem, make_world
 from tests.resolve.fake_ui import FakeBackend, accept_all

@@ -7,11 +7,11 @@ import sys
 
 import pytest
 
-from better_captions_plugin import app, planning, speaker_edits, transcript as transcript_mod
+from better_captions_plugin import app, planning, speaker_edits
+from better_captions_plugin import transcript as transcript_mod
 from better_captions_plugin.speaker_edits import EditError, SpeakerEditor
 from better_captions_plugin.timing import TimelineClock
 from better_captions_plugin.ui.speaker_editor import NEW_SPEAKER, EditorController, cue_index, cue_number
-
 from tests.resolve.fake_engine import TRANSCRIPT
 from tests.resolve.fake_resolve import make_world, parse_srt
 from tests.resolve.fake_ui import FakeBackend, accept_all, edit_then_accept
@@ -153,7 +153,7 @@ def test_every_edit_is_undoable_in_order():
     snapshots.append(copy.deepcopy(editor.data))
     editor.split([0, 2])
     assert editor.relabelled and editor.can_undo
-    for kind, expected in zip(["split", "reassign", "merge", "rename"], reversed(snapshots)):
+    for kind, expected in zip(["split", "reassign", "merge", "rename"], reversed(snapshots), strict=False):
         assert editor.undo()["op"] == kind
         assert editor.data == expected
     assert editor.undo() is None and not editor.can_undo
@@ -235,7 +235,7 @@ def test_saved_edits_that_no_longer_fit_are_skipped():
     rerun["cues"][3]["start"] = 7.0  # the cue moved: no longer the same cue
     rerun["speakers"] = rerun["speakers"][:2]
     again = SpeakerEditor(rerun)
-    assert again.reapply(ops + [{"op": "merge", "source": "SPEAKER_05", "target": "SPEAKER_00"}, "junk"]) == 0
+    assert again.reapply([*ops, {"op": "merge", "source": "SPEAKER_05", "target": "SPEAKER_00"}, "junk"]) == 0
     assert len(again.skipped) == 3 and again.ops == []
     assert again.data == rerun
 
@@ -284,7 +284,7 @@ def test_planning_after_merge_puts_every_cue_on_one_track():
         "Always.",
     ]
     assert [c.record_frame for c in plans[0].clips] == [86412, 86450, 86496, 86554]
-    for a, b in zip(plans[0].clips, plans[0].clips[1:]):
+    for a, b in zip(plans[0].clips, plans[0].clips[1:], strict=False):
         assert a.end_frame <= b.record_frame  # 4.0-6.5 and 6.4-8.0 overlapped once on one track
 
 
@@ -385,7 +385,8 @@ def test_app_merge_in_review_writes_one_track_and_saves_edits(config, tmp_path):
     assert [(i.GetStart(), i.GetName()) for i in tl.track("subtitle", "Maria").items] == _frames(tl, TRANSCRIPT["cues"])
     # The edits sit next to the run's transcript.json and in the per-audio store.
     out_dir = os.path.join(outcome.work_dir, "out")
-    saved = json.loads(open(os.path.join(out_dir, "edits.json"), encoding="utf-8").read())
+    with open(os.path.join(out_dir, "edits.json"), encoding="utf-8") as handle:
+        saved = json.load(handle)
     assert saved["ops"] == [{"op": "merge", "source": "SPEAKER_01", "target": "SPEAKER_00"}]
     stored = os.listdir(str(tmp_path / "data" / "edits"))
     assert stored == [saved["audio_sha256"] + ".json"]
@@ -406,10 +407,8 @@ def test_app_rerun_on_the_same_audio_reapplies_saved_edits_and_undo_forgets_them
     assert [(r.id, r.name, r.cue_count) for r in request.speakers] == [("SPEAKER_00", "Maria R", 4)]
     assert "Re-applied 2 speaker fixes" in request.note
     assert [t.name for t in resolve.project.timeline.tracks["subtitle"]] == ["Maria R"]
-    assert (
-        json.load(open(os.path.join(outcome.work_dir, "out", "edits.json"), encoding="utf-8"))["ops"][0]["op"]
-        == "merge"
-    )
+    with open(os.path.join(outcome.work_dir, "out", "edits.json"), encoding="utf-8") as handle:
+        assert json.load(handle)["ops"][0]["op"] == "merge"
 
     # Third run: the user undoes everything; the saved fixes are forgotten.
     def undo_all(editor):

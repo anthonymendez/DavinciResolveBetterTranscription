@@ -97,7 +97,7 @@ def test_sherpa_models_download_once_into_data_dir(monkeypatch, tmp_path, fake_d
 
 def test_sherpa_models_only_fetch_whats_missing(tmp_path, fake_downloads):
     (tmp_path / "wespeaker_en_voxceleb_resnet34_LM.onnx").write_bytes(b"mine")
-    seg, emb = dz.sherpa_models(tmp_path)
+    _seg, emb = dz.sherpa_models(tmp_path)
     assert fake_downloads.fetched == [dz.SEGMENTATION_URL]
     assert emb.read_bytes() == b"mine"
 
@@ -115,7 +115,7 @@ def test_archive_without_model_is_an_error(tmp_path, fake_downloads):
     with tarfile.open(fileobj=buf, mode="w:bz2"):
         pass
     fake_downloads.payloads[dz.SEGMENTATION_URL] = buf.getvalue()
-    with pytest.raises(RuntimeError, match="model.onnx not found"):
+    with pytest.raises(RuntimeError, match=r"model\.onnx not found"):
         dz.sherpa_models(tmp_path)
     assert not list(tmp_path.glob("*.tar.bz2"))
 
@@ -242,7 +242,7 @@ def make_fake_sherpa(results):
 THREE = [(4.0, 6.0, 0), (0.0, 2.0, 2), (2.0, 4.0, 1), (6.0, 7.0, 2)]
 TWO = [(4.0, 6.0, 1), (0.0, 4.0, 0), (6.0, 7.0, 0)]
 ONE = [(0.0, 7.0, 0)]
-FOUR = THREE + [(7.0, 8.0, 3)]
+FOUR = [*THREE, (7.0, 8.0, 3)]
 
 
 @pytest.fixture
@@ -390,5 +390,5 @@ def test_pyannote_needs_token(monkeypatch):
 
 def test_pyannote_not_installed(monkeypatch):
     monkeypatch.setitem(sys.modules, "pyannote.audio", None)
-    with pytest.raises(RuntimeError, match="pip install pyannote.audio"):
+    with pytest.raises(RuntimeError, match=r"pip install pyannote\.audio"):
         dz.diarize("x.wav", backend="pyannote")

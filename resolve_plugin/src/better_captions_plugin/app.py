@@ -96,9 +96,9 @@ def main(
     resolve=None,
     fusion=None,
     bmd=None,
-    backend: "Backend | None" = None,
-    config: "dict | None" = None,
-    work_dir: "str | None" = None,
+    backend: Backend | None = None,
+    config: dict | None = None,
+    work_dir: str | None = None,
     environ=None,
     popen=None,
     sleep=None,
@@ -158,7 +158,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
             wav = resolve_io.render_audio(project, timeline, audio_dir, range_start, range_end, **render_kwargs)
         except resolve_io.ResolveError as exc:
             if progress.cancelled:
-                raise Cancelled()
+                raise Cancelled() from exc
             raise exc
         progress.log("Rendered audio: %s" % wav)
 
@@ -186,8 +186,8 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
                 env=config_mod.engine_environment(),
                 popen=popen,
             )
-        except engine_runner.EngineCancelled:
-            raise Cancelled()
+        except engine_runner.EngineCancelled as exc:
+            raise Cancelled() from exc
         progress.set_status("Loading transcript…")
         progress.set_progress(100)
     finally:
@@ -235,7 +235,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
 
 def reapply_saved_edits(editor, paths, audio_sha) -> str:
     """Re-apply the first saved edits for this audio; returns a note for the review dialog."""
-    path, saved = speaker_edits.find_saved_edits(paths, audio_sha)
+    _path, saved = speaker_edits.find_saved_edits(paths, audio_sha)
     if not saved:
         return ""
     applied = editor.reapply(saved.get("ops"))

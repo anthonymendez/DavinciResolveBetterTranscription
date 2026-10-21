@@ -50,7 +50,7 @@ def normalize_hex_color(value) -> str:
     return "#" + digits.upper()
 
 
-def parse_hex_color(value) -> "tuple[float, float, float]":
+def parse_hex_color(value) -> tuple[float, float, float]:
     """``(red, green, blue)`` in Fusion's 0..1 range."""
     digits = normalize_hex_color(value)[1:]
     return tuple(round(int(digits[i : i + 2], 16) / 255.0, 6) for i in (0, 2, 4))
@@ -69,7 +69,7 @@ class CueWord:
     end: float
 
 
-def tokenize_cue(text: str) -> "list[tuple[str, int, int]]":
+def tokenize_cue(text: str) -> list[tuple[str, int, int]]:
     """``(token, first, last)`` for each whitespace-separated token; ``last`` is inclusive."""
     return [(m.group(0), m.start(), m.end() - 1) for m in re.finditer(r"\S+", text)]
 
@@ -100,7 +100,7 @@ def _match_tokens(tokens, pool) -> list:
     return matched
 
 
-def _fill_gaps(matched, start: float, end: float) -> "list[tuple[float, float]]":
+def _fill_gaps(matched, start: float, end: float) -> list[tuple[float, float]]:
     """Times for every token: matched ones keep theirs, runs of unmatched ones share the gap evenly."""
     times = [None] * len(matched)
     index = 0
@@ -124,8 +124,8 @@ def _fill_gaps(matched, start: float, end: float) -> "list[tuple[float, float]]"
 
 
 def cue_words(
-    text: str, start: float, end: float, words, speaker: "str | None" = None, tolerance: float = 0.3
-) -> "list[CueWord]":
+    text: str, start: float, end: float, words, speaker: str | None = None, tolerance: float = 0.3
+) -> list[CueWord]:
     """The cue's tokens with their times, taken from the transcript's timed ``words``.
 
     The engine builds a cue's text by joining its words' stripped text, so the tokens are
@@ -162,7 +162,7 @@ def cue_words(
 class HighlightStep:
     record_frame: int  # absolute timeline frame
     duration: int  # frames, >= 1
-    word: "CueWord | None" = None  # the word lit during this step; None for a pause
+    word: CueWord | None = None  # the word lit during this step; None for a pause
 
     @property
     def end_frame(self) -> int:
@@ -174,8 +174,8 @@ def hold_frames(clock: TimelineClock, seconds: float = DEFAULT_HOLD_SECONDS) -> 
 
 
 def highlight_steps(
-    record_frame: int, duration: int, words, clock: TimelineClock, origin_frame: "int | None" = None, hold: int = 0
-) -> "list[HighlightStep]":
+    record_frame: int, duration: int, words, clock: TimelineClock, origin_frame: int | None = None, hold: int = 0
+) -> list[HighlightStep]:
     """Cut a placed cue's frames ``[record_frame, record_frame + duration)`` into steps.
 
     The steps are contiguous and cover the cue exactly, so the caption never blinks. Each
@@ -226,7 +226,7 @@ def highlight_steps(
 # Character Level Styling in an exported comp
 
 
-def cls_entries(char_start: int, char_end: int, rgb) -> "list[tuple[int, int, int, float]]":
+def cls_entries(char_start: int, char_end: int, rgb) -> list[tuple[int, int, int, float]]:
     """The CLS ``Array`` entries that colour ``[char_start, char_end]`` (inclusive)."""
     red, green, blue = rgb
     return [

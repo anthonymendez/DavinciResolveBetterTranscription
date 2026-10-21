@@ -23,7 +23,7 @@ import tempfile
 from dataclasses import dataclass
 
 from better_captions import secrets
-from better_captions.naming.llm import CHARS_PER_TOKEN, SYSTEM_PROMPT, LLMName, NamingError, build_prompt, parse_reply
+from better_captions.naming.llm import SYSTEM_PROMPT, LLMName, NamingError, build_prompt, parse_reply
 from better_captions.schema import Segment, Speaker
 
 log = logging.getLogger(__name__)

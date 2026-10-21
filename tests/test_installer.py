@@ -141,7 +141,8 @@ def test_ps1_parses(script: str) -> None:
         pytest.skip("pwsh not installed")
     check = (
         "$errs = $null; "
-        f"[System.Management.Automation.Language.Parser]::ParseFile('{INSTALL / script}', [ref]$null, [ref]$errs) | Out-Null; "
+        "[System.Management.Automation.Language.Parser]::"
+        f"ParseFile('{INSTALL / script}', [ref]$null, [ref]$errs) | Out-Null; "
         "if ($errs) { $errs | ForEach-Object { Write-Error $_.ToString() }; exit 1 }"
     )
     subprocess.run([pwsh, "-NoProfile", "-Command", check], check=True)

@@ -17,9 +17,9 @@ class TranscriptError(ValueError):
 @dataclass
 class Speaker:
     id: str
-    name: "str | None" = None
+    name: str | None = None
     name_confidence: float = 0.0
-    name_source: "str | None" = None
+    name_source: str | None = None
 
     @property
     def display_name(self) -> str:
@@ -31,7 +31,7 @@ class Cue:
     speaker: str
     start: float
     end: float
-    lines: "list[str]" = field(default_factory=list)
+    lines: list[str] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -45,28 +45,28 @@ class Word:
     text: str
     start: float
     end: float
-    speaker: "str | None" = None
+    speaker: str | None = None
 
 
 @dataclass
 class Transcript:
     language: str
     duration: float
-    speakers: "list[Speaker]" = field(default_factory=list)
-    cues: "list[Cue]" = field(default_factory=list)
+    speakers: list[Speaker] = field(default_factory=list)
+    cues: list[Cue] = field(default_factory=list)
     meta: dict = field(default_factory=dict)
-    words: "list[Word]" = field(default_factory=list)  # every segment's words, sorted by start
+    words: list[Word] = field(default_factory=list)  # every segment's words, sorted by start
 
-    def speaker(self, speaker_id: str) -> "Speaker | None":
+    def speaker(self, speaker_id: str) -> Speaker | None:
         for speaker in self.speakers:
             if speaker.id == speaker_id:
                 return speaker
         return None
 
-    def cues_for(self, speaker_id: str) -> "list[Cue]":
+    def cues_for(self, speaker_id: str) -> list[Cue]:
         return sorted((c for c in self.cues if c.speaker == speaker_id), key=lambda c: (c.start, c.end))
 
-    def speaker_ids_with_cues(self) -> "list[str]":
+    def speaker_ids_with_cues(self) -> list[str]:
         """Speaker ids in transcript order, keeping only those that have at least one cue."""
         with_cues = {c.speaker for c in self.cues}
         ordered = [s.id for s in self.speakers if s.id in with_cues]
@@ -122,11 +122,11 @@ def from_dict(data: dict) -> Transcript:
 
 def load_dict(path) -> dict:
     """The raw transcript object (validated by ``from_dict``), for editing with ``speaker_edits``."""
-    with open(str(path), "r", encoding="utf-8") as handle:
+    with open(str(path), encoding="utf-8") as handle:
         try:
             data = json.load(handle)
         except ValueError as exc:
-            raise TranscriptError("%s is not valid JSON: %s" % (path, exc))
+            raise TranscriptError("%s is not valid JSON: %s" % (path, exc)) from exc
     if not isinstance(data, dict):
         raise TranscriptError("%s does not contain a transcript object" % path)
     from_dict(data)
@@ -146,7 +146,7 @@ def format_timestamp(seconds: float) -> str:
     return "%02d:%02d:%02d,%03d" % (hours, minutes, secs, millis)
 
 
-def to_srt(cues: "list[Cue]") -> str:
+def to_srt(cues: list[Cue]) -> str:
     blocks = [
         "%d\n%s --> %s\n%s\n" % (index, format_timestamp(cue.start), format_timestamp(cue.end), cue.text)
         for index, cue in enumerate(cues, start=1)
@@ -154,7 +154,7 @@ def to_srt(cues: "list[Cue]") -> str:
     return "\n".join(blocks)
 
 
-def write_speaker_srts(transcript: Transcript, out_dir: str) -> "dict[str, str]":
+def write_speaker_srts(transcript: Transcript, out_dir: str) -> dict[str, str]:
     """One SRT per speaker (<out_dir>/<speaker_id>.srt), as the engine writes them; {speaker_id: path}."""
     os.makedirs(out_dir, exist_ok=True)
     paths = {}

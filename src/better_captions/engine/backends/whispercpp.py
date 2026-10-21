@@ -22,9 +22,9 @@ import tarfile
 import tempfile
 import urllib.request
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from better_captions.paths import data_dir, models_dir
 from better_captions.schema import Word

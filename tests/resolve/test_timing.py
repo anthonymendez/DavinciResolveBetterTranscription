@@ -50,7 +50,7 @@ def test_drop_frame_timecode_known_values():
 
 @pytest.mark.parametrize("fps, drop", [(29.97, True), (59.94, True), (24, False), (25, False), (23.976, False)])
 def test_timecode_round_trip_sweep(fps, drop):
-    for frame in list(range(0, 40000, 997)) + [1799, 1800, 1801, 17981, 17982, 17983, 107891, 107892]:
+    for frame in [*range(0, 40000, 997), 1799, 1800, 1801, 17981, 17982, 17983, 107891, 107892]:
         tc = frames_to_timecode(frame, fps, drop)
         assert timecode_to_frames(tc, fps, drop) == frame, (frame, tc)
 

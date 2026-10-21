@@ -293,11 +293,11 @@ def test_load_model_registers_cuda_runtime_first(fake_model, monkeypatch, device
         types.SimpleNamespace(WhisperModel=lambda *a, **kw: fake_model.append("model")),
     )
     tr._load_model("tiny", device)
-    assert fake_model == expected + ["model"]
+    assert fake_model == [*expected, "model"]
 
 
 def test_auto_falls_back_to_cpu_when_cuda_fails_on_first_use(fake_model):
-    language, duration, words = tr.transcribe("in.wav", device="auto")
+    language, _duration, words = tr.transcribe("in.wav", device="auto")
     assert [m.device for m in FakeModel.instances] == ["cuda", "cpu"]
     assert [w.text for w in words] == ["hi"] and language == "en"
 

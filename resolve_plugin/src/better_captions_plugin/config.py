@@ -56,7 +56,7 @@ def config_path(environ=None) -> str:
     return os.path.join(data_dir(environ), CONFIG_FILE)
 
 
-def edits_dir(config: dict) -> "str | None":
+def edits_dir(config: dict) -> str | None:
     """``<data>/edits``: speaker fixes kept per rendered audio, so a re-run can re-apply them."""
     path = config.get("_path")
     return os.path.join(os.path.dirname(str(path)), EDITS_DIR) if path else None
@@ -70,10 +70,10 @@ def load_config(path=None, environ=None) -> dict:
             "Run the installer (see README.md), then try again." % path
         )
     try:
-        with open(path, "r", encoding="utf-8-sig") as handle:
+        with open(path, encoding="utf-8-sig") as handle:
             config = json.load(handle)
     except ValueError as exc:
-        raise ConfigError("%s is not valid JSON (%s). Re-run the installer." % (path, exc))
+        raise ConfigError("%s is not valid JSON (%s). Re-run the installer." % (path, exc)) from exc
     if not isinstance(config, dict):
         raise ConfigError("%s does not contain a JSON object. Re-run the installer." % path)
     config.setdefault("_path", path)
@@ -91,11 +91,11 @@ def save_settings(config: dict, updates: dict) -> bool:
     path = config.get("_path")
     if not path:
         return False
-    with open(path, "r", encoding="utf-8-sig") as handle:
+    with open(path, encoding="utf-8-sig") as handle:
         try:
             current = json.load(handle)
         except ValueError as exc:
-            raise ConfigError("%s is not valid JSON (%s); settings not saved" % (path, exc))
+            raise ConfigError("%s is not valid JSON (%s); settings not saved" % (path, exc)) from exc
     if not isinstance(current, dict):
         raise ConfigError("%s does not contain a JSON object; settings not saved" % path)
     if all(current.get(key) == value for key, value in updates.items()):
@@ -109,7 +109,7 @@ def save_settings(config: dict, updates: dict) -> bool:
     return True
 
 
-def engine_command(config: dict, audio_path: str, out_dir: str) -> "list[str]":
+def engine_command(config: dict, audio_path: str, out_dir: str) -> list[str]:
     """``config["engine"] + ["run", audio, "--out", out_dir, <flags from user settings>]``."""
     engine = config.get("engine")
     if not isinstance(engine, (list, tuple)) or not engine or not all(isinstance(x, str) for x in engine):
@@ -119,7 +119,7 @@ def engine_command(config: dict, audio_path: str, out_dir: str) -> "list[str]":
         )
     if not os.path.exists(engine[0]):
         raise ConfigError("the engine Python %s no longer exists. Re-run the installer." % engine[0])
-    argv = list(engine) + ["run", str(audio_path), "--out", str(out_dir)]
+    argv = [*engine, "run", str(audio_path), "--out", str(out_dir)]
     for key, flag in ENGINE_FLAGS:
         value = config.get(key)
         if value is None or value == "":
@@ -131,7 +131,7 @@ def engine_command(config: dict, audio_path: str, out_dir: str) -> "list[str]":
     return argv
 
 
-def engine_environment(base=None) -> "dict[str, str]":
+def engine_environment(base=None) -> dict[str, str]:
     """Environment for the engine subprocess: Resolve's Python settings must not leak into the venv."""
     env = dict(os.environ if base is None else base)
     for key in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "RESOLVE_SCRIPT_API", "RESOLVE_SCRIPT_LIB"):

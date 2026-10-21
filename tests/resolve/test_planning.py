@@ -1,12 +1,13 @@
 import json
+from itertools import pairwise
 
 import pytest
 
-from better_captions_plugin import planning, transcript as transcript_mod
+from better_captions_plugin import planning
+from better_captions_plugin import transcript as transcript_mod
 from better_captions_plugin.planning import ClipPlacement, place_cues, plan_tracks, unique_name
 from better_captions_plugin.timing import TimelineClock
 from better_captions_plugin.transcript import Cue
-
 from tests.resolve.fake_engine import TRANSCRIPT
 
 
@@ -71,7 +72,7 @@ def test_place_cues_never_overlaps_and_is_at_least_one_frame():
         Cue("S", 2.5, 2.52, ["same start"]),
     ]
     clips = place_cues(cues, clock)
-    for a, b in zip(clips, clips[1:]):
+    for a, b in pairwise(clips):
         assert a.end_frame <= b.record_frame, (a, b)
         assert a.duration >= 1
     assert [c.text for c in clips] == ["long", "inside", "tiny", "same start"]

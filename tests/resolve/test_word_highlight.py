@@ -5,10 +5,12 @@ import json
 import os
 import random
 import sys
+from itertools import pairwise
 
 import pytest
 
-from better_captions_plugin import app, config as config_mod, planning, resolve_io, word_highlight
+from better_captions_plugin import app, planning, resolve_io, word_highlight
+from better_captions_plugin import config as config_mod
 from better_captions_plugin.timing import TimelineClock
 from better_captions_plugin.transcript import Word, from_dict
 from better_captions_plugin.ui import ReviewRequest, ReviewResult, SpeakerRow
@@ -24,13 +26,12 @@ from better_captions_plugin.word_highlight import (
     cue_words,
     highlight_steps,
 )
-
 from tests.resolve.fake_engine import TRANSCRIPT, with_words
 from tests.resolve.fake_resolve import (
     FakeComp,
     FakeMediaPoolItem,
-    FakeTool,
     FakeTimelineItem,
+    FakeTool,
     make_world,
     parse_imported_comp,
 )
@@ -180,7 +181,7 @@ def test_steps_are_contiguous_and_ordered_for_random_cues():
             t += length + rng.choice([0.0, rng.uniform(0.0, 0.6)])
         steps = highlight_steps(record, duration, words, CLOCK, hold=rng.randint(0, 12))
         assert steps[0].record_frame == record and steps[-1].end_frame == record + duration
-        assert all(a.end_frame == b.record_frame for a, b in zip(steps, steps[1:]))
+        assert all(a.end_frame == b.record_frame for a, b in pairwise(steps))
         assert all(s.duration >= 1 for s in steps)
         lit = [s.word.text for s in steps if s.word]
         assert lit == sorted(set(lit), key=int)  # each word at most once, in spoken order
@@ -287,11 +288,17 @@ def test_add_highlight_links_a_cls_tool_and_keeps_the_rest_of_the_comp():
 
 
 def test_add_highlight_handles_missing_inputs_and_name_clashes():
-    comp = "Composition {\n\tTools = ordered() {\n\t\tBetterCaptionsHighlight = Background { },\n\t\tT = TextPlus {\n\t\t},\n\t},\n}\n"
+    comp = (
+        "Composition {\n\tTools = ordered() {\n\t\tBetterCaptionsHighlight = Background { },\n"
+        "\t\tT = TextPlus {\n\t\t},\n\t},\n}\n"
+    )
     edited = add_highlight_to_comp(comp, "hi", word_highlight.cls_entries(0, 1, (1, 0, 0)))
     assert "BetterCaptionsHighlight2 = StyledTextCLS {" in edited
     assert 'SourceOp = "BetterCaptionsHighlight2"' in edited and "Inputs = {" in edited
-    no_styled = "Composition {\n\tTools = {\n\t\tT = TextPlus {\n\t\t\tInputs = {\n\t\t\t\tSize = Input { Value = 0.1, },\n\t\t\t},\n\t\t},\n\t},\n}\n"
+    no_styled = (
+        "Composition {\n\tTools = {\n\t\tT = TextPlus {\n\t\t\tInputs = {\n"
+        "\t\t\t\tSize = Input { Value = 0.1, },\n\t\t\t},\n\t\t},\n\t},\n}\n"
+    )
     edited = parse_imported_comp(add_highlight_to_comp(no_styled, "hi", word_highlight.cls_entries(0, 1, (1, 0, 0))))
     assert edited is not None and edited.cls["text"] == "hi"
 
@@ -311,12 +318,16 @@ def test_add_highlight_into_a_macro_puts_the_tool_next_to_the_text():
 def test_add_highlight_refuses_templates_that_drive_their_own_text():
     with pytest.raises(HighlightUnsupported, match="its own Follower1 tool"):
         add_highlight_to_comp(_exported(styled_text_source="Follower1"), "x", [])
-    expression = 'Composition {\n\tTools = {\n\t\tT = TextPlus {\n\t\t\tInputs = {\n\t\t\t\tStyledText = Input { Expression = "x", },\n\t\t\t},\n\t\t},\n\t},\n}'
+    expression = (
+        "Composition {\n\tTools = {\n\t\tT = TextPlus {\n\t\t\tInputs = {\n"
+        '\t\t\t\tStyledText = Input { Expression = "x", },\n\t\t\t},\n\t\t},\n\t},\n}'
+    )
     with pytest.raises(HighlightUnsupported, match="an expression"):
         add_highlight_to_comp(expression, "x", [])
     with pytest.raises(HighlightUnsupported, match="no Text\\+ tool"):
         add_highlight_to_comp(
-            'Composition {\n\tTools = {\n\t\tB = Background { Inputs = { N = Input { Value = "T = TextPlus {" } } },\n\t},\n}',
+            "Composition {\n\tTools = {\n"
+            '\t\tB = Background { Inputs = { N = Input { Value = "T = TextPlus {" } } },\n\t},\n}',
             "x",
             [],
         )
@@ -539,10 +550,11 @@ def test_full_flow_highlights_words_and_remembers_the_choice(config):
     assert len(maria) == len(words) == 9  # "Hey Jordan, / how are you?" + "Ready for the race?": one clip per word
     assert [i.highlight()["text"] for i in maria[:2]] == ["Hey Jordan,\nhow are you?"] * 2
     assert [i.highlight()["array"][0] for i in maria[:2]] == [(CLS_RED, 0, 2, 1.0), (CLS_RED, 4, 10, 1.0)]
-    assert all(i.highlight()["array"][1] == (CLS_GREEN,) + i.highlight()["array"][1][1:3] + (0.0,) for i in maria)
+    assert all(i.highlight()["array"][1] == (CLS_GREEN, *i.highlight()["array"][1][1:3], 0.0) for i in maria)
     assert maria[0].GetStart() == tl.start_frame + 12 and maria[-1].GetEnd() == tl.start_frame + 156
     assert "spoken word highlighted in 9 clips" in backend.messages[0][1]
-    saved = json.load(open(config["_path"], encoding="utf-8"))
+    with open(config["_path"], encoding="utf-8") as handle:
+        saved = json.load(handle)
     assert (
         saved["highlight_words"] is True
         and saved["highlight_color"] == "#FF0000"

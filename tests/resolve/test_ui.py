@@ -1,13 +1,12 @@
 """UI backends: UIManager against a fake Fusion UI; tkinter only when a display is available."""
 
 import sys
+
 import pytest
 
-from better_captions_plugin.ui import ReviewRequest, ReviewResult, SpeakerRow, choose_backend
+from better_captions_plugin.ui import ReviewRequest, ReviewResult, SpeakerRow
 from better_captions_plugin.ui.uimanager_ui import UIManagerBackend
-
 from tests.resolve.fake_resolve import make_world
-
 
 # --- a minimal fake of fusion.UIManager / bmd.UIDispatcher
 
@@ -223,7 +222,6 @@ def test_uimanager_review_without_templates_disables_textplus():
 def _editable_request():
     from better_captions_plugin.speaker_edits import SpeakerEditor
     from better_captions_plugin.ui import speaker_rows
-
     from tests.resolve.fake_engine import TRANSCRIPT
 
     editor = SpeakerEditor(TRANSCRIPT)
@@ -317,7 +315,6 @@ def test_uimanager_fix_speakers_merges_moves_undoes_and_rebuilds_the_review():
 def test_uimanager_editor_rename_and_unselected_actions():
     from better_captions_plugin.speaker_edits import SpeakerEditor
     from better_captions_plugin.ui.speaker_editor import EditorController
-
     from tests.resolve.fake_engine import TRANSCRIPT
 
     def script(window):

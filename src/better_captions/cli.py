@@ -57,10 +57,7 @@ def key_command(args) -> int:
 
     try:
         if args.key_action == "set":
-            if args.stdin:
-                key = sys.stdin.readline()
-            else:
-                key = getpass.getpass(f"{args.provider} API key: ")
+            key = sys.stdin.readline() if args.stdin else getpass.getpass(f"{args.provider} API key: ")
             secrets.set_key(args.provider, key)
             print(f"{args.provider}: key stored in the OS keychain ({secrets.backend_name()})")
         elif args.key_action == "delete":

@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import itertools
 import re
-from typing import Callable
+from collections.abc import Callable
 
 from better_captions.schema import Word
 
@@ -47,7 +47,8 @@ def transcribe(
     return info.language, duration, words
 
 
-# CTranslate2's errors for a missing/broken CUDA runtime, e.g. "Library libcublas.so.12 is not found or cannot be loaded".
+# CTranslate2's errors for a missing/broken CUDA runtime,
+# e.g. "Library libcublas.so.12 is not found or cannot be loaded".
 _CUDA_ERROR = re.compile(r"cuda|cublas|cudnn|nvrtc|library", re.IGNORECASE)
 
 
