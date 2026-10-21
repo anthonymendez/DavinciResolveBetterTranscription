@@ -1,8 +1,10 @@
-"""Read the engine's ``transcript.json`` (schema in ``src/better_captions/schema.py``) without importing it."""
+"""Read the engine's ``transcript.json`` (schema in ``src/better_captions/schema.py``) without importing it,
+and re-write the per-speaker SRTs when speaker edits changed who says what."""
 
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 
 SUPPORTED_SCHEMA_VERSION = 1
@@ -92,7 +94,8 @@ def from_dict(data: dict) -> Transcript:
     )
 
 
-def load(path) -> Transcript:
+def load_dict(path) -> dict:
+    """The raw transcript object (validated by ``from_dict``), for editing with ``speaker_edits``."""
     with open(str(path), "r", encoding="utf-8") as handle:
         try:
             data = json.load(handle)
@@ -100,4 +103,38 @@ def load(path) -> Transcript:
             raise TranscriptError("%s is not valid JSON: %s" % (path, exc))
     if not isinstance(data, dict):
         raise TranscriptError("%s does not contain a transcript object" % path)
-    return from_dict(data)
+    from_dict(data)
+    return data
+
+
+def load(path) -> Transcript:
+    return from_dict(load_dict(path))
+
+
+def format_timestamp(seconds: float) -> str:
+    """SRT time, HH:MM:SS,mmm (same as the engine's export/srt.py)."""
+    ms = max(0, int(round(seconds * 1000)))
+    hours, rest = divmod(ms, 3600000)
+    minutes, rest = divmod(rest, 60000)
+    secs, millis = divmod(rest, 1000)
+    return "%02d:%02d:%02d,%03d" % (hours, minutes, secs, millis)
+
+
+def to_srt(cues: "list[Cue]") -> str:
+    blocks = [
+        "%d\n%s --> %s\n%s\n" % (index, format_timestamp(cue.start), format_timestamp(cue.end), cue.text)
+        for index, cue in enumerate(cues, start=1)
+    ]
+    return "\n".join(blocks)
+
+
+def write_speaker_srts(transcript: Transcript, out_dir: str) -> "dict[str, str]":
+    """One SRT per speaker (<out_dir>/<speaker_id>.srt), as the engine writes them; {speaker_id: path}."""
+    os.makedirs(out_dir, exist_ok=True)
+    paths = {}
+    for speaker_id in transcript.speaker_ids_with_cues():
+        path = os.path.join(out_dir, speaker_id + ".srt")
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(to_srt(transcript.cues_for(speaker_id)))
+        paths[speaker_id] = path
+    return paths

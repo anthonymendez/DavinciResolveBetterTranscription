@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from better_captions_plugin.ui import Backend, ProgressView, ReviewRequest, ReviewResult
+from better_captions_plugin.ui import Backend, ProgressView, ReviewRequest, ReviewResult, speaker_rows
 
 
 class FakeProgress(ProgressView):
@@ -86,5 +86,17 @@ def accept_all(names=None, subtitles=True, textplus=False, template_index=None):
             if request.templates:
                 result.template_index[row.id] = (template_index or {}).get(row.id, 0)
         return result
+
+    return answer
+
+
+def edit_then_accept(edit, names=None, subtitles=True, textplus=False, template_index=None):
+    """An answer that first runs ``edit(request.editor)`` (as the "Fix speakers" dialog would),
+    then accepts the edited speakers like ``accept_all``."""
+
+    def answer(request: ReviewRequest):
+        edit(request.editor)
+        request = ReviewRequest(speakers=speaker_rows(request.editor), templates=request.templates)
+        return accept_all(names, subtitles, textplus, template_index)(request)
 
     return answer

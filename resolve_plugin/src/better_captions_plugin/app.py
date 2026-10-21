@@ -4,8 +4,11 @@
 2. render the current timeline's audio (or its in/out range) to a temp WAV
 3. run the engine subprocess, streaming its progress into a dialog
 4. load ``transcript.json``
-5. review dialog: rename speakers, pick outputs and a Text+ template per speaker
-6. create new tracks (subtitle and/or Text+), never touching existing ones
+5. review dialog: rename speakers, pick outputs and a Text+ template per speaker; "Fix
+   speakers…" merges / reassigns / splits speakers (``speaker_edits``), saved as
+   ``edits.json`` next to ``transcript.json`` and in ``<data>/edits/<audio sha256>.json`` so a
+   re-run on the same audio re-applies them
+6. create new tracks (subtitle and/or Text+) from the edited transcript, never touching existing ones
 7. summary; the temp dir is kept only when the user still needs the SRT files
 """
 
@@ -17,8 +20,8 @@ import tempfile
 import traceback
 
 from better_captions_plugin import config as config_mod
-from better_captions_plugin import engine_runner, planning, resolve_io, transcript as transcript_mod
-from better_captions_plugin.ui import Backend, ReviewRequest, ReviewResult, SpeakerRow, choose_backend
+from better_captions_plugin import engine_runner, planning, resolve_io, speaker_edits, transcript as transcript_mod
+from better_captions_plugin.ui import Backend, ReviewRequest, ReviewResult, SpeakerRow, choose_backend, speaker_rows
 
 TITLE = "Better Captions"
 
@@ -150,39 +153,88 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
         progress.close()
 
     transcript_path = done.get("transcript") or os.path.join(out_dir, "transcript.json")
-    transcript = transcript_mod.load(transcript_path)
+    raw_transcript = transcript_mod.load_dict(transcript_path)
+    transcript = transcript_mod.from_dict(raw_transcript)
     srt_paths = {str(k): str(v) for k, v in (done.get("srt") or {}).items()}
     for speaker_id in transcript.speaker_ids_with_cues():
         srt_paths.setdefault(speaker_id, os.path.join(out_dir, speaker_id + ".srt"))
     if not transcript.cues:
         raise resolve_io.ResolveError("the engine found no speech in the rendered audio (%s)" % transcript_path)
 
+    # Speaker fixes: re-apply those saved for this audio, let the user add more, save them all.
+    editor = speaker_edits.SpeakerEditor(raw_transcript)
+    audio_sha = speaker_edits.audio_fingerprint(wav)
+    edits_paths = [os.path.join(os.path.dirname(transcript_path), speaker_edits.EDITS_FILE)]
+    store = config_mod.edits_dir(config)
+    if store and audio_sha:
+        edits_paths.append(os.path.join(store, audio_sha + ".json"))
+    note = reapply_saved_edits(editor, edits_paths, audio_sha)
+
     templates = resolve_io.find_text_templates(media_pool)
-    request = build_review_request(transcript, templates, timeline_name, clock, range_start, range_end, config)
+    request = build_review_request(transcript, templates, timeline_name, clock, range_start, range_end, config,
+                                   editor=editor, note=note)
     review = backend.review(request)
     if review is None:
         raise Cancelled()
     if not review.subtitles and not review.textplus:
         raise Cancelled()
 
+    editor.record_names(review.names)
+    save_edits(editor, edits_paths, audio_sha, outcome)
+    transcript = editor.transcript()
+    if editor.relabelled:  # the engine's per-speaker SRTs no longer match
+        srt_paths = transcript_mod.write_speaker_srts(transcript, os.path.join(out_dir, "edited"))
+
     create_tracks(media_pool, timeline, transcript, review, templates, clock, range_start, srt_paths, outcome)
     outcome.kept_work_dir = bool(outcome.subtitle_fallbacks) or bool(config.get("keep_work_dir"))
     backend.message(TITLE, outcome.summary())
 
 
-def build_review_request(transcript, templates, timeline_name, clock, range_start, range_end, config) -> ReviewRequest:
-    rows = []
-    for speaker_id in transcript.speaker_ids_with_cues():
-        speaker = transcript.speaker(speaker_id)
-        cues = transcript.cues_for(speaker_id)
-        sample = next((c.text for c in cues if c.text.strip()), "")
-        rows.append(SpeakerRow(
-            id=speaker_id,
-            name=speaker.display_name if speaker else speaker_id,
-            cue_count=len(cues),
-            sample=sample,
-            source=speaker.name_source if speaker else None,
-        ))
+def reapply_saved_edits(editor, paths, audio_sha) -> str:
+    """Re-apply the first saved edits for this audio; returns a note for the review dialog."""
+    path, saved = speaker_edits.find_saved_edits(paths, audio_sha)
+    if not saved:
+        return ""
+    applied = editor.reapply(saved.get("ops"))
+    notes = []
+    if applied:
+        notes.append("Re-applied %d speaker fix%s saved from an earlier run on this audio (undo in \"Fix speakers…\")."
+                     % (applied, "" if applied == 1 else "es"))
+    if editor.skipped:
+        notes.append("%d saved fix%s no longer matched the transcript and %s skipped."
+                     % (len(editor.skipped), "" if len(editor.skipped) == 1 else "es", "was" if len(editor.skipped) == 1 else "were"))
+    return " ".join(notes)
+
+
+def save_edits(editor, paths, audio_sha, outcome: Outcome):
+    """Write edits.json next to transcript.json and in the per-audio store; remove them when there are no edits."""
+    for path in paths:
+        try:
+            if editor.ops:
+                speaker_edits.save_edits(path, editor, audio_sha)
+            elif os.path.isfile(path):
+                os.remove(path)
+        except OSError as exc:
+            outcome.warnings.append("speaker fixes not saved to %s: %s" % (path, exc))
+
+
+def build_review_request(transcript, templates, timeline_name, clock, range_start, range_end, config,
+                         editor=None, note: str = "") -> ReviewRequest:
+    if editor is not None:
+        rows = speaker_rows(editor)
+    else:
+        rows = []
+        for speaker_id in transcript.speaker_ids_with_cues():
+            speaker = transcript.speaker(speaker_id)
+            cues = transcript.cues_for(speaker_id)
+            sample = next((c.text for c in cues if c.text.strip()), "")
+            rows.append(SpeakerRow(
+                id=speaker_id,
+                name=speaker.display_name if speaker else speaker_id,
+                cue_count=len(cues),
+                sample=sample,
+                source=speaker.name_source if speaker else None,
+            ))
     if range_end is None:
         range_label = "whole timeline (from %s)" % clock.timecode(range_start)
     else:
@@ -195,6 +247,9 @@ def build_review_request(transcript, templates, timeline_name, clock, range_star
         range_label=range_label,
         default_subtitles=default_mode in ("subtitles", "both"),
         default_textplus=default_mode in ("textplus", "both") and bool(templates),
+        editor=editor,
+        time_label=lambda seconds: clock.timecode(clock.frame_at(seconds, range_start)),
+        note=note,
     )
 
 

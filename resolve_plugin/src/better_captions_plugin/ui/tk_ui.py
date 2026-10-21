@@ -5,7 +5,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from better_captions_plugin.ui import Backend, ProgressView, ReviewRequest, ReviewResult
+from better_captions_plugin.ui import Backend, ProgressView, ReviewRequest, ReviewResult, speaker_rows
+from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
 
 TITLE = "Better Captions"
 
@@ -109,6 +110,7 @@ class _ReviewDialog:
     def __init__(self, root: tk.Tk, request: ReviewRequest):
         self.request = request
         self.result = None
+        self.speakers = list(request.speakers)
         self.window = tk.Toplevel(root)
         self.window.title("%s – review speakers" % TITLE)
         self.window.protocol("WM_DELETE_WINDOW", self._cancel)
@@ -120,28 +122,16 @@ class _ReviewDialog:
             header += "   Range: %s" % request.range_label
         if header:
             ttk.Label(frame, text=header).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        if request.note:
+            ttk.Label(frame, text=request.note, foreground="#666").grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 8))
 
-        ttk.Label(frame, text="Speaker").grid(row=1, column=0, sticky="w")
-        ttk.Label(frame, text="Name (track name)").grid(row=1, column=1, sticky="w")
-        ttk.Label(frame, text="Text+ template").grid(row=1, column=2, sticky="w")
-        ttk.Label(frame, text="Says, e.g.").grid(row=1, column=3, sticky="w")
-
+        self.table = ttk.Frame(frame)
+        self.table.grid(row=2, column=0, columnspan=4, sticky="we")
         self.name_vars = {}
         self.template_boxes = {}
-        template_labels = list(request.templates) or ["(no Text+ templates in the media pool)"]
-        for row_index, speaker in enumerate(request.speakers, start=2):
-            label = "%s (%d cues)" % (speaker.id, speaker.cue_count)
-            ttk.Label(frame, text=label).grid(row=row_index, column=0, sticky="w", padx=(0, 8))
-            var = tk.StringVar(value=speaker.name)
-            self.name_vars[speaker.id] = var
-            ttk.Entry(frame, textvariable=var, width=24).grid(row=row_index, column=1, sticky="we", padx=(0, 8))
-            box = ttk.Combobox(frame, values=template_labels, state="readonly", width=34)
-            box.current(min(row_index - 2, len(template_labels) - 1) if request.templates else 0)
-            box.grid(row=row_index, column=2, sticky="we", padx=(0, 8))
-            self.template_boxes[speaker.id] = box
-            ttk.Label(frame, text=_shorten(speaker.sample, 48), foreground="#666").grid(row=row_index, column=3, sticky="w")
+        self._build_rows({})
 
-        row_index = len(request.speakers) + 2
+        row_index = 3
         self.subtitles_var = tk.BooleanVar(value=request.default_subtitles and request.allow_subtitles)
         self.textplus_var = tk.BooleanVar(value=request.default_textplus and bool(request.templates))
         ttk.Separator(frame).grid(row=row_index, column=0, columnspan=4, sticky="we", pady=10)
@@ -162,17 +152,56 @@ class _ReviewDialog:
         buttons.grid(row=row_index + 4, column=0, columnspan=4, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="right", padx=(8, 0))
         ttk.Button(buttons, text="Create tracks", command=self._ok).pack(side="right")
+        if request.editor is not None:
+            ttk.Button(buttons, text="Fix speakers…", command=self._fix_speakers).pack(side="right", padx=(0, 24))
         self.window.bind("<Return>", lambda _e: self._ok())
         self.window.bind("<Escape>", lambda _e: self._cancel())
         self.window.update_idletasks()
         _center(self.window)
+
+    def _build_rows(self, template_choice: "dict[str, int]"):
+        """(Re)build one row per speaker in ``self.speakers``; template picks carry over by speaker id."""
+        for child in self.table.winfo_children():
+            child.destroy()
+        ttk.Label(self.table, text="Speaker").grid(row=0, column=0, sticky="w")
+        ttk.Label(self.table, text="Name (track name)").grid(row=0, column=1, sticky="w")
+        ttk.Label(self.table, text="Text+ template").grid(row=0, column=2, sticky="w")
+        ttk.Label(self.table, text="Says, e.g.").grid(row=0, column=3, sticky="w")
+        self.name_vars = {}
+        self.template_boxes = {}
+        template_labels = list(self.request.templates) or ["(no Text+ templates in the media pool)"]
+        for row_index, speaker in enumerate(self.speakers, start=1):
+            label = "%s (%d cues)" % (speaker.id, speaker.cue_count)
+            ttk.Label(self.table, text=label).grid(row=row_index, column=0, sticky="w", padx=(0, 8))
+            var = tk.StringVar(value=speaker.name)
+            self.name_vars[speaker.id] = var
+            ttk.Entry(self.table, textvariable=var, width=24).grid(row=row_index, column=1, sticky="we", padx=(0, 8))
+            box = ttk.Combobox(self.table, values=template_labels, state="readonly", width=34)
+            default = min(row_index - 1, len(template_labels) - 1) if self.request.templates else 0
+            box.current(template_choice.get(speaker.id, default))
+            box.grid(row=row_index, column=2, sticky="we", padx=(0, 8))
+            self.template_boxes[speaker.id] = box
+            ttk.Label(self.table, text=_shorten(speaker.sample, 48), foreground="#666").grid(row=row_index, column=3, sticky="w")
+
+    def _fix_speakers(self):
+        """Open the speaker editor; names typed so far go in as renames, the rows are rebuilt after."""
+        editor = self.request.editor
+        editor.record_names({sid: var.get() for sid, var in self.name_vars.items()})
+        template_choice = {sid: int(box.current()) for sid, box in self.template_boxes.items()}
+        _SpeakerEditorDialog(self.window, EditorController(editor, self.request.time_label)).run()
+        self.speakers = speaker_rows(editor)
+        self._build_rows(template_choice)
+        try:
+            self.window.grab_set()  # the editor took the grab
+        except tk.TclError:
+            pass
 
     def _ok(self):
         if not self.subtitles_var.get() and not self.textplus_var.get():
             messagebox.showwarning(TITLE, "Pick at least one output: subtitle tracks and/or Text+ captions.", parent=self.window)
             return
         result = ReviewResult(subtitles=bool(self.subtitles_var.get()), textplus=bool(self.textplus_var.get()))
-        for speaker in self.request.speakers:
+        for speaker in self.speakers:
             result.names[speaker.id] = self.name_vars[speaker.id].get().strip() or speaker.id
             if self.request.templates:
                 result.template_index[speaker.id] = int(self.template_boxes[speaker.id].current())
@@ -188,6 +217,152 @@ class _ReviewDialog:
         self.window.focus_force()
         self.window.wait_window()
         return self.result
+
+
+class _SpeakerEditorDialog:
+    """Fix speakers: rename, merge into…, move selected cues to another or a new speaker, undo."""
+
+    def __init__(self, parent, controller: EditorController):
+        self.controller = controller
+        self._choice_ids = {}  # combobox -> ids parallel to its values
+        self.window = tk.Toplevel(parent)
+        self.window.title("%s – fix speakers" % TITLE)
+        self.window.protocol("WM_DELETE_WINDOW", self._close)
+        frame = ttk.Frame(self.window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        left = ttk.LabelFrame(frame, text="Speakers", padding=8)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        left.columnconfigure(1, weight=1)
+        self.speaker_tree = ttk.Treeview(left, columns=("id", "name", "cues"), show="headings", selectmode="browse", height=8)
+        for column, title, width in (("id", "Speaker", 110), ("name", "Name", 140), ("cues", "Cues", 50)):
+            self.speaker_tree.heading(column, text=title)
+            self.speaker_tree.column(column, width=width, stretch=column == "name")
+        self.speaker_tree.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        self.speaker_tree.bind("<<TreeviewSelect>>", lambda _e: self._on_speaker_selected())
+        self.name_var = tk.StringVar()
+        ttk.Label(left, text="Name:").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        name_entry = ttk.Entry(left, textvariable=self.name_var, width=20)
+        name_entry.grid(row=1, column=1, sticky="we", pady=(8, 0))
+        name_entry.bind("<Return>", lambda _e: self._rename())
+        ttk.Button(left, text="Rename", command=self._rename).grid(row=1, column=2, sticky="e", padx=(6, 0), pady=(8, 0))
+        ttk.Label(left, text="Merge into:").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.merge_box = ttk.Combobox(left, state="readonly", width=20)
+        self.merge_box.grid(row=2, column=1, sticky="we", pady=(6, 0))
+        ttk.Button(left, text="Merge", command=self._merge).grid(row=2, column=2, sticky="e", padx=(6, 0), pady=(6, 0))
+        ttk.Label(left, text="Merge moves all of the selected speaker's cues;\nthe speaker merged into keeps its name.",
+                  foreground="#666").grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        right = ttk.LabelFrame(frame, text="Cues", padding=8)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.columnconfigure(1, weight=1)
+        right.rowconfigure(1, weight=1)
+        ttk.Label(right, text="Show:").grid(row=0, column=0, sticky="w")
+        self.filter_box = ttk.Combobox(right, state="readonly", width=30)
+        self.filter_box.grid(row=0, column=1, sticky="w")
+        self.filter_box.bind("<<ComboboxSelected>>", lambda _e: self._refresh_cues())
+        self.cue_tree = ttk.Treeview(right, columns=("num", "time", "speaker", "text"), show="headings", selectmode="extended", height=14)
+        for column, title, width in (("num", "#", 50), ("time", "Time", 100), ("speaker", "Speaker", 120), ("text", "Text", 360)):
+            self.cue_tree.heading(column, text=title)
+            self.cue_tree.column(column, width=width, stretch=column == "text")
+        scroll = ttk.Scrollbar(right, orient="vertical", command=self.cue_tree.yview)
+        self.cue_tree.configure(yscrollcommand=scroll.set)
+        self.cue_tree.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
+        scroll.grid(row=1, column=3, sticky="ns", pady=(6, 0))
+        ttk.Label(right, text="Move selected to:").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.move_box = ttk.Combobox(right, state="readonly", width=30)
+        self.move_box.grid(row=2, column=1, sticky="w", pady=(6, 0))
+        ttk.Button(right, text="Move", command=self._move).grid(row=2, column=2, sticky="e", pady=(6, 0))
+
+        bottom = ttk.Frame(frame)
+        bottom.grid(row=1, column=0, columnspan=2, sticky="we", pady=(10, 0))
+        self.undo_button = ttk.Button(bottom, text="Undo", command=self._undo)
+        self.undo_button.pack(side="left")
+        self.status_var = tk.StringVar()
+        ttk.Label(bottom, textvariable=self.status_var).pack(side="left", padx=(10, 0))
+        ttk.Button(bottom, text="Done", command=self._close).pack(side="right")
+        self.window.bind("<Escape>", lambda _e: self._close())
+        self.window.bind("<Control-z>", lambda _e: self._undo())
+        self._refresh()
+        _center(self.window)
+
+    # selection
+
+    def selected_speaker(self) -> "str | None":
+        selection = self.speaker_tree.selection()
+        return selection[0] if selection else None
+
+    def selected_cues(self) -> "list[int]":
+        return [cue_index(iid) for iid in self.cue_tree.selection()]
+
+    def _choice(self, box) -> "str | None":
+        ids = self._choice_ids.get(str(box), [])
+        index = box.current()
+        return ids[index] if 0 <= index < len(ids) else None
+
+    def _set_choices(self, box, choices, keep=None):
+        ids = [value for _label, value in choices]
+        self._choice_ids[str(box)] = ids
+        box["values"] = [label for label, _value in choices]
+        if ids:
+            box.current(ids.index(keep) if keep in ids else 0)
+        else:
+            box.set("")
+
+    # refresh
+
+    def _refresh(self):
+        controller = self.controller
+        selected = self.selected_speaker()
+        self.speaker_tree.delete(*self.speaker_tree.get_children())
+        for speaker_id, name, count in controller.speaker_rows():
+            self.speaker_tree.insert("", "end", iid=speaker_id, values=(speaker_id, name, count))
+        if selected in controller.speaker_ids():
+            self.speaker_tree.selection_set(selected)
+        self._set_choices(self.filter_box, controller.filter_choices(), keep=self._choice(self.filter_box))
+        self._set_choices(self.move_box, controller.move_choices(), keep=self._choice(self.move_box))
+        self._on_speaker_selected()
+        self._refresh_cues()
+        self.undo_button.state(["!disabled"] if controller.can_undo else ["disabled"])
+        self.status_var.set(controller.status)
+
+    def _refresh_cues(self):
+        self.cue_tree.delete(*self.cue_tree.get_children())
+        for row in self.controller.cue_rows(self._choice(self.filter_box)):
+            self.cue_tree.insert("", "end", iid=row[0], values=row)
+
+    def _on_speaker_selected(self):
+        speaker_id = self.selected_speaker()
+        self.name_var.set(self.controller.editor.display_name(speaker_id) if speaker_id else "")
+        self._set_choices(self.merge_box, self.controller.merge_choices(speaker_id), keep=self._choice(self.merge_box))
+
+    # actions
+
+    def _rename(self):
+        self.controller.rename(self.selected_speaker(), self.name_var.get())
+        self._refresh()
+
+    def _merge(self):
+        self.controller.merge(self.selected_speaker(), self._choice(self.merge_box))
+        self._refresh()
+
+    def _move(self):
+        self.controller.move(self.selected_cues(), self._choice(self.move_box))
+        self._refresh()
+
+    def _undo(self):
+        self.controller.undo()
+        self._refresh()
+
+    def _close(self):
+        self.window.destroy()
+
+    def run(self):
+        self.window.grab_set()
+        self.window.focus_force()
+        self.window.wait_window()
 
 
 def _center(window):
