@@ -14,6 +14,11 @@ Two halves, joined by a subprocess + JSON contract:
    audio to WAV, runs the engine, shows progress, lets the user review/edit
    speaker names and pick a Text+ template per speaker, then writes either
    per-speaker subtitle tracks or per-speaker Text+ video tracks.
+   Source lives in `resolve_plugin/src/better_captions_plugin/`; the installed form is
+   `resolve_plugin/Utility/Better Captions.py` (launcher) + `better_captions_plugin.zip`
+   (built by `uv run python resolve_plugin/build_plugin_zip.py`; a test fails when stale).
+   Resolve runs it with the system Python it finds (3.10–3.12 from python.org); dialogs use
+   UIManager on Studio and tkinter on the free edition. See `docs/RESOLVE_INTEGRATION.md`.
 
 ## Engine modules (stub signatures are the contract; do not change them without updating callers)
 

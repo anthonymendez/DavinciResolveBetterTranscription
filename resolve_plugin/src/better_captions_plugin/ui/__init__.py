@@ -1,0 +1,101 @@
+"""UI backends. Resolve Studio gets Fusion's UIManager; the free edition (UIManager is
+Studio-only since Resolve 19.1, see docs/RESOLVE_INTEGRATION.md) gets tkinter, which ships
+with python.org's Windows and macOS installers. ``app`` only talks to the ``Backend`` API."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class SpeakerRow:
+    id: str
+    name: str  # suggested name (engine's guess or the id)
+    cue_count: int
+    sample: str  # a short example of what they say
+    source: "str | None" = None  # "heuristic", "llm", ...
+
+
+@dataclass
+class ReviewRequest:
+    speakers: "list[SpeakerRow]"
+    templates: "list[str]"  # labels, in order; indexes are what ReviewResult refers to
+    timeline_name: str = ""
+    range_label: str = ""
+    allow_subtitles: bool = True
+    default_subtitles: bool = True
+    default_textplus: bool = False
+
+
+@dataclass
+class ReviewResult:
+    names: "dict[str, str]" = field(default_factory=dict)  # speaker id -> name
+    subtitles: bool = True
+    textplus: bool = False
+    template_index: "dict[str, int]" = field(default_factory=dict)  # speaker id -> index into templates
+
+
+class ProgressView:
+    """A modal-ish progress window. ``pump()`` must be cheap and safe to call often."""
+
+    def set_status(self, text: str):
+        raise NotImplementedError
+
+    def set_progress(self, pct: "float | None"):
+        raise NotImplementedError
+
+    def log(self, line: str):
+        raise NotImplementedError
+
+    def pump(self):
+        raise NotImplementedError
+
+    @property
+    def cancelled(self) -> bool:
+        return False
+
+    def close(self):
+        raise NotImplementedError
+
+
+class Backend:
+    name = "base"
+
+    def progress(self, title: str) -> ProgressView:
+        raise NotImplementedError
+
+    def review(self, request: ReviewRequest) -> "ReviewResult | None":
+        """Return None when the user cancels."""
+        raise NotImplementedError
+
+    def message(self, title: str, text: str):
+        raise NotImplementedError
+
+    def error(self, title: str, text: str):
+        self.message(title, text)
+
+    def close(self):
+        pass
+
+
+def choose_backend(resolve=None, fusion=None, bmd=None, preference: str = "auto", studio: "bool | None" = None) -> Backend:
+    """``preference``: "auto" (UIManager on Studio, tkinter otherwise), "uimanager" or "tk"."""
+    preference = (preference or "auto").lower()
+    if studio is None:
+        studio = False
+        if resolve is not None:
+            try:
+                studio = "studio" in str(resolve.GetProductName()).lower()
+            except Exception:
+                studio = False
+    if preference in ("uimanager", "fusion") or (preference == "auto" and studio and fusion is not None):
+        try:
+            from better_captions_plugin.ui.uimanager_ui import UIManagerBackend
+
+            return UIManagerBackend(fusion, bmd)
+        except Exception as exc:
+            if preference != "auto":
+                raise RuntimeError("UIManager UI unavailable: %s" % exc)
+    from better_captions_plugin.ui.tk_ui import TkBackend
+
+    return TkBackend()

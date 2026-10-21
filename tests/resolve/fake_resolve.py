@@ -1,0 +1,482 @@
+"""A fake of the slice of Resolve's scripting object model the plugin uses.
+
+Method names, argument shapes and return conventions follow Blackmagic's scripting README
+(see docs/RESOLVE_INTEGRATION.md). Knobs on the fakes reproduce the behaviours the plugin
+has to cope with: a subtitle append that ignores recordFrame, a template without a Text+
+node, a render that needs several polls, AppendToTimeline returning fewer items, ...
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass, field
+
+from better_captions_plugin.timing import frames_to_timecode, timecode_to_frames
+
+_SRT_TIME = re.compile(r"(\d+):(\d\d):(\d\d)[,.](\d{3})")
+
+
+def _srt_seconds(text: str) -> float:
+    h, m, s, ms = _SRT_TIME.match(text).groups()
+    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+
+
+def parse_srt(path: str) -> "list[tuple[float, float, str]]":
+    cues = []
+    with open(path, "r", encoding="utf-8") as handle:
+        blocks = re.split(r"\n\s*\n", handle.read().strip())
+    for block in blocks:
+        lines = block.strip().splitlines()
+        if len(lines) < 2:
+            continue
+        times = lines[1] if "-->" in lines[1] else lines[0]
+        start, end = [t.strip() for t in times.split("-->")]
+        text = "\n".join(lines[2:] if "-->" in lines[1] else lines[1:])
+        cues.append((_srt_seconds(start), _srt_seconds(end), text))
+    return cues
+
+
+class FakeTool:
+    def __init__(self, tool_id: str, name: str):
+        self.id = tool_id
+        self.name = name
+        self.inputs = {}
+
+    def SetInput(self, key, value, time=None):
+        self.inputs[key] = value
+        return True
+
+    def GetInput(self, key, time=None):
+        return self.inputs.get(key)
+
+    def GetAttrs(self):
+        return {"TOOLS_Name": self.name, "TOOLS_RegID": self.id}
+
+
+class FakeComp:
+    def __init__(self, tools=None):
+        self.tools = list(tools or [])
+
+    def FindToolByID(self, tool_id):
+        for tool in self.tools:
+            if tool.id == tool_id:
+                return tool
+        return None
+
+    def GetToolList(self, selected=False, tool_id=None):
+        return {i + 1: t for i, t in enumerate(self.tools) if tool_id is None or t.id == tool_id}
+
+
+class FakeTimelineItem:
+    def __init__(self, name: str, start: int, duration: int, comps=None, media_pool_item=None):
+        self.name = name
+        self.start = int(start)
+        self.duration = int(duration)
+        self.comps = list(comps or [])
+        self.media_pool_item = media_pool_item
+        self.color = None
+
+    def GetName(self):
+        return self.name
+
+    def GetStart(self):
+        return self.start
+
+    def GetEnd(self):
+        return self.start + self.duration
+
+    def GetDuration(self):
+        return self.duration
+
+    def GetFusionCompCount(self):
+        return len(self.comps)
+
+    def GetFusionCompByIndex(self, index):
+        return self.comps[index - 1] if 1 <= index <= len(self.comps) else None
+
+    def SetClipColor(self, color):
+        self.color = color
+        return True
+
+    def text(self):
+        """Test helper: the StyledText of the first Text+ node."""
+        for comp in self.comps:
+            tool = comp.FindToolByID("TextPlus")
+            if tool:
+                return tool.GetInput("StyledText")
+        return None
+
+
+class FakeMediaPoolItem:
+    def __init__(self, name: str, kind: str = "Video + Audio", file_path: "str | None" = None,
+                 has_textplus: bool = True, srt_cues=None, placed_duration=None):
+        self.name = name
+        self.props = {"Clip Name": name, "Type": kind, "File Path": "" if file_path is None else file_path}
+        self.has_textplus = has_textplus
+        self.srt_cues = srt_cues
+        self.placed_duration = placed_duration  # if set, AppendToTimeline ignores endFrame (template quirk)
+
+    def GetName(self):
+        return self.name
+
+    def GetClipProperty(self, key=None):
+        if key is None:
+            return dict(self.props)
+        return self.props.get(key, "")
+
+    def is_srt(self):
+        return self.srt_cues is not None
+
+
+class FakeFolder:
+    def __init__(self, name: str, clips=None, subfolders=None):
+        self.name = name
+        self.clips = list(clips or [])
+        self.subfolders = list(subfolders or [])
+
+    def GetName(self):
+        return self.name
+
+    def GetClipList(self):
+        return list(self.clips)
+
+    def GetSubFolderList(self):
+        return list(self.subfolders)
+
+
+@dataclass
+class FakeTrack:
+    name: str
+    items: "list[FakeTimelineItem]" = field(default_factory=list)
+
+
+class FakeTimeline:
+    def __init__(self, name="Timeline 1", frame_rate="24", start_timecode="01:00:00:00", drop_frame=False,
+                 mark_in_out=None, has_mark_in_out_api=True):
+        self.name = name
+        self.settings = {"timelineFrameRate": frame_rate, "timelineDropFrameTimecode": "1" if drop_frame else "0"}
+        fps = float(str(frame_rate).replace("DF", "").strip())
+        self.start_timecode = start_timecode
+        self.start_frame = timecode_to_frames(start_timecode, fps, drop_frame)
+        self.fps = fps
+        self.drop_frame = drop_frame
+        self.tracks = {"video": [FakeTrack("Video 1")], "audio": [FakeTrack("Audio 1")], "subtitle": []}
+        self.mark_in_out = mark_in_out
+        self.has_mark_in_out_api = has_mark_in_out_api
+        # knobs
+        self.refuse_add_track = False
+        self.subtitle_append_ignores_record_frame = False
+        self.deleted_tracks = []
+        self.current_timecode = start_timecode
+
+    # -- settings / identity
+    def GetName(self):
+        return self.name
+
+    def GetSetting(self, key):
+        return self.settings.get(key, "")
+
+    def GetStartFrame(self):
+        return self.start_frame
+
+    def GetEndFrame(self):
+        end = self.start_frame
+        for tracks in self.tracks.values():
+            for track in tracks:
+                for item in track.items:
+                    end = max(end, item.GetEnd())
+        return end
+
+    def GetStartTimecode(self):
+        return self.start_timecode
+
+    def GetCurrentTimecode(self):
+        return self.current_timecode
+
+    def GetMarkInOut(self):
+        if not self.has_mark_in_out_api:
+            raise AttributeError("GetMarkInOut")
+        return dict(self.mark_in_out or {})
+
+    # -- tracks
+    def GetTrackCount(self, track_type):
+        return len(self.tracks[track_type])
+
+    def AddTrack(self, track_type, options=None):
+        if self.refuse_add_track:
+            return False
+        number = len(self.tracks[track_type]) + 1
+        self.tracks[track_type].append(FakeTrack("%s %d" % (track_type.capitalize(), number)))
+        return True
+
+    def DeleteTrack(self, track_type, index):
+        if not 1 <= index <= len(self.tracks[track_type]):
+            return False
+        self.deleted_tracks.append((track_type, index, self.tracks[track_type][index - 1].name))
+        del self.tracks[track_type][index - 1]
+        return True
+
+    def SetTrackName(self, track_type, index, name):
+        if not 1 <= index <= len(self.tracks[track_type]):
+            return False
+        self.tracks[track_type][index - 1].name = name
+        return True
+
+    def GetTrackName(self, track_type, index):
+        return self.tracks[track_type][index - 1].name
+
+    def GetItemListInTrack(self, track_type, index):
+        if not 1 <= index <= len(self.tracks[track_type]):
+            return []
+        return list(self.tracks[track_type][index - 1].items)
+
+    def track(self, track_type, name) -> "FakeTrack | None":
+        return next((t for t in self.tracks[track_type] if t.name == name), None)
+
+    def _video_content_end(self):
+        end = self.start_frame
+        for track in self.tracks["video"]:
+            for item in track.items:
+                end = max(end, item.GetEnd())
+        return end
+
+
+class FakeMediaPool:
+    def __init__(self, timeline: FakeTimeline, root: "FakeFolder | None" = None):
+        self.timeline = timeline
+        self.root = root or FakeFolder("Master")
+        self.imported = []
+        self.deleted = []
+        self.append_calls = []
+        self.append_returns_items = True
+
+    def GetRootFolder(self):
+        return self.root
+
+    def GetCurrentFolder(self):
+        return self.root
+
+    def ImportMedia(self, paths):
+        items = []
+        for path in paths:
+            if not os.path.isfile(path):
+                continue
+            if path.lower().endswith(".srt"):
+                item = FakeMediaPoolItem(os.path.basename(path), kind="Subtitle", file_path=path, srt_cues=parse_srt(path))
+            else:
+                item = FakeMediaPoolItem(os.path.basename(path), file_path=path)
+            self.root.clips.append(item)
+            self.imported.append(item)
+            items.append(item)
+        return items
+
+    def DeleteClips(self, items):
+        for item in items:
+            if item in self.root.clips:
+                self.root.clips.remove(item)
+            self.deleted.append(item)
+        return True
+
+    def AppendToTimeline(self, clips):
+        self.append_calls.append(list(clips))
+        placed = []
+        for info in clips:
+            if not isinstance(info, dict):
+                info = {"mediaPoolItem": info}
+            item = info["mediaPoolItem"]
+            if item.is_srt():
+                placed.extend(self._append_srt(item, info))
+            else:
+                placed.append(self._append_clip(item, info))
+        return placed if self.append_returns_items else []
+
+    def _append_srt(self, item, info):
+        timeline = self.timeline
+        index = int(info.get("trackIndex", max(1, len(timeline.tracks["subtitle"]))))
+        if not timeline.tracks["subtitle"]:
+            timeline.AddTrack("subtitle")
+        track = timeline.tracks["subtitle"][index - 1]
+        origin = int(info.get("recordFrame", timeline.start_frame))
+        if timeline.subtitle_append_ignores_record_frame:
+            origin = timeline._video_content_end()
+        items = []
+        for start, end, text in item.srt_cues:
+            frame = origin + int(round(start * timeline.fps))
+            duration = max(1, int(round(end * timeline.fps)) - int(round(start * timeline.fps)))
+            clip = FakeTimelineItem(text, frame, duration, media_pool_item=item)
+            track.items.append(clip)
+            items.append(clip)
+        track.items.sort(key=lambda c: c.start)
+        return items
+
+    def _append_clip(self, item, info):
+        timeline = self.timeline
+        index = int(info.get("trackIndex", 1))
+        while len(timeline.tracks["video"]) < index:
+            timeline.AddTrack("video")
+        track = timeline.tracks["video"][index - 1]
+        start_frame = int(info.get("startFrame", 0))
+        end_frame = int(info.get("endFrame", start_frame + 119))
+        duration = end_frame - start_frame + 1
+        if item.placed_duration is not None:
+            duration = item.placed_duration
+        record = int(info.get("recordFrame", track.items[-1].GetEnd() if track.items else timeline.start_frame))
+        comps = [FakeComp([FakeTool("TextPlus", "Template")] if item.has_textplus else [FakeTool("Background", "Background1")])]
+        clip = FakeTimelineItem(item.name, record, duration, comps=comps, media_pool_item=item)
+        track.items.append(clip)
+        track.items.sort(key=lambda c: c.start)
+        return clip
+
+
+class FakeProject:
+    def __init__(self, timeline: FakeTimeline, media_pool: "FakeMediaPool | None" = None, name="Project"):
+        self.name = name
+        self.timeline = timeline
+        self.media_pool = media_pool or FakeMediaPool(timeline)
+        self.formats = {"QuickTime": "mov", "MP4": "mp4", "Wave": "wav"}
+        self.codecs = {"Wave": {"Linear PCM": "LinearPCM"}, "QuickTime": {"H.264": "H264"}, "MP4": {"H.264": "H264"}}
+        self.render_format = ("QuickTime", "H264")
+        self.render_mode = 0
+        self.render_settings = {}
+        self.jobs = {}
+        self.polls_until_done = 2
+        self._rendering = 0
+        self.deleted_jobs = []
+        self.fail_render = False
+        self.settings = {"timelineFrameRate": timeline.settings["timelineFrameRate"]}
+
+    def GetName(self):
+        return self.name
+
+    def GetSetting(self, key):
+        return self.settings.get(key, "")
+
+    def GetCurrentTimeline(self):
+        return self.timeline
+
+    def GetMediaPool(self):
+        return self.media_pool
+
+    # -- render
+    def GetRenderFormats(self):
+        return dict(self.formats)
+
+    def GetRenderCodecs(self, fmt):
+        return dict(self.codecs.get(fmt, {}))
+
+    def SetCurrentRenderFormatAndCodec(self, fmt, codec):
+        if fmt not in self.formats or codec not in self.codecs.get(fmt, {}).values():
+            return False
+        self.render_format = (fmt, codec)
+        return True
+
+    def GetCurrentRenderMode(self):
+        return self.render_mode
+
+    def SetCurrentRenderMode(self, mode):
+        self.render_mode = mode
+        return True
+
+    def SetRenderSettings(self, settings):
+        self.render_settings = dict(settings)
+        return True
+
+    def AddRenderJob(self):
+        job_id = "job-%d" % (len(self.jobs) + 1)
+        self.jobs[job_id] = {"settings": dict(self.render_settings), "format": self.render_format, "status": "Ready"}
+        return job_id
+
+    def StartRendering(self, job_ids=None, is_interactive=False):
+        self._rendering = self.polls_until_done
+        self._active = list(job_ids or self.jobs)
+        for job_id in self._active:
+            self.jobs[job_id]["status"] = "Rendering"
+        return True
+
+    def IsRenderingInProgress(self):
+        if self._rendering > 0:
+            self._rendering -= 1
+            if self._rendering == 0:
+                self._finish()
+            return True
+        return False
+
+    def _finish(self):
+        for job_id in self._active:
+            job = self.jobs[job_id]
+            if self.fail_render:
+                job["status"] = "Failed"
+                continue
+            settings = job["settings"]
+            target = settings["TargetDir"]
+            os.makedirs(target, exist_ok=True)
+            ext = self.formats[job["format"][0]]
+            name = "%s.%s" % (settings.get("CustomName", "render"), ext)
+            with open(os.path.join(target, name), "wb") as handle:
+                handle.write(b"RIFF....WAVEfake")
+            job["status"] = "Complete"
+
+    def GetRenderJobStatus(self, job_id):
+        job = self.jobs.get(job_id)
+        return {"JobStatus": job["status"], "CompletionPercentage": 100} if job else {}
+
+    def DeleteRenderJob(self, job_id):
+        self.deleted_jobs.append(job_id)
+        return self.jobs.pop(job_id, None) is not None
+
+    def StopRendering(self):
+        self._rendering = 0
+        return True
+
+
+class FakeProjectManager:
+    def __init__(self, project):
+        self.project = project
+
+    def GetCurrentProject(self):
+        return self.project
+
+
+class FakeResolve:
+    def __init__(self, project: FakeProject, product="DaVinci Resolve", version="20.0.0.0023"):
+        self.project = project
+        self.product = product
+        self.version = version
+
+    def GetProjectManager(self):
+        return FakeProjectManager(self.project)
+
+    def GetProductName(self):
+        return self.product
+
+    def GetVersionString(self):
+        return self.version
+
+
+def make_media_pool(timeline: FakeTimeline) -> FakeMediaPool:
+    """Master/{footage.mov, Timeline 1} + Master/Templates/Lower Thirds/{Caption Style A, Caption Style B}"""
+    lower_thirds = FakeFolder("Lower Thirds", clips=[
+        FakeMediaPoolItem("Caption Style A", kind="Generator"),
+        FakeMediaPoolItem("Caption Style B", kind="Generator"),
+    ])
+    templates = FakeFolder("Templates", subfolders=[lower_thirds], clips=[FakeMediaPoolItem("Plain Text+", kind="Generator")])
+    root = FakeFolder("Master", clips=[
+        FakeMediaPoolItem("footage.mov", file_path="/media/footage.mov"),
+        FakeMediaPoolItem("Timeline 1", kind="Timeline"),
+    ], subfolders=[templates])
+    return FakeMediaPool(timeline, root)
+
+
+def make_world(frame_rate="24", start_timecode="01:00:00:00", drop_frame=False, product="DaVinci Resolve", **timeline_kwargs):
+    timeline = FakeTimeline(frame_rate=frame_rate, start_timecode=start_timecode, drop_frame=drop_frame, **timeline_kwargs)
+    # Some existing content on Video 1 so "never modify existing tracks" is observable.
+    footage = FakeMediaPoolItem("footage.mov", file_path="/media/footage.mov")
+    timeline.tracks["video"][0].items.append(FakeTimelineItem("footage.mov", timeline.start_frame, int(timeline.fps * 60), media_pool_item=footage))
+    media_pool = make_media_pool(timeline)
+    project = FakeProject(timeline, media_pool)
+    return FakeResolve(project, product=product)
+
+
+def timecode(timeline: FakeTimeline, frame: int) -> str:
+    return frames_to_timecode(frame, timeline.fps, timeline.drop_frame)

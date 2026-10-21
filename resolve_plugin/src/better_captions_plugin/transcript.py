@@ -1,0 +1,103 @@
+"""Read the engine's ``transcript.json`` (schema in ``src/better_captions/schema.py``) without importing it."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+
+SUPPORTED_SCHEMA_VERSION = 1
+
+
+class TranscriptError(ValueError):
+    pass
+
+
+@dataclass
+class Speaker:
+    id: str
+    name: "str | None" = None
+    name_confidence: float = 0.0
+    name_source: "str | None" = None
+
+    @property
+    def display_name(self) -> str:
+        return self.name or self.id
+
+
+@dataclass
+class Cue:
+    speaker: str
+    start: float
+    end: float
+    lines: "list[str]" = field(default_factory=list)
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines)
+
+
+@dataclass
+class Transcript:
+    language: str
+    duration: float
+    speakers: "list[Speaker]" = field(default_factory=list)
+    cues: "list[Cue]" = field(default_factory=list)
+    meta: dict = field(default_factory=dict)
+
+    def speaker(self, speaker_id: str) -> "Speaker | None":
+        for speaker in self.speakers:
+            if speaker.id == speaker_id:
+                return speaker
+        return None
+
+    def cues_for(self, speaker_id: str) -> "list[Cue]":
+        return sorted((c for c in self.cues if c.speaker == speaker_id), key=lambda c: (c.start, c.end))
+
+    def speaker_ids_with_cues(self) -> "list[str]":
+        """Speaker ids in transcript order, keeping only those that have at least one cue."""
+        with_cues = {c.speaker for c in self.cues}
+        ordered = [s.id for s in self.speakers if s.id in with_cues]
+        ordered += sorted(sid for sid in with_cues if sid not in ordered)
+        return ordered
+
+
+def from_dict(data: dict) -> Transcript:
+    version = int(data.get("schema_version", SUPPORTED_SCHEMA_VERSION))
+    if version > SUPPORTED_SCHEMA_VERSION:
+        raise TranscriptError(
+            "transcript schema %d is newer than this plugin supports (%d); re-run the installer"
+            % (version, SUPPORTED_SCHEMA_VERSION)
+        )
+    speakers = [
+        Speaker(
+            id=str(s["id"]),
+            name=s.get("name") or None,
+            name_confidence=float(s.get("name_confidence", 0.0) or 0.0),
+            name_source=s.get("name_source"),
+        )
+        for s in data.get("speakers", [])
+    ]
+    cues = []
+    for c in data.get("cues", []):
+        lines = c.get("lines")
+        if lines is None:
+            lines = str(c.get("text", "")).split("\n")
+        cues.append(Cue(speaker=str(c["speaker"]), start=float(c["start"]), end=float(c["end"]), lines=[str(x) for x in lines]))
+    return Transcript(
+        language=str(data.get("language", "")),
+        duration=float(data.get("duration", 0.0) or 0.0),
+        speakers=speakers,
+        cues=cues,
+        meta=dict(data.get("meta", {}) or {}),
+    )
+
+
+def load(path) -> Transcript:
+    with open(str(path), "r", encoding="utf-8") as handle:
+        try:
+            data = json.load(handle)
+        except ValueError as exc:
+            raise TranscriptError("%s is not valid JSON: %s" % (path, exc))
+    if not isinstance(data, dict):
+        raise TranscriptError("%s does not contain a transcript object" % path)
+    return from_dict(data)
