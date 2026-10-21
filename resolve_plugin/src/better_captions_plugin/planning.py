@@ -2,14 +2,16 @@
 
 Given a transcript, the user's speaker names and the timeline clock, produce one
 ``TrackPlan`` per speaker: the track name (unique against existing tracks) and, for
-Text+ mode, one ``ClipPlacement`` per cue with the absolute record frame and duration.
+Text+ mode, one ``ClipPlacement`` per cue with the absolute record frame and duration (and,
+when words are highlighted, the cue's word steps from ``word_highlight``).
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
+from better_captions_plugin import word_highlight
 from better_captions_plugin.timing import TimelineClock
 from better_captions_plugin.transcript import Cue, Transcript
 
@@ -24,6 +26,9 @@ class ClipPlacement:
     text: str
     start: float  # engine seconds, kept for messages
     end: float
+    # Word highlighting: the cue cut into contiguous word steps (word_highlight.HighlightStep);
+    # empty when it is off or no word of the cue has a timing.
+    steps: tuple = ()
 
     @property
     def end_frame(self) -> int:
@@ -38,6 +43,7 @@ class TrackPlan:
     clips: "list[ClipPlacement]" = field(default_factory=list)
     template: object = None  # Text+ template chosen for this speaker (opaque)
     srt_path: "str | None" = None  # per-speaker SRT written by the engine
+    highlight: bool = False  # Text+ only: one clip per word step instead of one per cue
 
     @property
     def first_frame(self) -> "int | None":
@@ -90,6 +96,22 @@ def place_cues(cues: "list[Cue]", clock: TimelineClock, origin_frame: "int | Non
     return trimmed
 
 
+def add_word_steps(clips: "list[ClipPlacement]", words, clock: TimelineClock, origin_frame: "int | None" = None,
+                   speaker: "str | None" = None, hold_seconds: float = word_highlight.DEFAULT_HOLD_SECONDS) -> "list[ClipPlacement]":
+    """``clips`` with their word steps filled in (from the placed, possibly trimmed, frames)."""
+    hold = word_highlight.hold_frames(clock, hold_seconds)
+    result = []
+    for clip in clips:
+        timed = word_highlight.cue_words(clip.text, clip.start, clip.end, words, speaker=speaker)
+        steps = ()
+        if timed:
+            steps = tuple(word_highlight.highlight_steps(clip.record_frame, clip.duration, timed, clock, origin_frame, hold))
+            if not any(step.word for step in steps):
+                steps = ()
+        result.append(replace(clip, steps=steps))
+    return result
+
+
 def plan_tracks(
     transcript: Transcript,
     names: "dict[str, str]",
@@ -99,12 +121,14 @@ def plan_tracks(
     existing_track_names: "list[str] | None" = None,
     templates: "dict[str, object] | None" = None,
     srt_paths: "dict[str, str] | None" = None,
+    highlight: bool = False,
 ) -> "list[TrackPlan]":
     """One TrackPlan per speaker that has cues, in transcript speaker order.
 
     ``names`` maps speaker id to the (possibly user-edited) display name; missing ids fall back
     to the transcript's name, then the id. Track names are made unique against
     ``existing_track_names`` and against each other, so existing tracks are never touched.
+    ``highlight`` (Text+ only) cuts each cue into word steps from ``transcript.words``.
     """
     if mode not in (MODE_SUBTITLES, MODE_TEXTPLUS):
         raise ValueError("unknown mode %r" % (mode,))
@@ -124,5 +148,8 @@ def plan_tracks(
         )
         # Subtitle mode uses the clips only to verify where Resolve put the SRT's cues.
         plan.clips = place_cues(transcript.cues_for(speaker_id), clock, origin_frame)
+        if highlight and mode == MODE_TEXTPLUS:
+            plan.highlight = True
+            plan.clips = add_word_steps(plan.clips, transcript.words, clock, origin_frame, speaker=speaker_id)
         plans.append(plan)
     return plans

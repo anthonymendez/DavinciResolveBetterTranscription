@@ -6,7 +6,8 @@ is pumped with ``UIDispatcher.StepLoop()`` while the engine runs.
 
 from __future__ import annotations
 
-from better_captions_plugin.ui import Backend, ProgressView, ReviewRequest, ReviewResult, speaker_rows
+from better_captions_plugin.ui import (HIGHLIGHT_COLOR_LABEL, HIGHLIGHT_LABEL, Backend, ProgressView, ReviewRequest, ReviewResult,
+                                       checked_highlight_color, speaker_rows)
 from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
 
 TITLE = "Better Captions"
@@ -122,27 +123,32 @@ class UIManagerBackend(Backend):
         checked = {
             "Subtitles": bool(request.default_subtitles and request.allow_subtitles),
             "TextPlus": bool(request.default_textplus and request.templates),
+            "Highlight": bool(request.highlight_words),
         }
+        color = request.highlight_color
         while True:
-            action, items = self._review_once(request, speakers, template_choice, checked)
+            action, items = self._review_once(request, speakers, template_choice, checked, color)
             if action == "fix":
                 request.editor.record_names({s.id: str(items["Name_" + s.id].Text) for s in speakers})
                 if request.templates:
                     template_choice = {s.id: int(items["Template_" + s.id].CurrentIndex) for s in speakers}
                 checked = {key: bool(items[key].Checked) for key in checked}
+                color = str(items["HighlightColor"].Text)
                 self.edit_speakers(EditorController(request.editor, request.time_label))
                 speakers = speaker_rows(request.editor)
                 continue
             if action != "ok":
                 return None
-            result = ReviewResult(subtitles=bool(items["Subtitles"].Checked), textplus=bool(items["TextPlus"].Checked))
+            result = ReviewResult(subtitles=bool(items["Subtitles"].Checked), textplus=bool(items["TextPlus"].Checked),
+                                  highlight_words=bool(items["Highlight"].Checked),
+                                  highlight_color=checked_highlight_color(str(items["HighlightColor"].Text)) or request.highlight_color)
             for speaker in speakers:
                 result.names[speaker.id] = str(items["Name_" + speaker.id].Text).strip() or speaker.id
                 if request.templates:
                     result.template_index[speaker.id] = int(items["Template_" + speaker.id].CurrentIndex)
             return result
 
-    def _review_once(self, request: ReviewRequest, speakers, template_choice, checked):
+    def _review_once(self, request: ReviewRequest, speakers, template_choice, checked, color):
         """Show the review window until OK, Cancel or "Fix speakers…"; returns (action, items)."""
         ui, disp = self.ui, self.disp
         template_labels = list(request.templates)
@@ -171,7 +177,7 @@ class UIManagerBackend(Backend):
         if request.editor is not None:
             buttons.insert(0, ui.Button({"ID": "FixSpeakers", "Text": "Fix speakers…", "Weight": 0}))
         window = disp.AddWindow(
-            {"ID": WINDOW_ID_REVIEW, "WindowTitle": "%s – review speakers" % TITLE, "Geometry": [200, 200, 720, 160 + 48 * len(speakers)]},
+            {"ID": WINDOW_ID_REVIEW, "WindowTitle": "%s – review speakers" % TITLE, "Geometry": [200, 200, 760, 210 + 48 * len(speakers)]},
             [
                 ui.VGroup(
                     {"Spacing": 6},
@@ -192,7 +198,15 @@ class UIManagerBackend(Backend):
                                      "Checked": checked["Subtitles"], "Enabled": bool(request.allow_subtitles), "Weight": 0}),
                         ui.CheckBox({"ID": "TextPlus", "Text": "Text+ captions: one video track per speaker using the chosen template",
                                      "Checked": checked["TextPlus"], "Enabled": bool(template_labels), "Weight": 0}),
+                        ui.HGroup({"Spacing": 8, "Weight": 0}, [
+                            ui.HGap(16, 0),
+                            ui.CheckBox({"ID": "Highlight", "Text": HIGHLIGHT_LABEL, "Checked": checked["Highlight"],
+                                         "Enabled": bool(template_labels), "Weight": 1}),
+                            ui.Label({"Text": HIGHLIGHT_COLOR_LABEL, "Weight": 0}),
+                            ui.LineEdit({"ID": "HighlightColor", "Text": str(color), "Enabled": bool(template_labels), "Weight": 0}),
+                        ]),
                         ui.Label({"Text": "New tracks are added; existing tracks are never changed.", "Weight": 0}),
+                        ui.Label({"ID": "ReviewStatus", "Text": "", "Weight": 0}),
                         ui.HGroup({"Weight": 0}, buttons),
                     ],
                 )
@@ -213,6 +227,10 @@ class UIManagerBackend(Backend):
 
         def on_ok(_event=None):
             if not items["Subtitles"].Checked and not items["TextPlus"].Checked:
+                items["ReviewStatus"].Text = "Pick at least one output: subtitle tracks and/or Text+ captions."
+                return
+            if items["Highlight"].Checked and items["TextPlus"].Checked and checked_highlight_color(str(items["HighlightColor"].Text)) is None:
+                items["ReviewStatus"].Text = "The highlight colour must look like #FFD400."
                 return
             finish("ok")
 

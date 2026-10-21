@@ -76,11 +76,16 @@ class FakeBackend(Backend):
         self.closed = True
 
 
-def accept_all(names=None, subtitles=True, textplus=False, template_index=None):
-    """An answer that keeps the suggested names (overridden by ``names``) and picks outputs."""
+def accept_all(names=None, subtitles=True, textplus=False, template_index=None, highlight_words=None, highlight_color=None):
+    """An answer that keeps the suggested names (overridden by ``names``) and picks outputs;
+    the highlight toggle and colour keep the dialog's defaults unless given."""
 
     def answer(request: ReviewRequest):
-        result = ReviewResult(subtitles=subtitles, textplus=textplus)
+        result = ReviewResult(
+            subtitles=subtitles, textplus=textplus,
+            highlight_words=request.highlight_words if highlight_words is None else highlight_words,
+            highlight_color=highlight_color or request.highlight_color,
+        )
         for row in request.speakers:
             result.names[row.id] = (names or {}).get(row.id, row.name)
             if request.templates:

@@ -10,10 +10,12 @@ from __future__ import annotations
 import glob
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
+from better_captions_plugin import word_highlight
 from better_captions_plugin.planning import TrackPlan
 from better_captions_plugin.timing import TimelineClock
+from better_captions_plugin.word_highlight import HighlightUnsupported
 
 
 class ResolveError(Exception):
@@ -43,6 +45,9 @@ class TrackResult:
     placed: int = 0
     misplaced: "list[str]" = field(default_factory=list)  # human-readable notes
     text_failures: "list[str]" = field(default_factory=list)
+    highlighted: int = 0  # clips whose spoken word got the highlight colour
+    highlight_failures: "list[str]" = field(default_factory=list)
+    notes: "list[str]" = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -319,17 +324,57 @@ def delete_track(timeline, track_type: str, index: int) -> bool:
         return False
 
 
-def create_textplus_track(media_pool, timeline, plan: TrackPlan) -> TrackResult:
+@dataclass
+class HighlightStyle:
+    """How to light the spoken word: its colour and where the comps are edited on disk."""
+
+    rgb: "tuple[float, float, float]"
+    work_dir: str  # the run's temp dir; one file per clip, removed after the import
+    _count: int = 0
+
+    def next_path(self) -> str:
+        self._count += 1
+        return os.path.join(self.work_dir, "highlight-%d.comp" % self._count)
+
+
+def create_textplus_track(media_pool, timeline, plan: TrackPlan, highlight: "HighlightStyle | None" = None) -> TrackResult:
     """A new video track named after the speaker with one Text+ clip per cue.
 
     The template (a MediaPoolItem) is appended once per cue with ``recordFrame``/``trackIndex``;
     the text is then set on each clip's Fusion comp. If the template has no Text+ node the
     track is removed again and a ResolveError raised.
+
+    With ``highlight`` and a plan with word steps, each cue becomes one clip per step (same
+    template, the whole cue's text) and the step's word is coloured (``apply_word_highlight``).
+    If that fails on the first clip tried (the template's text is driven by another tool, this
+    Resolve can't export/import comps), the track is rebuilt with one plain clip per cue and
+    the result says why.
     """
     template = plan.template
     item = template.item if isinstance(template, Template) else template
     if item is None:
         raise ResolveError("no Text+ template chosen for %s" % plan.name)
+    if highlight is not None and plan.highlight and any(clip.steps for clip in plan.clips):
+        try:
+            return _fill_textplus_track(media_pool, timeline, plan, item, highlight)
+        except HighlightUnsupported as exc:
+            result = _fill_textplus_track(media_pool, timeline, plan, item, None)
+            result.notes.append("words not highlighted: %s" % exc)
+            return result
+    return _fill_textplus_track(media_pool, timeline, plan, item, None)
+
+
+def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight: "HighlightStyle | None") -> TrackResult:
+    if highlight is None:
+        clips = [(clip, None) for clip in plan.clips]
+    else:
+        clips = []
+        for clip in plan.clips:
+            if not clip.steps:
+                clips.append((clip, None))
+                continue
+            for step in clip.steps:
+                clips.append((replace(clip, record_frame=step.record_frame, duration=step.duration, steps=()), step.word))
     index = add_track(timeline, "video", plan.name)
     result = TrackResult(plan=plan, track_type="video", track_index=index)
     try:
@@ -342,13 +387,13 @@ def create_textplus_track(media_pool, timeline, plan: TrackPlan) -> TrackResult:
                 "recordFrame": clip.record_frame,
                 "mediaType": 1,
             }
-            for clip in plan.clips
+            for clip, _word in clips
         ]
         appended = []
         for start in range(0, len(infos), 100):  # keep each call modest
             batch = media_pool.AppendToTimeline(infos[start:start + 100]) or []
             appended.extend(batch)
-        if len(appended) != len(plan.clips):
+        if len(appended) != len(clips):
             appended = _items_by_start(timeline, "video", index)
         placed_by_frame = {}
         for timeline_item in appended:
@@ -356,7 +401,8 @@ def create_textplus_track(media_pool, timeline, plan: TrackPlan) -> TrackResult:
                 placed_by_frame.setdefault(int(timeline_item.GetStart()), timeline_item)
             except Exception:
                 continue
-        for clip in plan.clips:
+        to_highlight = []
+        for clip, word in clips:
             timeline_item = placed_by_frame.get(clip.record_frame)
             if timeline_item is None:
                 result.misplaced.append("%s: no clip at frame %d" % (_short(clip.text), clip.record_frame))
@@ -372,14 +418,83 @@ def create_textplus_track(media_pool, timeline, plan: TrackPlan) -> TrackResult:
                 set_textplus_text(timeline_item, clip.text)
             except ResolveError as exc:
                 result.text_failures.append("%s: %s" % (_short(clip.text), exc))
-        if result.placed == 0 and plan.clips:
-            raise ResolveError("none of the %d caption clips for %s could be placed" % (len(plan.clips), plan.name))
-        if plan.clips and len(result.text_failures) == result.placed:
+                continue
+            if word is not None:
+                to_highlight.append((timeline_item, clip, word))
+        if result.placed == 0 and clips:
+            raise ResolveError("none of the %d caption clips for %s could be placed" % (len(clips), plan.name))
+        if clips and len(result.text_failures) == result.placed:
             raise ResolveError("template %s has no Text+ node (%s)" % (_name(item), result.text_failures[0]))
+        for timeline_item, clip, word in to_highlight:
+            try:
+                apply_word_highlight(timeline_item, clip.text, word, highlight)
+                result.highlighted += 1
+            except HighlightUnsupported as exc:
+                if result.highlighted == 0:
+                    raise  # nothing lit yet: the caller rebuilds the track without highlighting
+                result.highlight_failures.append("%s (%s): %s" % (_short(clip.text), word.text, exc))
     except Exception:
         delete_track(timeline, "video", index)
         raise
     return result
+
+
+def apply_word_highlight(timeline_item, text: str, word, style: HighlightStyle):
+    """Colour ``word`` (a word_highlight.CueWord) of the clip's Text+ ``text``.
+
+    ``SetInput`` can't write Character Level Styling (KathaCut's live spike, see
+    docs/RESOLVE_INTEGRATION.md §8), but a comp file round trip can: export the clip's comp,
+    add a ``StyledTextCLS`` tool feeding the Text+ ``StyledText`` (word_highlight), import it.
+    Raises HighlightUnsupported on any failure; the clip keeps its plain text.
+    """
+    path = style.next_path()
+    try:
+        os.makedirs(style.work_dir, exist_ok=True)
+        try:
+            exported = timeline_item.ExportFusionComp(path, 1)
+        except Exception as exc:
+            raise HighlightUnsupported("Resolve could not export the clip's Fusion comp (%s)" % exc)
+        if not exported or not os.path.isfile(path):
+            raise HighlightUnsupported("Resolve did not export the clip's Fusion comp")
+        # surrogateescape: bytes that aren't UTF-8 go back out unchanged.
+        with open(path, "r", encoding="utf-8", errors="surrogateescape", newline="") as handle:
+            comp_text = handle.read()
+        entries = word_highlight.cls_entries(word.char_start, word.char_end, style.rgb)
+        edited = word_highlight.add_highlight_to_comp(comp_text, text, entries)
+        with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as handle:
+            handle.write(edited)
+        try:
+            comp = timeline_item.ImportFusionComp(path)
+        except Exception as exc:
+            raise HighlightUnsupported("Resolve could not import the highlighted comp (%s)" % exc)
+        if not comp:
+            raise HighlightUnsupported("Resolve did not import the highlighted comp")
+        _activate_last_comp(timeline_item)
+    except OSError as exc:
+        raise HighlightUnsupported("could not edit the comp file: %s" % exc)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _activate_last_comp(timeline_item):
+    """If the import added a comp instead of replacing the clip's, make the new one current."""
+    try:
+        if int(timeline_item.GetFusionCompCount()) <= 1:
+            return
+        names = timeline_item.GetFusionCompNameList() or []
+    except Exception:
+        return
+    if isinstance(names, dict):  # a Lua table through the bridge: {1: ..., 2: ..., "__flags": ...}
+        names = [names[key] for key in sorted(k for k in names if isinstance(k, int))]
+    names = [name for name in names if isinstance(name, str)]
+    if names:
+        try:
+            timeline_item.LoadFusionCompByName(names[-1])
+        except Exception:
+            pass
 
 
 def set_textplus_text(timeline_item, text: str):
