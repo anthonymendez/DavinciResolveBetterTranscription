@@ -25,6 +25,16 @@ class ReviewRequest:
     allow_subtitles: bool = True
     default_subtitles: bool = True
     default_textplus: bool = False
+    # speaker_edits.SpeakerEditor: when set, the dialog offers "Fix speakers…" and, after
+    # edits, rebuilds its rows from it (``speaker_rows``); names typed so far go in as renames.
+    editor: object = None
+    time_label: object = None  # callable(seconds) -> str for the cue list (e.g. timeline timecode)
+    note: str = ""  # shown under the header, e.g. "re-applied 3 earlier speaker fixes"
+
+
+def speaker_rows(editor) -> "list[SpeakerRow]":
+    """Review rows for the editor's current speakers."""
+    return [SpeakerRow(id=s.id, name=s.name, cue_count=s.cue_count, sample=s.sample, source=s.source) for s in editor.speakers()]
 
 
 @dataclass

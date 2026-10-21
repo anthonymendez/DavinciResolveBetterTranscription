@@ -12,7 +12,9 @@ Two halves, joined by a subprocess + JSON contract:
 2. **Resolve plugin** (`resolve_plugin/`): runs inside Resolve (Workspace > Scripts).
    Must not import the engine or any third-party package. It renders timeline
    audio to WAV, runs the engine, shows progress, lets the user review/edit
-   speaker names and pick a Text+ template per speaker, then writes either
+   speaker names and pick a Text+ template per speaker, fix diarization mistakes
+   ("Fix speakers…": merge, move cues to another or a new speaker, undo; `speaker_edits.py`,
+   saved as `DIR/edits.json` and re-applied on a re-run of the same audio), then writes either
    per-speaker subtitle tracks or per-speaker Text+ video tracks.
    Source lives in `resolve_plugin/src/better_captions_plugin/`; the installed form is
    `resolve_plugin/Utility/Better Captions.py` (launcher) + `better_captions_plugin.zip`
