@@ -52,8 +52,12 @@ def build_bytes(src: str = SRC) -> bytes:
 def is_up_to_date(zip_path: str = ZIP, src: str = SRC) -> bool:
     if not os.path.isfile(zip_path):
         return False
-    with open(zip_path, "rb") as handle:
-        return handle.read() == build_bytes(src)
+    # Compare entries, not raw bytes: deflate output differs between zlib builds (e.g. on Windows).
+    def entries(archive: zipfile.ZipFile) -> "dict[str, bytes]":
+        return {name: archive.read(name) for name in archive.namelist()}
+
+    with zipfile.ZipFile(zip_path) as committed, zipfile.ZipFile(io.BytesIO(build_bytes(src))) as fresh:
+        return entries(committed) == entries(fresh)
 
 
 def build(zip_path: str = ZIP, src: str = SRC) -> bool:

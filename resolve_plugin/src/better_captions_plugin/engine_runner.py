@@ -91,7 +91,7 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
     done = None
     error = None
     open_streams = 2
-    last_pump = time.monotonic()
+    last_pump = float("-inf")  # repaint as soon as the first event arrives
     while open_streams:
         try:
             kind, payload = events.get(timeout=poll_interval)
