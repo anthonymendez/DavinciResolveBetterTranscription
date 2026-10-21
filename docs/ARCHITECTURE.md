@@ -33,6 +33,7 @@ Two halves, joined by a subprocess + JSON contract:
 | `engine/diarize.py` | speaker turns; default backend sherpa-onnx (no HF token needed), optional pyannote |
 | `engine/align.py` | words -> speakers -> segments |
 | `naming/` | speaker names from context: heuristic + Anthropic / OpenAI-compatible (Ollama) LLM |
+| `secrets.py` | LLM API keys in the OS keychain (`keyring`); `better-captions key set/delete/status/migrate` |
 | `cues.py` | segments -> readable caption cues |
 | `export/srt.py` | SRT per speaker |
 | `pipeline.py`, `cli.py` | orchestration, JSON-lines events |
@@ -44,7 +45,9 @@ Two halves, joined by a subprocess + JSON contract:
 - `<data>/models/`: downloaded model files; `<data>/bin/`: downloaded native tools (whisper.cpp).
 - `<data>/venv/`: engine venv. `<data>/config.json`:
   `{"engine": ["<abs path to venv python>", "-m", "better_captions.cli"], "version": "x.y.z", "gpu": "cuda"|"none"}`
-  plus optional user settings (e.g. `"naming_provider"`, API keys are read from env or this file).
+  plus optional user settings (e.g. `"naming_provider"`). LLM API keys live in the OS keychain
+  (`secrets.py`, service `better-captions`) or env; plain-text `anthropic_api_key` / `openai_api_key`
+  here are legacy, still read with a warning, and moved out by `better-captions key migrate`.
   `"gpu"` records whether the installer added the NVIDIA CUDA runtime (the `cuda` extra); see `docs/GPU.md`.
 - Everything under `resolve_plugin/Utility/` is copied into Resolve's `Fusion/Scripts/Utility/` folder:
   - Windows `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility`

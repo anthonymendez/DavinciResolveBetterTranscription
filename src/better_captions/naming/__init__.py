@@ -44,8 +44,8 @@ def name_speakers(transcript: Transcript, provider: str = "auto", **options) -> 
     falls back to heuristic and records the error in the returned speakers' state via logging.
 
     options: api_key, model, base_url, token_budget; provider-specific anthropic_api_key,
-    anthropic_base_url, openai_api_key, openai_base_url. Keys also come from ANTHROPIC_API_KEY,
-    OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL.
+    anthropic_base_url, openai_api_key, openai_base_url. Keys also come from ANTHROPIC_API_KEY /
+    OPENAI_API_KEY, then the OS keychain (better_captions.secrets); OPENAI_BASE_URL / OPENAI_MODEL.
     """
     if provider not in PROVIDERS:
         raise ValueError(f"unknown naming provider {provider!r}; expected one of {', '.join(PROVIDERS)}")

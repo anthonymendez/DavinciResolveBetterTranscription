@@ -61,6 +61,28 @@ Options (environment variables):
 To uninstall, run `install/uninstall.ps1` or `install/uninstall.sh` the same
 way (e.g. `curl -fsSL .../install/uninstall.sh | bash`).
 
+### API keys for LLM speaker naming
+
+Naming speakers with Claude or an OpenAI-compatible service needs an API key
+(local servers such as Ollama don't). Store it in your OS keychain (Windows
+Credential Manager, macOS Keychain, or the Secret Service on Linux) rather
+than in a file:
+
+    better-captions key set anthropic      # prompts for the key; or pipe it in with --stdin
+    better-captions key set openai
+    better-captions key status             # where each key is set; never prints the key
+    better-captions key delete anthropic
+
+The engine looks for a key in this order: an explicit option, the
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` environment variable, the keychain
+(service `better-captions`), and finally a plain-text `anthropic_api_key` /
+`openai_api_key` in `config.json` from older setups, which logs a warning. Move
+those into the keychain with `better-captions key migrate`; it removes them from
+`config.json` and keeps your other settings.
+
+On a headless Linux machine without a Secret Service there is no keychain;
+the `key` commands say so, and you set the environment variables instead.
+
 ## How it works
 
 The plugin has two halves. The **Resolve plugin** runs inside Resolve and only
