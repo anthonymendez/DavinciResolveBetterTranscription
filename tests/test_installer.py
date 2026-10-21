@@ -112,6 +112,7 @@ def _assert_installed(env: dict[str, str], source: Path) -> dict:
     config = json.loads((data / "config.json").read_text())
     assert config["engine"] == [str(python), "-m", "better_captions.cli"]
     assert config["version"] == "0.1.0"
+    assert config["gpu"] in ("cuda", "none")
     version = subprocess.run(
         [str(python), "-c", "import sys, better_captions; print(sys.version_info[:2])"],
         capture_output=True, text=True, check=True,
@@ -146,6 +147,7 @@ def test_install_upgrade_uninstall(sandbox: dict[str, str], source: Path) -> Non
     first = _run("install.sh", sandbox)
     _assert_installed(sandbox, source)
     assert "Workspace > Scripts" in first.stdout
+    assert f"Better Captions 0.1.0 is installed (from {source})" in first.stdout
     assert "Skipping the system Python check" in first.stdout
     assert "GPU" in first.stdout
     if not Path("/opt/resolve").exists() and not Path("/Applications/DaVinci Resolve").exists():
@@ -170,6 +172,31 @@ def test_install_upgrade_uninstall(sandbox: dict[str, str], source: Path) -> Non
 
     # Uninstalling twice is harmless.
     _run("uninstall.sh", sandbox)
+
+
+@pytest.mark.parametrize("gpu", ["cuda", "none"])
+def test_gpu_override_recorded(sandbox: dict[str, str], source: Path, gpu: str) -> None:
+    # With BETTER_CAPTIONS_SKIP_DEPS the `cuda` extra is requested ("<src>[cuda]") but not downloaded.
+    sandbox["BETTER_CAPTIONS_GPU"] = gpu
+    result = _run("install.sh", sandbox)
+    config = _assert_installed(sandbox, source)
+    on_macos = sys.platform == "darwin"
+    assert config["gpu"] == ("none" if on_macos else gpu)
+    if gpu == "cuda" and not on_macos:
+        assert "also installing its CUDA runtime" in result.stdout
+        assert "The NVIDIA GPU runtime (CUDA) is installed" in result.stdout
+    else:
+        assert "CUDA runtime was not installed" in result.stdout
+    assert "better_captions.cli doctor" in result.stdout
+
+    # `doctor` works in the installed engine, even without the model libraries.
+    python = _layout(sandbox)[0] / "venv" / "bin" / "python"
+    doctor = subprocess.run(
+        [str(python), "-m", "better_captions.cli", "doctor"], capture_output=True, text=True, timeout=120
+    )
+    assert doctor.returncode == 0, doctor.stderr
+    report = json.loads(doctor.stdout)
+    assert report["backend"] == "faster-whisper" and "nvidia_gpus" in report
 
 
 def test_home_override(sandbox: dict[str, str], source: Path, tmp_path: Path) -> None:

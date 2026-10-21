@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import itertools
+import re
 from typing import Callable
 
 from better_captions.schema import Word
@@ -26,8 +28,13 @@ def transcribe(
         module = importlib.import_module(f"better_captions.engine.backends.{BACKENDS[name]}")
         return module.transcribe(audio_path, model=model, language=language, device=device, progress=progress)
     whisper = _load_model(model, device)
-    # Segments are a generator: decoding happens while we iterate, so progress is live.
-    segments, info = whisper.transcribe(audio_path, language=language, word_timestamps=True, vad_filter=True)
+    try:
+        segments, info = _start(whisper, audio_path, language)
+    except RuntimeError as exc:
+        # cuBLAS/cuDNN are only loaded on first use, so "auto" can pick CUDA and fail here: redo it on the CPU.
+        if device != "auto" or resolve_device(device)[0] == "cpu" or not _CUDA_ERROR.search(str(exc)):
+            raise
+        segments, info = _start(_load_model(model, "cpu"), audio_path, language)
     duration = float(info.duration)
     words: list[Word] = []
     for seg in segments:
@@ -38,6 +45,18 @@ def transcribe(
         if progress and duration > 0:
             progress(min(float(seg.end) / duration, 1.0))
     return info.language, duration, words
+
+
+# CTranslate2's errors for a missing/broken CUDA runtime, e.g. "Library libcublas.so.12 is not found or cannot be loaded".
+_CUDA_ERROR = re.compile(r"cuda|cublas|cudnn|nvrtc|library", re.IGNORECASE)
+
+
+def _start(whisper, audio_path: str, language: str | None):
+    """Start decoding and return (segments, info); the first segment is decoded now so CUDA errors surface here."""
+    # Segments are a generator: decoding happens while we iterate, so progress is live.
+    segments, info = whisper.transcribe(audio_path, language=language, word_timestamps=True, vad_filter=True)
+    first = next(segments, None)
+    return itertools.chain([] if first is None else [first], segments), info
 
 
 # backend name -> module under better_captions.engine.backends (faster-whisper lives in this module)
@@ -92,6 +111,11 @@ def _cuda_available() -> bool:
 
 
 def _load_model(model: str, device: str):
+    if device != "cpu":
+        # Before ctranslate2 needs them: make the `cuda` extra's cuBLAS/cuDNN loadable (no-op without it).
+        from better_captions.engine import gpu
+
+        gpu.setup()
     from faster_whisper import WhisperModel
 
     name, index, compute_type = resolve_device(device)

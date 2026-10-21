@@ -22,7 +22,8 @@ import tempfile
 import traceback
 
 from better_captions_plugin import config as config_mod
-from better_captions_plugin import engine_runner, planning, resolve_io, speaker_edits, transcript as transcript_mod, word_highlight
+from better_captions_plugin import engine_runner, planning, resolve_io, speaker_edits, word_highlight
+from better_captions_plugin import transcript as transcript_mod
 from better_captions_plugin.ui import Backend, ReviewRequest, ReviewResult, SpeakerRow, choose_backend, speaker_rows
 
 TITLE = "Better Captions"

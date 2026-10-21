@@ -13,6 +13,7 @@ import os
 import re
 from dataclasses import dataclass
 
+from better_captions import secrets
 from better_captions.schema import Segment, Speaker
 
 log = logging.getLogger(__name__)
@@ -154,12 +155,13 @@ def _openai_client(api_key: str | None, base_url: str | None):
 
 
 def anthropic_api_key(options: dict) -> str | None:
-    return options.get("anthropic_api_key") or options.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
+    """Explicit option > ANTHROPIC_API_KEY > OS keychain > legacy config.json (see secrets.lookup)."""
+    return options.get("anthropic_api_key") or options.get("api_key") or secrets.lookup("anthropic")
 
 
 def openai_settings(options: dict) -> tuple[str | None, str | None]:
-    """(api_key, base_url) for the OpenAI-compatible provider."""
-    api_key = options.get("openai_api_key") or options.get("api_key") or os.environ.get("OPENAI_API_KEY")
+    """(api_key, base_url) for the OpenAI-compatible provider; the key is looked up like anthropic_api_key."""
+    api_key = options.get("openai_api_key") or options.get("api_key") or secrets.lookup("openai")
     base_url = options.get("openai_base_url") or options.get("base_url") or os.environ.get("OPENAI_BASE_URL")
     return api_key, base_url
 
@@ -171,7 +173,7 @@ def _reply_text(content) -> str:
 def ask_anthropic(speakers: list[Speaker], segments: list[Segment], options: dict) -> dict[str, LLMName | None]:
     api_key = anthropic_api_key(options)
     if not api_key:
-        raise NamingError("no Anthropic API key (set ANTHROPIC_API_KEY or options['api_key'])")
+        raise NamingError("no Anthropic API key (run `better-captions key set anthropic` or set ANTHROPIC_API_KEY)")
     base_url = options.get("anthropic_base_url")
     client = _anthropic_client(api_key, base_url)
     prompt = build_prompt(speakers, segments, options.get("token_budget", DEFAULT_TOKEN_BUDGET))

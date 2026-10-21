@@ -9,9 +9,13 @@
 #
 # Environment:
 #   BETTER_CAPTIONS_HOME       data dir override (default: per-OS, see below)
-#   BETTER_CAPTIONS_REF        git ref to install from GitHub (default: main)
+#   BETTER_CAPTIONS_REF        git ref (branch, tag or commit SHA) to install from GitHub (default: the
+#                              latest release, or main if there is none or GitHub's API can't be reached)
+#   BETTER_CAPTIONS_RELEASE_API  URL of GitHub's releases/latest API, or a local file with its JSON response (tests)
 #   BETTER_CAPTIONS_SOURCE     install from this local source dir instead of GitHub (dev/tests)
 #   BETTER_CAPTIONS_SKIP_DEPS  =1: install the package with --no-deps (tests only)
+#   BETTER_CAPTIONS_GPU        auto (default): install the NVIDIA CUDA runtime when nvidia-smi finds a GPU
+#                              (Linux); cuda: always install it; none: never (see docs/GPU.md)
 #   BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON  =1: don't check/install the Python Resolve runs the plugin with
 #   BETTER_CAPTIONS_RESOLVE_PYTHONS     colon-separated Pythons to check instead of Resolve's locations (tests)
 #   BETTER_CAPTIONS_NONINTERACTIVE      =1: never prompt (tests)
@@ -85,17 +89,48 @@ ensure_uv() {
     command -v uv >/dev/null 2>&1 || die "uv was installed but is not on PATH; open a new terminal and re-run"
 }
 
-# Prints the source dir to install from. Downloads into $1 unless
-# BETTER_CAPTIONS_SOURCE is set.
+# Prints the latest release's tag from GitHub's releases/latest API; fails
+# if there is no release or the API can't be reached (offline, rate-limited).
+# BETTER_CAPTIONS_RELEASE_API may name a local file holding the response (tests).
+latest_release_tag() {
+    local api="${BETTER_CAPTIONS_RELEASE_API:-https://api.github.com/repos/$REPO/releases/latest}" json tag
+    case "$api" in
+        http://* | https://*)
+            json="$(curl -fsSL --max-time 20 -H 'Accept: application/vnd.github+json' "$api" 2>/dev/null)" || return 1
+            ;;
+        *) json="$(cat "$api" 2>/dev/null)" || return 1 ;;
+    esac
+    tag="$(printf '%s\n' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+    echo "$tag"
+}
+
+# Prints the git ref to install: BETTER_CAPTIONS_REF when set (a branch such
+# as main, a tag or a commit SHA), else the latest release, else main.
+install_ref() {
+    local tag
+    if [ -n "${BETTER_CAPTIONS_REF:-}" ]; then
+        echo "$BETTER_CAPTIONS_REF"
+    elif tag="$(latest_release_tag)"; then
+        say "Latest release: $tag" >&2
+        echo "$tag"
+    else
+        warn "could not find the latest release (none published yet, or GitHub's API failed or is rate-limited);"
+        warn "installing the development version from main. Set BETTER_CAPTIONS_REF to pick a release."
+        echo main
+    fi
+}
+
+# Prints the source dir to install from: BETTER_CAPTIONS_SOURCE if set, else
+# git ref $2 downloaded from GitHub into $1.
 fetch_source() {
-    local workdir="$1"
+    local workdir="$1" ref="$2"
     if [ -n "${BETTER_CAPTIONS_SOURCE:-}" ]; then
         [ -f "$BETTER_CAPTIONS_SOURCE/pyproject.toml" ] ||
             die "BETTER_CAPTIONS_SOURCE=$BETTER_CAPTIONS_SOURCE has no pyproject.toml"
         (cd "$BETTER_CAPTIONS_SOURCE" && pwd)
         return
     fi
-    local ref="${BETTER_CAPTIONS_REF:-main}"
     local url="https://github.com/$REPO/archive/$ref.tar.gz"
     say "Downloading $REPO@$ref" >&2
     curl -fsSL "$url" -o "$workdir/src.tar.gz" ||
@@ -122,22 +157,64 @@ create_venv() {
         die "could not create the venv at $data/venv"
 }
 
+# ---------------------------------------------------------------------------
+# NVIDIA GPU
+# faster-whisper runs on NVIDIA GPUs with the CUDA 12 cuBLAS + cuDNN 9
+# runtime, installed from pip as the package's `cuda` extra. macOS has no
+# CUDA. See docs/GPU.md.
+# ---------------------------------------------------------------------------
+
+# True when nvidia-smi (installed with the NVIDIA driver) lists a GPU.
+has_nvidia_gpu() {
+    local out
+    command -v nvidia-smi >/dev/null 2>&1 || return 1
+    out="$(nvidia-smi -L 2>/dev/null)" || return 1
+    [[ "$out" == *"GPU "[0-9]* ]]
+}
+
+# Prints "cuda" or "none": whether to install the CUDA runtime.
+# BETTER_CAPTIONS_GPU=auto|cuda|none overrides the detection.
+gpu_choice() {
+    local os="$1" choice="${BETTER_CAPTIONS_GPU:-auto}"
+    case "$choice" in
+        cuda | none) ;;
+        auto)
+            if [ "$os" = linux ] && has_nvidia_gpu; then
+                choice=cuda
+            else
+                choice=none
+            fi
+            ;;
+        *) die "BETTER_CAPTIONS_GPU must be auto, cuda or none (got '$choice')" ;;
+    esac
+    if [ "$choice" = cuda ] && [ "$os" = macos ]; then
+        warn "BETTER_CAPTIONS_GPU=cuda: CUDA isn't available on macOS; installing without it"
+        choice=none
+    fi
+    echo "$choice"
+}
+
 install_package() {
-    local data="$1" src="$2" py
+    local data="$1" src="$2" gpu="$3" py target
     py="$(venv_python "$data")"
     local args=(pip install --no-config --python "$py" --reinstall-package better-captions)
     if [ "${BETTER_CAPTIONS_SKIP_DEPS:-}" = 1 ]; then
         args+=(--no-deps)
     fi
+    target="$src"
+    if [ "$gpu" = cuda ]; then
+        target="$src[cuda]"
+        say "NVIDIA GPU: also installing its CUDA runtime (cuBLAS + cuDNN, about 1.5 GB)"
+    fi
     say "Installing the Better Captions engine (this can take a few minutes the first time)"
-    uv "${args[@]}" "$src" || die "package install failed"
+    uv "${args[@]}" "$target" || die "package install failed"
 }
 
 # Writes config.json, keeping any user settings already in it.
 write_config() {
-    local data="$1" py
+    local data="$1" gpu="$2" py
     py="$(venv_python "$data")"
-    BC_CONFIG="$data/config.json" BC_PYTHON="$py" "$py" - <<'PY' || die "could not write config.json"
+    BC_CONFIG="$data/config.json" BC_PYTHON="$py" BC_GPU="$gpu" "$py" - <<'PY' || die "could not write config.json"
 import importlib.metadata
 import json
 import os
@@ -152,6 +229,7 @@ if os.path.exists(path):
         config = {}
 config["engine"] = [os.environ["BC_PYTHON"], "-m", "better_captions.cli"]
 config["version"] = importlib.metadata.version("better-captions")
+config["gpu"] = os.environ["BC_GPU"]
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as f:
     json.dump(config, f, indent=2)
@@ -314,11 +392,23 @@ ensure_resolve_python() {
     fi
 }
 
+installed_version() {
+    "$(venv_python "$1")" -c "import importlib.metadata as m; print(m.version('better-captions'))" ||
+        die "could not read the installed engine version"
+}
+
 print_next_steps() {
-    local data="$1"
+    local data="$1" gpu="$2" version="$3" origin="$4" gpu_note
+    if [ "$gpu" = cuda ]; then
+        gpu_note="The NVIDIA GPU runtime (CUDA) is installed; the engine uses your GPU
+automatically and falls back to the CPU if it can't."
+    else
+        gpu_note="No NVIDIA GPU was detected, so the CUDA runtime was not installed. To
+install it anyway, re-run with BETTER_CAPTIONS_GPU=cuda."
+    fi
     cat <<EOF
 
-Better Captions is installed.
+Better Captions $version is installed (from $origin).
   Engine:  $data/venv
   Config:  $data/config.json
 
@@ -326,15 +416,16 @@ Next steps:
   1. Restart DaVinci Resolve if it is running.
   2. Open Workspace > Scripts > Better Captions.
 
-An NVIDIA GPU with CUDA is used automatically if available; otherwise the
-engine runs on the CPU.
+$gpu_note
+Check what the engine detects: "$(venv_python "$data")" -m better_captions.cli doctor
 Re-run this installer any time to upgrade.
 EOF
 }
 
 main() {
-    local os data src
+    local os data src gpu ref origin
     os="$(detect_os)"
+    gpu="$(gpu_choice "$os")" || exit 1
     data="$(data_dir "$os")"
     if [ "$(id -u)" = 0 ] && [ -z "${BETTER_CAPTIONS_HOME:-}" ]; then
         warn "running as root installs for root only; run as your normal user instead (no sudo needed)"
@@ -344,13 +435,20 @@ main() {
     # Global, so the EXIT trap can still see it after main returns.
     workdir="$(mktemp -d "${TMPDIR:-/tmp}/better-captions.XXXXXX")"
     trap 'rm -rf "$workdir"' EXIT
-    src="$(fetch_source "$workdir")"
+    if [ -n "${BETTER_CAPTIONS_SOURCE:-}" ]; then
+        ref=""
+        origin="$BETTER_CAPTIONS_SOURCE"
+    else
+        ref="$(install_ref)"
+        origin="$REPO@$ref"
+    fi
+    src="$(fetch_source "$workdir" "$ref")"
     create_venv "$data"
-    install_package "$data" "$src"
-    write_config "$data"
+    install_package "$data" "$src" "$gpu"
+    write_config "$data" "$gpu"
     install_plugin "$os" "$data" "$src"
     ensure_resolve_python "$os" "$workdir"
-    print_next_steps "$data"
+    print_next_steps "$data" "$gpu" "$(installed_version "$data")" "$origin"
 }
 
 if [ "${BETTER_CAPTIONS_LIB:-}" != 1 ]; then

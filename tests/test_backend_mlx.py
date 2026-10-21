@@ -46,6 +46,7 @@ def fake_mlx(monkeypatch):
     audio_mod = types.SimpleNamespace(SAMPLE_RATE=16, load_audio=fake.load_audio)
     monkeypatch.setitem(sys.modules, "mlx_whisper", types.SimpleNamespace(transcribe=fake.transcribe, audio=audio_mod))
     monkeypatch.setitem(sys.modules, "mlx_whisper.audio", audio_mod)
+    monkeypatch.setattr(mlx, "_load_audio", lambda path, sr: fake.load_audio(path))
     return fake
 
 
@@ -139,3 +140,15 @@ def test_engine_reports_mlx_availability(monkeypatch):
     assert tr._backend_available("mlx") is True
     monkeypatch.setattr(mlx, "available", lambda: False)
     assert tr._backend_available("mlx") is False
+
+
+def test_load_audio_needs_no_ffmpeg(tmp_path, monkeypatch):
+    """Decoding goes through soundfile (resampled to 16 kHz mono), never mlx-whisper's ffmpeg loader."""
+    import numpy as np
+    import soundfile as sf
+
+    path = tmp_path / "a.wav"
+    sf.write(path, np.zeros((48000, 2), dtype="float32"), 48000)  # 1 s stereo at 48 kHz, like a Resolve render
+    monkeypatch.setenv("PATH", "")  # no ffmpeg reachable
+    audio = mlx._load_audio(str(path), 16000)
+    assert audio.ndim == 1 and abs(len(audio) - 16000) <= 1

@@ -43,10 +43,11 @@ def transcribe(
 ) -> tuple[str, float, list[Word]]:
     """Return (language, duration_seconds, words) like engine.transcribe; ``device`` is ignored (MLX picks the GPU)."""
     import mlx_whisper
-    from mlx_whisper.audio import SAMPLE_RATE, load_audio
+    from mlx_whisper.audio import SAMPLE_RATE
 
     # mlx-whisper reports no duration, so decode the audio ourselves and hand it the samples.
-    audio = load_audio(audio_path)
+    # Its own loader shells out to ffmpeg, which most Macs don't have; ours needs only soundfile.
+    audio = _load_audio(audio_path, SAMPLE_RATE)
     duration = len(audio) / SAMPLE_RATE
     result = mlx_whisper.transcribe(audio, path_or_hf_repo=model_repo(model), language=language, word_timestamps=True)
     # mlx-whisper has no progress callback (only a tqdm bar), so progress advances per returned segment.
@@ -59,3 +60,9 @@ def transcribe(
         if progress and duration > 0:
             progress(min(float(seg["end"]) / duration, 1.0))
     return result.get("language") or language or "", duration, words
+
+
+def _load_audio(path: str, sample_rate: int):
+    from better_captions.engine.diarize import load_audio
+
+    return load_audio(path, sample_rate)
