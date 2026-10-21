@@ -35,7 +35,69 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("action", choices=["clear"])
 
     sub.add_parser("doctor", help="print GPU/backend detection as JSON")
+
+    k = sub.add_parser("key", help="manage LLM API keys in the OS keychain")
+    ks = k.add_subparsers(dest="key_action", required=True)
+    providers = ["anthropic", "openai"]
+    s = ks.add_parser("set", help="store a provider's API key (prompted, or read from stdin)")
+    s.add_argument("provider", choices=providers)
+    s.add_argument("--stdin", action="store_true", help="read the key from stdin instead of prompting")
+    d = ks.add_parser("delete", help="remove a provider's API key from the keychain")
+    d.add_argument("provider", choices=providers)
+    ks.add_parser("status", help="show where each provider's key is set (never the key itself)")
+    ks.add_parser("migrate", help="move plain-text keys from config.json into the keychain")
     return parser
+
+
+def key_command(args) -> int:
+    """`better-captions key ...`. Messages go to stdout, errors to stderr; keys are never printed."""
+    import getpass
+
+    from better_captions import secrets
+
+    try:
+        if args.key_action == "set":
+            if args.stdin:
+                key = sys.stdin.readline()
+            else:
+                key = getpass.getpass(f"{args.provider} API key: ")
+            secrets.set_key(args.provider, key)
+            print(f"{args.provider}: key stored in the OS keychain ({secrets.backend_name()})")
+        elif args.key_action == "delete":
+            removed = secrets.delete_key(args.provider)
+            print(f"{args.provider}: key removed from the OS keychain" if removed else f"{args.provider}: no key in the OS keychain")
+        elif args.key_action == "status":
+            try:
+                print(f"keychain: {secrets.backend_name()}")
+            except secrets.KeychainUnavailable as exc:
+                print(f"keychain: {exc}")
+            for provider in secrets.PROVIDERS:
+                st = secrets.status(provider)
+                found = [
+                    name
+                    for name, on in (
+                        (f"env {secrets.env_var(provider)}", st["env"]),
+                        ("keychain", st["keychain"]),
+                        ("config.json (plain text; run `better-captions key migrate`)", st["config"]),
+                    )
+                    if on
+                ]
+                print(f"{provider}: {', '.join(found) if found else 'not set'}")
+        elif args.key_action == "migrate":
+            done = secrets.migrate()
+            if not done:
+                print(f"no API keys in {secrets.config_path()}")
+            for provider, outcome in done.items():
+                if outcome == "migrated":
+                    print(f"{provider}: moved into the OS keychain")
+                else:
+                    print(f"{provider}: keychain already had a key; kept it")
+            if done:
+                print(f"removed the plain-text keys from {secrets.config_path()}")
+    except (secrets.KeychainUnavailable, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def doctor() -> dict:
@@ -100,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # report to the plugin as a structured event
             json_lines_events({"event": "error", "message": f"{type(exc).__name__}: {exc}"})
             return 1
+    elif args.command == "key":
+        return key_command(args)
     elif args.command == "cache":
         from better_captions.engine import cache
 
