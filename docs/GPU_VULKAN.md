@@ -86,7 +86,8 @@ diarization models). `large-v3-turbo` is 1.62 GB.
 - whisper-cli is run with `-ojf` (full JSON with one entry per token, with `offsets` in ms
   and probability `p`). Tokens are merged into words: a token that starts with whitespace
   begins a new word; word pieces and punctuation join the previous one; `[_BEG_]`/`[_TT_n]`
-  specials are dropped. For languages written without spaces (zh, ja, th, lo, my) every token
+  specials are dropped, and so are non-speech annotations such as `[BLANK_AUDIO]`, `[MUSIC]`,
+  `(music)`, `(applause)` and `*laughs*`. For languages written without spaces (zh, ja, th, lo, my) every token
   is a word. Word probability is the mean of its tokens'.
 - When the binary's `--help` lists `-dtw` and the model has an alignment-head preset
   (`tiny`, `base`, `small`, `medium`, their `.en` variants, `large.v1`/`v2`/`v3`,
@@ -97,6 +98,8 @@ diarization models). `large-v3-turbo` is 1.62 GB.
   which costs some speed. A word then ends at its last token's DTW time and starts where the
   previous word ended, unless whisper's own start estimate is later (so pauses are not glued
   onto the following word). Without DTW the plain token offsets are used.
+  Set `BETTER_CAPTIONS_WHISPERCPP_DTW=0` to skip DTW and `-nfa` (and the `--help` probe) for
+  speed, at the cost of word timing precision.
 - `-pp` prints `whisper_print_progress_callback: progress =  N%` lines on stderr in 5 %
   steps; they are forwarded as progress fractions.
 - `-l auto` (when no `--language` is given) makes whisper.cpp detect the language; the result
