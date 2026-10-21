@@ -4,12 +4,12 @@ import math
 import os
 import shutil
 import tarfile
-import urllib.request
 from collections.abc import Callable, Hashable
 from pathlib import Path, PurePosixPath
 
 import numpy as np
 
+from better_captions.engine.download import download
 from better_captions.paths import models_dir
 from better_captions.schema import SpeakerTurn
 
@@ -142,29 +142,15 @@ def sherpa_models(cache_dir: str | Path | None = None) -> tuple[Path, Path]:
     segmentation = root / SEGMENTATION_NAME / "model.onnx"
     if not segmentation.exists():
         archive = root / f"{SEGMENTATION_NAME}.tar.bz2"
-        _download(SEGMENTATION_URL, archive)
+        download(SEGMENTATION_URL, archive)
         try:
             _extract_member(archive, "model.onnx", segmentation)
         finally:
             archive.unlink(missing_ok=True)
     embedding = root / EMBEDDING_NAME
     if not embedding.exists():
-        _download(EMBEDDING_URL, embedding)
+        download(EMBEDDING_URL, embedding)
     return segmentation, embedding
-
-
-def _download(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".part")
-    try:
-        with urllib.request.urlopen(url, timeout=60) as resp, open(tmp, "wb") as f:
-            shutil.copyfileobj(resp, f, 1 << 20)
-        os.replace(tmp, dest)
-    except Exception as e:
-        tmp.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"could not download {url} to {dest}: {e} (download it there by hand to work offline)"
-        ) from e
 
 
 def _extract_member(archive: Path, name: str, dest: Path) -> None:

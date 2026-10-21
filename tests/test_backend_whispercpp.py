@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from better_captions.engine import download
 from better_captions.engine.backends import whispercpp as wc
 
 # --- helpers -----------------------------------------------------------------------
@@ -55,7 +56,7 @@ def fake_downloads(monkeypatch):
             raise OSError(f"unexpected url {url}")
         return io.BytesIO(payloads[url])
 
-    monkeypatch.setattr(wc.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(download.urllib.request, "urlopen", urlopen)
     return NS(fetched=fetched, payloads=payloads)
 
 
@@ -389,7 +390,7 @@ def no_downloads(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("available() must never download")
 
-    monkeypatch.setattr(wc.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(download.urllib.request, "urlopen", boom)
 
 
 def gpu_setup(monkeypatch, devices, platform="linux", machine="x86_64"):

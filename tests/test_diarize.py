@@ -13,6 +13,7 @@ import soundfile as sf
 
 from better_captions import paths
 from better_captions.engine import diarize as dz
+from better_captions.engine import download
 from better_captions.schema import SpeakerTurn
 
 # --- data dir / model cache --------------------------------------------------
@@ -70,7 +71,7 @@ def fake_downloads(monkeypatch):
             raise OSError(f"unexpected url {url}")
         return io.BytesIO(payloads[url])
 
-    monkeypatch.setattr(dz.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(download.urllib.request, "urlopen", urlopen)
     return NS(fetched=fetched, payloads=payloads)
 
 

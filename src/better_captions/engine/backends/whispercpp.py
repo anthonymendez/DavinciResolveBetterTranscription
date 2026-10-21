@@ -10,7 +10,6 @@ binary and model support it). See docs/GPU_VULKAN.md.
 from __future__ import annotations
 
 import ctypes
-import hashlib
 import json
 import os
 import platform
@@ -20,12 +19,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import urllib.request
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from better_captions.engine.download import download
 from better_captions.paths import data_dir, models_dir
 from better_captions.schema import Word
 
@@ -174,7 +173,7 @@ def ensure_binary() -> Path:
     staging = Path(tempfile.mkdtemp(prefix=f"{root.name}.staging-", dir=root.parent))
     try:
         archive = staging / asset.name
-        _download(asset.url, archive, sha256=asset.sha256)
+        download(asset.url, archive, sha256=asset.sha256)
         _extract(archive, staging)
         archive.unlink()
         staged = _find_binary(staging)
@@ -285,7 +284,7 @@ def ensure_model(model: str) -> Path:
         return Path(model)
     dest = models_dir() / "whispercpp" / ggml_model_name(model)
     if not dest.exists():
-        _download(f"{MODEL_URL}/{dest.name}", dest)
+        download(f"{MODEL_URL}/{dest.name}", dest)
     return dest
 
 
@@ -419,30 +418,6 @@ def audio_duration(path: str) -> float | None:
         return float(sf.info(path).duration)
     except Exception:
         return None
-
-
-# --- download ---------------------------------------------------------------------------
-
-
-def _download(url: str, dest: Path, sha256: str | None = None) -> None:
-    """Download url to dest via a .part file; verify sha256 when given (mismatch removes the file)."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".part")
-    digest = hashlib.sha256()
-    try:
-        with urllib.request.urlopen(url, timeout=60) as resp, open(tmp, "wb") as f:
-            while chunk := resp.read(1 << 20):
-                digest.update(chunk)
-                f.write(chunk)
-    except Exception as e:
-        tmp.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"could not download {url} to {dest}: {e} (download it there by hand to work offline)"
-        ) from e
-    if sha256 is not None and digest.hexdigest() != sha256:
-        tmp.unlink(missing_ok=True)
-        raise RuntimeError(f"checksum mismatch for {url}: expected sha256 {sha256}, got {digest.hexdigest()}")
-    os.replace(tmp, dest)
 
 
 # --- Vulkan probe -------------------------------------------------------------------------
