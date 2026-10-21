@@ -93,8 +93,9 @@ def timeline_clock(timeline, project=None) -> TimelineClock:
     drop_setting = _setting(timeline, "timelineDropFrameTimecode")
     if not drop_setting and project is not None:
         drop_setting = _setting(project, "timelineDropFrameTimecode")
-    return TimelineClock.from_settings(frame_rate, start_timecode=start_tc, start_frame=start_frame,
-                                       drop_frame_setting=drop_setting)
+    return TimelineClock.from_settings(
+        frame_rate, start_timecode=start_tc, start_frame=start_frame, drop_frame_setting=drop_setting
+    )
 
 
 def _setting(obj, key):
@@ -140,8 +141,17 @@ def existing_track_names(timeline, track_type: str) -> "list[str]":
 # Audio render
 
 
-def render_audio(project, timeline, out_dir: str, start_frame: int, end_frame: "int | None",
-                 pump=None, should_cancel=None, timeout: float = 6 * 3600, sleep=time.sleep) -> str:
+def render_audio(
+    project,
+    timeline,
+    out_dir: str,
+    start_frame: int,
+    end_frame: "int | None",
+    pump=None,
+    should_cancel=None,
+    timeout: float = 6 * 3600,
+    sleep=time.sleep,
+) -> str:
     """Render the timeline's audio (whole, or ``start_frame``..``end_frame``) as a WAV; return its path."""
     fmt, codec = pick_wav_format(project)
     previous_mode = None
@@ -337,7 +347,9 @@ class HighlightStyle:
         return os.path.join(self.work_dir, "highlight-%d.comp" % self._count)
 
 
-def create_textplus_track(media_pool, timeline, plan: TrackPlan, highlight: "HighlightStyle | None" = None) -> TrackResult:
+def create_textplus_track(
+    media_pool, timeline, plan: TrackPlan, highlight: "HighlightStyle | None" = None
+) -> TrackResult:
     """A new video track named after the speaker with one Text+ clip per cue.
 
     The template (a MediaPoolItem) is appended once per cue with ``recordFrame``/``trackIndex``;
@@ -364,7 +376,9 @@ def create_textplus_track(media_pool, timeline, plan: TrackPlan, highlight: "Hig
     return _fill_textplus_track(media_pool, timeline, plan, item, None)
 
 
-def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight: "HighlightStyle | None") -> TrackResult:
+def _fill_textplus_track(
+    media_pool, timeline, plan: TrackPlan, item, highlight: "HighlightStyle | None"
+) -> TrackResult:
     if highlight is None:
         clips = [(clip, None) for clip in plan.clips]
     else:
@@ -374,7 +388,9 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
                 clips.append((clip, None))
                 continue
             for step in clip.steps:
-                clips.append((replace(clip, record_frame=step.record_frame, duration=step.duration, steps=()), step.word))
+                clips.append(
+                    (replace(clip, record_frame=step.record_frame, duration=step.duration, steps=()), step.word)
+                )
     index = add_track(timeline, "video", plan.name)
     result = TrackResult(plan=plan, track_type="video", track_index=index)
     try:
@@ -391,7 +407,7 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
         ]
         appended = []
         for start in range(0, len(infos), 100):  # keep each call modest
-            batch = media_pool.AppendToTimeline(infos[start:start + 100]) or []
+            batch = media_pool.AppendToTimeline(infos[start : start + 100]) or []
             appended.extend(batch)
         if len(appended) != len(clips):
             appended = _items_by_start(timeline, "video", index)

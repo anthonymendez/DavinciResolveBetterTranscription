@@ -96,8 +96,7 @@ class Transcript:
             duration=data["duration"],
             speakers=[Speaker(**s) for s in data.get("speakers", [])],
             segments=[
-                Segment(**{**s, "words": [Word(**w) for w in s.get("words", [])]})
-                for s in data.get("segments", [])
+                Segment(**{**s, "words": [Word(**w) for w in s.get("words", [])]}) for s in data.get("segments", [])
             ],
             cues=[Cue(**c) for c in data.get("cues", [])],
             meta=data.get("meta", {}),

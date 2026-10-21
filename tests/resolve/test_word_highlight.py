@@ -13,11 +13,27 @@ from better_captions_plugin.timing import TimelineClock
 from better_captions_plugin.transcript import Word, from_dict
 from better_captions_plugin.ui import ReviewRequest, ReviewResult, SpeakerRow
 from better_captions_plugin.ui.uimanager_ui import UIManagerBackend
-from better_captions_plugin.word_highlight import (CLS_BLUE, CLS_GREEN, CLS_RED, CueWord, HighlightStep, HighlightUnsupported,
-                                                   add_highlight_to_comp, cue_words, highlight_steps)
+from better_captions_plugin.word_highlight import (
+    CLS_BLUE,
+    CLS_GREEN,
+    CLS_RED,
+    CueWord,
+    HighlightStep,
+    HighlightUnsupported,
+    add_highlight_to_comp,
+    cue_words,
+    highlight_steps,
+)
 
 from tests.resolve.fake_engine import TRANSCRIPT, with_words
-from tests.resolve.fake_resolve import FakeComp, FakeMediaPoolItem, FakeTool, FakeTimelineItem, make_world, parse_imported_comp
+from tests.resolve.fake_resolve import (
+    FakeComp,
+    FakeMediaPoolItem,
+    FakeTool,
+    FakeTimelineItem,
+    make_world,
+    parse_imported_comp,
+)
 from tests.resolve.fake_ui import FakeBackend, accept_all
 from tests.resolve.test_ui import FakeBmd, FakeFusion
 
@@ -49,16 +65,26 @@ def test_colours_are_normalised_and_converted_to_fusion_range():
 
 
 def test_cue_words_match_tokens_to_timed_words_with_character_ranges():
-    words = [Word(" Hey", 0.5, 0.7, "S0"), Word(" Jordan,", 0.75, 1.1, "S0"), Word(" Hi", 0.8, 0.9, "S1"),
-             Word(" how", 1.2, 1.4, "S0"), Word(" are", 1.45, 1.6, "S0"), Word(" you?", 1.65, 2.0, "S0"),
-             Word(" later", 9.0, 9.5, "S0")]
+    words = [
+        Word(" Hey", 0.5, 0.7, "S0"),
+        Word(" Jordan,", 0.75, 1.1, "S0"),
+        Word(" Hi", 0.8, 0.9, "S1"),
+        Word(" how", 1.2, 1.4, "S0"),
+        Word(" are", 1.45, 1.6, "S0"),
+        Word(" you?", 1.65, 2.0, "S0"),
+        Word(" later", 9.0, 9.5, "S0"),
+    ]
     text = "Hey Jordan,\nhow are you?"
     result = cue_words(text, 0.5, 2.0, words, speaker="S0")
     assert [(w.text, w.char_start, w.char_end, w.start, w.end) for w in result] == [
-        ("Hey", 0, 2, 0.5, 0.7), ("Jordan,", 4, 10, 0.75, 1.1), ("how", 12, 14, 1.2, 1.4),  # "\n" counts as one
-        ("are", 16, 18, 1.45, 1.6), ("you?", 20, 23, 1.65, 2.0)]
+        ("Hey", 0, 2, 0.5, 0.7),
+        ("Jordan,", 4, 10, 0.75, 1.1),
+        ("how", 12, 14, 1.2, 1.4),  # "\n" counts as one
+        ("are", 16, 18, 1.45, 1.6),
+        ("you?", 20, 23, 1.65, 2.0),
+    ]
     for word in result:
-        assert text[word.char_start:word.char_end + 1] == word.text
+        assert text[word.char_start : word.char_end + 1] == word.text
 
 
 def test_cue_words_prefer_the_cue_speakers_words_and_match_loosely():
@@ -73,7 +99,11 @@ def test_cue_words_share_the_gap_for_tokens_without_a_word():
     words = [Word(" one", 0.0, 0.5), Word(" four", 2.0, 2.5)]
     result = cue_words("one two three four", 0.0, 2.5, words)
     assert [(w.text, round(w.start, 3), round(w.end, 3)) for w in result] == [
-        ("one", 0.0, 0.5), ("two", 0.5, 1.25), ("three", 1.25, 2.0), ("four", 2.0, 2.5)]
+        ("one", 0.0, 0.5),
+        ("two", 0.5, 1.25),
+        ("three", 1.25, 2.0),
+        ("four", 2.0, 2.5),
+    ]
     trailing = cue_words("one two", 0.0, 1.0, [Word(" one", 0.0, 0.4)])
     assert [(w.start, w.end) for w in trailing] == [(0.0, 0.4), (0.4, 1.0)]
 
@@ -93,7 +123,14 @@ def test_steps_hold_short_pauses_and_show_long_ones_unlit():
     # one: 24..34, held over the 2-frame pause; two: 36..46; 16-frame pause unlit; three: 62..70, held to the end.
     assert frames(steps) == [(24, 12, "one"), (36, 10, "two"), (46, 16, None), (62, 10, "three")]
     unheld = highlight_steps(24, 48, words, CLOCK, hold=0)
-    assert frames(unheld) == [(24, 10, "one"), (34, 2, None), (36, 10, "two"), (46, 16, None), (62, 8, "three"), (70, 2, None)]
+    assert frames(unheld) == [
+        (24, 10, "one"),
+        (34, 2, None),
+        (36, 10, "two"),
+        (46, 16, None),
+        (62, 8, "three"),
+        (70, 2, None),
+    ]
 
 
 def test_steps_lead_in_is_pulled_to_the_cue_start_only_when_short():
@@ -113,7 +150,12 @@ def test_steps_clamp_words_spanning_the_cue_boundaries():
 
 def test_steps_give_sub_frame_words_a_frame_each():
     words = [cw("a", 1.0, 1.01), cw("b", 1.01, 1.02), cw("c", 1.02, 1.5)]
-    assert frames(highlight_steps(24, 24, words, CLOCK, hold=0)) == [(24, 1, "a"), (25, 1, "b"), (26, 10, "c"), (36, 12, None)]
+    assert frames(highlight_steps(24, 24, words, CLOCK, hold=0)) == [
+        (24, 1, "a"),
+        (25, 1, "b"),
+        (26, 10, "c"),
+        (36, 12, None),
+    ]
     # More words than frames: the ones that don't fit are dropped, the cue is still covered.
     many = [cw(str(i), 1.0, 1.0) for i in range(5)]
     assert frames(highlight_steps(24, 3, many, CLOCK)) == [(24, 1, "0"), (25, 1, "1"), (26, 1, "2")]
@@ -149,14 +191,32 @@ def test_steps_are_contiguous_and_ordered_for_random_cues():
 
 def _transcript_with_words():
     data = {
-        "language": "en", "duration": 5.0, "schema_version": 1,
+        "language": "en",
+        "duration": 5.0,
+        "schema_version": 1,
         "speakers": [{"id": "S0", "name": "Maria"}, {"id": "S1", "name": None}],
         "segments": [
-            {"speaker": "S0", "start": 0.5, "end": 2.0, "text": "Hey Jordan", "words": [
-                {"text": " Hey", "start": 0.5, "end": 0.8}, {"text": " Jordan", "start": 0.9, "end": 2.0},
-                {"text": " ", "start": 2.0, "end": 2.0}]},
-            {"speaker": "S0", "start": 1.75, "end": 3.0, "text": "Ready now", "words": [
-                {"text": " Ready", "start": 1.75, "end": 2.3}, {"text": " now", "start": 2.4, "end": 3.0, "speaker": "S0"}]},
+            {
+                "speaker": "S0",
+                "start": 0.5,
+                "end": 2.0,
+                "text": "Hey Jordan",
+                "words": [
+                    {"text": " Hey", "start": 0.5, "end": 0.8},
+                    {"text": " Jordan", "start": 0.9, "end": 2.0},
+                    {"text": " ", "start": 2.0, "end": 2.0},
+                ],
+            },
+            {
+                "speaker": "S0",
+                "start": 1.75,
+                "end": 3.0,
+                "text": "Ready now",
+                "words": [
+                    {"text": " Ready", "start": 1.75, "end": 2.3},
+                    {"text": " now", "start": 2.4, "end": 3.0, "speaker": "S0"},
+                ],
+            },
         ],
         "cues": [
             {"speaker": "S0", "start": 0.5, "end": 2.0, "lines": ["Hey Jordan"]},
@@ -170,7 +230,11 @@ def _transcript_with_words():
 def test_transcript_reads_the_segments_words():
     transcript = _transcript_with_words()
     assert [(w.text, w.start, w.speaker) for w in transcript.words] == [
-        (" Hey", 0.5, "S0"), (" Jordan", 0.9, "S0"), (" Ready", 1.75, "S0"), (" now", 2.4, "S0")]
+        (" Hey", 0.5, "S0"),
+        (" Jordan", 0.9, "S0"),
+        (" Ready", 1.75, "S0"),
+        (" now", 2.4, "S0"),
+    ]
 
 
 def test_plan_tracks_adds_word_steps_from_the_trimmed_frames():
@@ -204,13 +268,20 @@ def test_add_highlight_links_a_cls_tool_and_keeps_the_rest_of_the_comp():
     edited = add_highlight_to_comp(comp, 'Hey "Jordan",\nhow are you?', entries)
     parsed = parse_imported_comp(edited)
     assert parsed is not None
-    assert parsed.cls == {"tool": "BetterCaptionsHighlight", "text": 'Hey "Jordan",\nhow are you?',
-                          "array": [(CLS_RED, 4, 10, 1.0), (CLS_GREEN, 4, 10, 0.831373), (CLS_BLUE, 4, 10, 0.0)]}
+    assert parsed.cls == {
+        "tool": "BetterCaptionsHighlight",
+        "text": 'Hey "Jordan",\nhow are you?',
+        "array": [(CLS_RED, 4, 10, 1.0), (CLS_GREEN, 4, 10, 0.831373), (CLS_BLUE, 4, 10, 0.0)],
+    }
     # Only the StyledText input changed and one tool was added; the template's look is untouched.
     removed = [line for line in comp.splitlines() if line not in edited.splitlines()]
     assert removed == ['\t\t\t\tStyledText = Input { Value = "Hey Jordan,\\nhow are you?", },']
-    for kept in ('Font = Input { Value = "Open Sans", },', "Red1 = Input { Value = 0.95, },", "TEMPLATE_ID",
-                 '"C:\\\\Cache {v2} = TextPlus {"'):
+    for kept in (
+        'Font = Input { Value = "Open Sans", },',
+        "Red1 = Input { Value = 0.95, },",
+        "TEMPLATE_ID",
+        '"C:\\\\Cache {v2} = TextPlus {"',
+    ):
         assert kept in edited
     assert edited.index("BetterCaptionsHighlight = StyledTextCLS {") < edited.index("Template = TextPlus {")
 
@@ -226,9 +297,11 @@ def test_add_highlight_handles_missing_inputs_and_name_clashes():
 
 
 def test_add_highlight_into_a_macro_puts_the_tool_next_to_the_text():
-    comp = ("Composition {\n\tTools = ordered() {\n\t\tMyTitle = MacroOperator {\n\t\t\tTools = ordered() {\n"
-            "\t\t\t\tTemplate = TextPlus {\n\t\t\t\t\tInputs = {\n\t\t\t\t\t\tStyledText = Input { Value = \"x\", },\n"
-            "\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t},\n\t\t},\n\t},\n}\n")
+    comp = (
+        "Composition {\n\tTools = ordered() {\n\t\tMyTitle = MacroOperator {\n\t\t\tTools = ordered() {\n"
+        '\t\t\t\tTemplate = TextPlus {\n\t\t\t\t\tInputs = {\n\t\t\t\t\t\tStyledText = Input { Value = "x", },\n'
+        "\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t},\n\t\t},\n\t},\n}\n"
+    )
     edited = add_highlight_to_comp(comp, "x", word_highlight.cls_entries(0, 0, (1, 1, 0)))
     inner = edited.index("Tools = ordered() {", edited.index("MacroOperator"))
     assert inner < edited.index("BetterCaptionsHighlight = StyledTextCLS") < edited.index("Template = TextPlus")
@@ -238,13 +311,19 @@ def test_add_highlight_into_a_macro_puts_the_tool_next_to_the_text():
 def test_add_highlight_refuses_templates_that_drive_their_own_text():
     with pytest.raises(HighlightUnsupported, match="its own Follower1 tool"):
         add_highlight_to_comp(_exported(styled_text_source="Follower1"), "x", [])
-    expression = "Composition {\n\tTools = {\n\t\tT = TextPlus {\n\t\t\tInputs = {\n\t\t\t\tStyledText = Input { Expression = \"x\", },\n\t\t\t},\n\t\t},\n\t},\n}"
+    expression = 'Composition {\n\tTools = {\n\t\tT = TextPlus {\n\t\t\tInputs = {\n\t\t\t\tStyledText = Input { Expression = "x", },\n\t\t\t},\n\t\t},\n\t},\n}'
     with pytest.raises(HighlightUnsupported, match="an expression"):
         add_highlight_to_comp(expression, "x", [])
     with pytest.raises(HighlightUnsupported, match="no Text\\+ tool"):
-        add_highlight_to_comp('Composition {\n\tTools = {\n\t\tB = Background { Inputs = { N = Input { Value = "T = TextPlus {" } } },\n\t},\n}', "x", [])
+        add_highlight_to_comp(
+            'Composition {\n\tTools = {\n\t\tB = Background { Inputs = { N = Input { Value = "T = TextPlus {" } } },\n\t},\n}',
+            "x",
+            [],
+        )
     with pytest.raises(HighlightUnsupported, match="unterminated"):
-        add_highlight_to_comp('Composition { Tools = { T = TextPlus { Inputs = { StyledText = Input { Value = "x', "x", [])
+        add_highlight_to_comp(
+            'Composition { Tools = { T = TextPlus { Inputs = { StyledText = Input { Value = "x', "x", []
+        )
 
 
 def test_lua_string_escapes():
@@ -263,9 +342,13 @@ def _plan_with_steps(resolve, template_item, texts=(("Hey Jordan", 1.0, 2.0), ("
         step = (end - start) / len(tokens)
         words += [Word(" " + t, start + i * step, start + (i + 1) * step, "S0") for i, t in enumerate(tokens)]
         cues.append({"speaker": "S0", "start": start, "end": end, "lines": [text]})
-    transcript = from_dict({"language": "en", "duration": 5.0, "speakers": [{"id": "S0", "name": "Maria"}], "cues": cues})
+    transcript = from_dict(
+        {"language": "en", "duration": 5.0, "speakers": [{"id": "S0", "name": "Maria"}], "cues": cues}
+    )
     transcript.words = words
-    plan = planning.plan_tracks(transcript, {}, planning.MODE_TEXTPLUS, clock, highlight=True, templates={"S0": template_item})[0]
+    plan = planning.plan_tracks(
+        transcript, {}, planning.MODE_TEXTPLUS, clock, highlight=True, templates={"S0": template_item}
+    )[0]
     return plan
 
 
@@ -284,7 +367,12 @@ def test_textplus_track_with_highlight_places_one_clip_per_word_step(tmp_path):
     start = tl.start_frame
     assert [(i.GetStart() - start, i.GetDuration()) for i in items] == [(24, 12), (36, 12), (72, 12), (84, 12)]
     assert result.placed == 4 and result.highlighted == 4 and not result.misplaced and not result.notes
-    assert [i.text() for i in items] == ["Hey Jordan", "Hey Jordan", "Ready now", "Ready now"]  # the whole cue each time
+    assert [i.text() for i in items] == [
+        "Hey Jordan",
+        "Hey Jordan",
+        "Ready now",
+        "Ready now",
+    ]  # the whole cue each time
     assert [i.highlight()["array"][0][1:3] for i in items] == [(0, 2), (4, 9), (0, 4), (6, 8)]  # the spoken word
     assert all([e[0] for e in i.highlight()["array"]] == [CLS_RED, CLS_GREEN, CLS_BLUE] for i in items)
     assert items[0].highlight()["array"][1][3] == 0.831373
@@ -295,9 +383,12 @@ def test_textplus_track_with_highlight_places_one_clip_per_word_step(tmp_path):
 def test_highlight_keeps_unlit_pauses_plain_and_works_when_import_replaces_the_comp(tmp_path, monkeypatch):
     resolve = make_world()
     tl, pool = resolve.project.timeline, resolve.project.media_pool
-    plan = _plan_with_steps(resolve, _template(resolve), texts=(("Hey there",  1.0, 3.0),))
+    plan = _plan_with_steps(resolve, _template(resolve), texts=(("Hey there", 1.0, 3.0),))
     word = plan.clips[0].steps[0].word
-    plan.clips[0] = dataclasses.replace(plan.clips[0], steps=(HighlightStep(tl.start_frame + 24, 12, word), HighlightStep(tl.start_frame + 36, 36, None)))
+    plan.clips[0] = dataclasses.replace(
+        plan.clips[0],
+        steps=(HighlightStep(tl.start_frame + 24, 12, word), HighlightStep(tl.start_frame + 36, 36, None)),
+    )
     original_init = FakeTimelineItem.__init__
 
     def replacing(self, *args, **kwargs):
@@ -305,7 +396,9 @@ def test_highlight_keeps_unlit_pauses_plain_and_works_when_import_replaces_the_c
         self.import_replaces = True
 
     monkeypatch.setattr(FakeTimelineItem, "__init__", replacing)
-    result = resolve_io.create_textplus_track(pool, tl, plan, highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path)))
+    result = resolve_io.create_textplus_track(
+        pool, tl, plan, highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path))
+    )
     lit, pause = tl.track("video", "Maria").items
     assert result.highlighted == 1 and lit.highlight()["array"][0] == (CLS_RED, 0, 2, 1.0) and lit.loaded == []
     assert pause.highlight() is None and pause.text() == "Hey there" and pause.exported == []
@@ -316,10 +409,17 @@ def test_highlight_falls_back_to_plain_clips_when_the_template_drives_its_own_te
     tl, pool = resolve.project.timeline, resolve.project.media_pool
     animated = FakeMediaPoolItem("Typewriter", kind="Generator", styled_text_source="Follower1")
     plan = _plan_with_steps(resolve, animated)
-    result = resolve_io.create_textplus_track(pool, tl, plan, highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path)))
+    result = resolve_io.create_textplus_track(
+        pool, tl, plan, highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path))
+    )
     items = tl.track("video", "Maria").items
-    assert [(i.GetStart() - tl.start_frame, i.GetDuration(), i.text()) for i in items] == [(24, 24, "Hey Jordan"), (72, 24, "Ready now")]
-    assert result.highlighted == 0 and result.notes == ["words not highlighted: the template's text is driven by its own Follower1 tool"]
+    assert [(i.GetStart() - tl.start_frame, i.GetDuration(), i.text()) for i in items] == [
+        (24, 24, "Hey Jordan"),
+        (72, 24, "Ready now"),
+    ]
+    assert result.highlighted == 0 and result.notes == [
+        "words not highlighted: the template's text is driven by its own Follower1 tool"
+    ]
     assert [t.name for t in tl.tracks["video"]] == ["Video 1", "Maria"] and tl.deleted_tracks == [("video", 2, "Maria")]
 
 
@@ -327,16 +427,26 @@ def test_highlight_falls_back_when_resolve_cannot_export_comps(tmp_path, monkeyp
     resolve = make_world()
     tl, pool = resolve.project.timeline, resolve.project.media_pool
     monkeypatch.setattr(FakeTimelineItem, "ExportFusionComp", lambda self, path, index: False)
-    result = resolve_io.create_textplus_track(pool, tl, _plan_with_steps(resolve, _template(resolve)),
-                                              highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path)))
-    assert len(tl.track("video", "Maria").items) == 2 and result.notes == ["words not highlighted: Resolve did not export the clip's Fusion comp"]
+    result = resolve_io.create_textplus_track(
+        pool,
+        tl,
+        _plan_with_steps(resolve, _template(resolve)),
+        highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path)),
+    )
+    assert len(tl.track("video", "Maria").items) == 2 and result.notes == [
+        "words not highlighted: Resolve did not export the clip's Fusion comp"
+    ]
 
     def boom(self, path, index):
         raise AttributeError("ExportFusionComp")
 
     monkeypatch.setattr(FakeTimelineItem, "ExportFusionComp", boom)
-    result = resolve_io.create_textplus_track(pool, tl, _plan_with_steps(resolve, _template(resolve)),
-                                              highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path)))
+    result = resolve_io.create_textplus_track(
+        pool,
+        tl,
+        _plan_with_steps(resolve, _template(resolve)),
+        highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path)),
+    )
     assert "could not export" in result.notes[0] and result.placed == 2
 
 
@@ -351,10 +461,16 @@ def test_highlight_failure_after_the_first_clip_is_reported_per_clip(tmp_path, m
         return None if calls["n"] == 2 else real_import(self, path)
 
     monkeypatch.setattr(FakeTimelineItem, "ImportFusionComp", flaky)
-    result = resolve_io.create_textplus_track(pool, tl, _plan_with_steps(resolve, _template(resolve)),
-                                              highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path)))
+    result = resolve_io.create_textplus_track(
+        pool,
+        tl,
+        _plan_with_steps(resolve, _template(resolve)),
+        highlight=resolve_io.HighlightStyle((1, 0, 0), str(tmp_path)),
+    )
     items = tl.track("video", "Maria").items
-    assert result.highlighted == 3 and result.highlight_failures == ["Hey Jordan (Jordan): Resolve did not import the highlighted comp"]
+    assert result.highlighted == 3 and result.highlight_failures == [
+        "Hey Jordan (Jordan): Resolve did not import the highlighted comp"
+    ]
     assert items[1].highlight() is None and items[1].text() == "Hey Jordan"  # still shows the caption, unlit
     assert tl.deleted_tracks == []
 
@@ -389,8 +505,12 @@ def test_review_choices_are_saved_in_config_json_keeping_other_settings(tmp_path
     config = config_mod.load_config(str(path))
     outcome = app.Outcome()
     app.remember_review_choices(config, ReviewResult(highlight_words=True, highlight_color="#00FF88"), outcome)
-    assert json.loads(path.read_text(encoding="utf-8")) == {"engine": ["py"], "naming_provider": "llm",
-                                                            "highlight_words": True, "highlight_color": "#00FF88"}
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "engine": ["py"],
+        "naming_provider": "llm",
+        "highlight_words": True,
+        "highlight_color": "#00FF88",
+    }
     assert config["highlight_words"] is True and not outcome.warnings
     assert config_mod.save_settings(config, {"highlight_words": True}) is False  # unchanged: not rewritten
     assert not os.path.exists(str(path) + ".tmp")
@@ -421,9 +541,13 @@ def test_full_flow_highlights_words_and_remembers_the_choice(config):
     assert [i.highlight()["array"][0] for i in maria[:2]] == [(CLS_RED, 0, 2, 1.0), (CLS_RED, 4, 10, 1.0)]
     assert all(i.highlight()["array"][1] == (CLS_GREEN,) + i.highlight()["array"][1][1:3] + (0.0,) for i in maria)
     assert maria[0].GetStart() == tl.start_frame + 12 and maria[-1].GetEnd() == tl.start_frame + 156
-    assert 'spoken word highlighted in 9 clips' in backend.messages[0][1]
+    assert "spoken word highlighted in 9 clips" in backend.messages[0][1]
     saved = json.load(open(config["_path"], encoding="utf-8"))
-    assert saved["highlight_words"] is True and saved["highlight_color"] == "#FF0000" and saved["engine_args"] == ["--with-words"]
+    assert (
+        saved["highlight_words"] is True
+        and saved["highlight_color"] == "#FF0000"
+        and saved["engine_args"] == ["--with-words"]
+    )
     # The next run's dialog starts from the remembered choice.
     second = FakeBackend(None)
     app.main(resolve=make_world(), backend=second, config=config_mod.load_config(config["_path"]), sleep=lambda s: None)
@@ -452,7 +576,9 @@ def test_highlight_is_ignored_for_subtitle_only_runs(config):
 
 
 def _request(**kwargs):
-    return ReviewRequest(speakers=[SpeakerRow("SPEAKER_00", "Maria", 2, "Hey")], templates=["Style A  (Master)"], **kwargs)
+    return ReviewRequest(
+        speakers=[SpeakerRow("SPEAKER_00", "Maria", 2, "Hey")], templates=["Style A  (Master)"], **kwargs
+    )
 
 
 def test_uimanager_review_has_the_highlight_toggle_and_colour():

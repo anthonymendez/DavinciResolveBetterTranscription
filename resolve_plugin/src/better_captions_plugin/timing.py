@@ -114,8 +114,9 @@ class TimelineClock:
     start_frame: int = 0  # Timeline.GetStartFrame(): absolute frame of the first timeline frame
 
     @classmethod
-    def from_settings(cls, frame_rate, start_timecode: "str | None" = None, start_frame: "int | None" = None,
-                      drop_frame_setting=None) -> "TimelineClock":
+    def from_settings(
+        cls, frame_rate, start_timecode: "str | None" = None, start_frame: "int | None" = None, drop_frame_setting=None
+    ) -> "TimelineClock":
         """Build from raw Resolve values; ``start_frame`` wins over ``start_timecode``."""
         fps, drop = parse_frame_rate(frame_rate)
         if drop_frame_setting is not None:

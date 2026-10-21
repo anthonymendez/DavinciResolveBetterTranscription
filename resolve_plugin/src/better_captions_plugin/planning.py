@@ -83,7 +83,9 @@ def place_cues(cues: "list[Cue]", clock: TimelineClock, origin_frame: "int | Non
         if previous_start is not None and start <= previous_start:
             start = previous_start + 1
         duration = max(1, end - start)
-        placements.append(ClipPlacement(record_frame=start, duration=duration, text=cue.text, start=cue.start, end=cue.end))
+        placements.append(
+            ClipPlacement(record_frame=start, duration=duration, text=cue.text, start=cue.start, end=cue.end)
+        )
         previous_start = start
     # Second pass: a clip must not run into the next one.
     trimmed: "list[ClipPlacement]" = []
@@ -91,13 +93,21 @@ def place_cues(cues: "list[Cue]", clock: TimelineClock, origin_frame: "int | Non
         if index + 1 < len(placements):
             limit = placements[index + 1].record_frame
             if clip.end_frame > limit:
-                clip = ClipPlacement(clip.record_frame, max(1, limit - clip.record_frame), clip.text, clip.start, clip.end)
+                clip = ClipPlacement(
+                    clip.record_frame, max(1, limit - clip.record_frame), clip.text, clip.start, clip.end
+                )
         trimmed.append(clip)
     return trimmed
 
 
-def add_word_steps(clips: "list[ClipPlacement]", words, clock: TimelineClock, origin_frame: "int | None" = None,
-                   speaker: "str | None" = None, hold_seconds: float = word_highlight.DEFAULT_HOLD_SECONDS) -> "list[ClipPlacement]":
+def add_word_steps(
+    clips: "list[ClipPlacement]",
+    words,
+    clock: TimelineClock,
+    origin_frame: "int | None" = None,
+    speaker: "str | None" = None,
+    hold_seconds: float = word_highlight.DEFAULT_HOLD_SECONDS,
+) -> "list[ClipPlacement]":
     """``clips`` with their word steps filled in (from the placed, possibly trimmed, frames)."""
     hold = word_highlight.hold_frames(clock, hold_seconds)
     result = []
@@ -105,7 +115,9 @@ def add_word_steps(clips: "list[ClipPlacement]", words, clock: TimelineClock, or
         timed = word_highlight.cue_words(clip.text, clip.start, clip.end, words, speaker=speaker)
         steps = ()
         if timed:
-            steps = tuple(word_highlight.highlight_steps(clip.record_frame, clip.duration, timed, clock, origin_frame, hold))
+            steps = tuple(
+                word_highlight.highlight_steps(clip.record_frame, clip.duration, timed, clock, origin_frame, hold)
+            )
             if not any(step.word for step in steps):
                 steps = ()
         result.append(replace(clip, steps=steps))

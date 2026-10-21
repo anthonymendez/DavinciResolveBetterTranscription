@@ -95,7 +95,9 @@ def from_dict(data: dict) -> Transcript:
         lines = c.get("lines")
         if lines is None:
             lines = str(c.get("text", "")).split("\n")
-        cues.append(Cue(speaker=str(c["speaker"]), start=float(c["start"]), end=float(c["end"]), lines=[str(x) for x in lines]))
+        cues.append(
+            Cue(speaker=str(c["speaker"]), start=float(c["start"]), end=float(c["end"]), lines=[str(x) for x in lines])
+        )
     words = []
     for segment in data.get("segments", []) or []:
         for w in segment.get("words", []) or []:

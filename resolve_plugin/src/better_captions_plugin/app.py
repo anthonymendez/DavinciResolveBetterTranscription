@@ -25,8 +25,16 @@ import traceback
 from better_captions_plugin import config as config_mod
 from better_captions_plugin import engine_runner, planning, resolve_io, speaker_edits, word_highlight
 from better_captions_plugin import transcript as transcript_mod
-from better_captions_plugin.ui import (NAMING_CHOICES, Backend, ReviewRequest, ReviewResult, SpeakerRow, choose_backend, naming_index,
-                                       speaker_rows)
+from better_captions_plugin.ui import (
+    NAMING_CHOICES,
+    Backend,
+    ReviewRequest,
+    ReviewResult,
+    SpeakerRow,
+    choose_backend,
+    naming_index,
+    speaker_rows,
+)
 
 TITLE = "Better Captions"
 
@@ -51,7 +59,9 @@ class Outcome:
         lines = []
         for result in self.created:
             kind = "subtitle track" if result.track_type == "subtitle" else "Text+ track"
-            lines.append("Created %s %d \"%s\" with %d clips." % (kind, result.track_index, result.plan.name, result.placed))
+            lines.append(
+                'Created %s %d "%s" with %d clips.' % (kind, result.track_index, result.plan.name, result.placed)
+            )
             for note in result.misplaced[:5]:
                 lines.append("    note: " + note)
             if len(result.misplaced) > 5:
@@ -82,8 +92,17 @@ class Outcome:
         return "\n".join(lines) or "Nothing was created."
 
 
-def main(resolve=None, fusion=None, bmd=None, backend: "Backend | None" = None, config: "dict | None" = None,
-         work_dir: "str | None" = None, environ=None, popen=None, sleep=None) -> Outcome:
+def main(
+    resolve=None,
+    fusion=None,
+    bmd=None,
+    backend: "Backend | None" = None,
+    config: "dict | None" = None,
+    work_dir: "str | None" = None,
+    environ=None,
+    popen=None,
+    sleep=None,
+) -> Outcome:
     """Entry point used by the launcher script (and by tests with fakes injected)."""
     outcome = Outcome()
     owns_backend = backend is None
@@ -96,7 +115,12 @@ def main(resolve=None, fusion=None, bmd=None, backend: "Backend | None" = None, 
             run(resolve, backend, config, outcome, work_dir=work_dir, popen=popen, sleep=sleep)
         except Cancelled:
             outcome.cancelled = True
-        except (config_mod.ConfigError, resolve_io.ResolveError, engine_runner.EngineError, transcript_mod.TranscriptError) as exc:
+        except (
+            config_mod.ConfigError,
+            resolve_io.ResolveError,
+            engine_runner.EngineError,
+            transcript_mod.TranscriptError,
+        ) as exc:
             outcome.error = str(exc)
             backend.error(TITLE, str(exc))
         except Exception as exc:  # anything else: show it with a traceback rather than dying silently
@@ -155,8 +179,12 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
 
         try:
             done = engine_runner.run_engine(
-                argv, on_event=on_event, should_cancel=lambda: progress.cancelled, pump=progress.pump,
-                env=config_mod.engine_environment(), popen=popen,
+                argv,
+                on_event=on_event,
+                should_cancel=lambda: progress.cancelled,
+                pump=progress.pump,
+                env=config_mod.engine_environment(),
+                popen=popen,
             )
         except engine_runner.EngineCancelled:
             raise Cancelled()
@@ -184,8 +212,9 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
     note = reapply_saved_edits(editor, edits_paths, audio_sha)
 
     templates = resolve_io.find_text_templates(media_pool)
-    request = build_review_request(transcript, templates, timeline_name, clock, range_start, range_end, config,
-                                   editor=editor, note=note)
+    request = build_review_request(
+        transcript, templates, timeline_name, clock, range_start, range_end, config, editor=editor, note=note
+    )
     review = backend.review(request)
     if review is None:
         raise Cancelled()
@@ -212,11 +241,19 @@ def reapply_saved_edits(editor, paths, audio_sha) -> str:
     applied = editor.reapply(saved.get("ops"))
     notes = []
     if applied:
-        notes.append("Re-applied %d speaker fix%s saved from an earlier run on this audio (undo in \"Fix speakers…\")."
-                     % (applied, "" if applied == 1 else "es"))
+        notes.append(
+            'Re-applied %d speaker fix%s saved from an earlier run on this audio (undo in "Fix speakers…").'
+            % (applied, "" if applied == 1 else "es")
+        )
     if editor.skipped:
-        notes.append("%d saved fix%s no longer matched the transcript and %s skipped."
-                     % (len(editor.skipped), "" if len(editor.skipped) == 1 else "es", "was" if len(editor.skipped) == 1 else "were"))
+        notes.append(
+            "%d saved fix%s no longer matched the transcript and %s skipped."
+            % (
+                len(editor.skipped),
+                "" if len(editor.skipped) == 1 else "es",
+                "was" if len(editor.skipped) == 1 else "were",
+            )
+        )
     return " ".join(notes)
 
 
@@ -232,8 +269,9 @@ def save_edits(editor, paths, audio_sha, outcome: Outcome):
             outcome.warnings.append("speaker fixes not saved to %s: %s" % (path, exc))
 
 
-def build_review_request(transcript, templates, timeline_name, clock, range_start, range_end, config,
-                         editor=None, note: str = "") -> ReviewRequest:
+def build_review_request(
+    transcript, templates, timeline_name, clock, range_start, range_end, config, editor=None, note: str = ""
+) -> ReviewRequest:
     if editor is not None:
         rows = speaker_rows(editor)
     else:
@@ -242,20 +280,24 @@ def build_review_request(transcript, templates, timeline_name, clock, range_star
             speaker = transcript.speaker(speaker_id)
             cues = transcript.cues_for(speaker_id)
             sample = next((c.text for c in cues if c.text.strip()), "")
-            rows.append(SpeakerRow(
-                id=speaker_id,
-                name=speaker.display_name if speaker else speaker_id,
-                cue_count=len(cues),
-                sample=sample,
-                source=speaker.name_source if speaker else None,
-            ))
+            rows.append(
+                SpeakerRow(
+                    id=speaker_id,
+                    name=speaker.display_name if speaker else speaker_id,
+                    cue_count=len(cues),
+                    sample=sample,
+                    source=speaker.name_source if speaker else None,
+                )
+            )
     if range_end is None:
         range_label = "whole timeline (from %s)" % clock.timecode(range_start)
     else:
         range_label = "%s – %s" % (clock.timecode(range_start), clock.timecode(range_end))
     default_mode = str(config.get("default_output", "subtitles")).lower()
     try:
-        highlight_color = word_highlight.normalize_hex_color(config.get(config_mod.HIGHLIGHT_COLOR) or word_highlight.DEFAULT_HIGHLIGHT_COLOR)
+        highlight_color = word_highlight.normalize_hex_color(
+            config.get(config_mod.HIGHLIGHT_COLOR) or word_highlight.DEFAULT_HIGHLIGHT_COLOR
+        )
     except ValueError:
         highlight_color = word_highlight.DEFAULT_HIGHLIGHT_COLOR
     return ReviewRequest(
@@ -276,7 +318,10 @@ def build_review_request(transcript, templates, timeline_name, clock, range_star
 
 def remember_review_choices(config: dict, review: ReviewResult, outcome: Outcome):
     """Keep the highlight toggle and colour, and the naming provider for the next run, in config.json."""
-    updates = {config_mod.HIGHLIGHT_WORDS: bool(review.highlight_words), config_mod.HIGHLIGHT_COLOR: review.highlight_color}
+    updates = {
+        config_mod.HIGHLIGHT_WORDS: bool(review.highlight_words),
+        config_mod.HIGHLIGHT_COLOR: review.highlight_color,
+    }
     if review.naming_provider is not None:
         updates[config_mod.NAMING_PROVIDER] = review.naming_provider
     try:
@@ -285,12 +330,21 @@ def remember_review_choices(config: dict, review: ReviewResult, outcome: Outcome
         outcome.warnings.append("review settings not remembered: %s" % exc)
 
 
-def create_tracks(media_pool, timeline, transcript, review: ReviewResult, templates, clock, origin_frame, srt_paths, outcome: Outcome):
+def create_tracks(
+    media_pool, timeline, transcript, review: ReviewResult, templates, clock, origin_frame, srt_paths, outcome: Outcome
+):
     taken_video = resolve_io.existing_track_names(timeline, "video")
     taken_subtitle = resolve_io.existing_track_names(timeline, "subtitle")
     if review.subtitles:
-        plans = planning.plan_tracks(transcript, review.names, planning.MODE_SUBTITLES, clock, origin_frame,
-                                     existing_track_names=taken_subtitle, srt_paths=srt_paths)
+        plans = planning.plan_tracks(
+            transcript,
+            review.names,
+            planning.MODE_SUBTITLES,
+            clock,
+            origin_frame,
+            existing_track_names=taken_subtitle,
+            srt_paths=srt_paths,
+        )
         for plan in plans:
             try:
                 outcome.created.append(resolve_io.create_subtitle_track(media_pool, timeline, plan, origin_frame))
@@ -303,10 +357,20 @@ def create_tracks(media_pool, timeline, transcript, review: ReviewResult, templa
                 chosen[speaker_id] = templates[index]
         highlight = None
         if review.highlight_words:
-            highlight = resolve_io.HighlightStyle(rgb=word_highlight.parse_hex_color(review.highlight_color),
-                                                  work_dir=os.path.join(outcome.work_dir or tempfile.gettempdir(), "highlight"))
-        plans = planning.plan_tracks(transcript, review.names, planning.MODE_TEXTPLUS, clock, origin_frame,
-                                     existing_track_names=taken_video, templates=chosen, highlight=highlight is not None)
+            highlight = resolve_io.HighlightStyle(
+                rgb=word_highlight.parse_hex_color(review.highlight_color),
+                work_dir=os.path.join(outcome.work_dir or tempfile.gettempdir(), "highlight"),
+            )
+        plans = planning.plan_tracks(
+            transcript,
+            review.names,
+            planning.MODE_TEXTPLUS,
+            clock,
+            origin_frame,
+            existing_track_names=taken_video,
+            templates=chosen,
+            highlight=highlight is not None,
+        )
         for plan in plans:
             if plan.template is None:
                 outcome.warnings.append("no Text+ template chosen for %s; skipped" % plan.name)
@@ -314,7 +378,9 @@ def create_tracks(media_pool, timeline, transcript, review: ReviewResult, templa
             if highlight is not None and not any(clip.steps for clip in plan.clips):
                 outcome.warnings.append("no word timings for %s's captions; placed without highlighting" % plan.name)
             try:
-                outcome.created.append(resolve_io.create_textplus_track(media_pool, timeline, plan, highlight=highlight))
+                outcome.created.append(
+                    resolve_io.create_textplus_track(media_pool, timeline, plan, highlight=highlight)
+                )
             except resolve_io.ResolveError as exc:
                 outcome.warnings.append("Text+ track for %s not created: %s" % (plan.name, exc))
 

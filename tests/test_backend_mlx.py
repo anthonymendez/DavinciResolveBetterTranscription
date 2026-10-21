@@ -26,14 +26,20 @@ class FakeMlxWhisper:
             "text": "Hello world. Bye",
             "language": self.language if kwargs.get("language") is None else kwargs["language"],
             "segments": [
-                {"end": 2.0, "words": [
-                    {"word": " Hello", "start": 0.0, "end": 0.5, "probability": 0.9},
-                    {"word": " world.", "start": 0.6, "end": 2.0, "probability": 0.8},
-                ]},
-                {"end": 5.0, "words": [
-                    {"word": " ", "start": 2.5, "end": 2.6, "probability": 0.1},
-                    {"word": " Bye", "start": 4.0, "end": 5.0, "probability": 0.7},
-                ]},
+                {
+                    "end": 2.0,
+                    "words": [
+                        {"word": " Hello", "start": 0.0, "end": 0.5, "probability": 0.9},
+                        {"word": " world.", "start": 0.6, "end": 2.0, "probability": 0.8},
+                    ],
+                },
+                {
+                    "end": 5.0,
+                    "words": [
+                        {"word": " ", "start": 2.5, "end": 2.6, "probability": 0.1},
+                        {"word": " Bye", "start": 4.0, "end": 5.0, "probability": 0.7},
+                    ],
+                },
                 {"end": 10.5, "words": []},
                 {"end": 10.5},
             ],

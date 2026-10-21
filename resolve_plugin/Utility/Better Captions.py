@@ -18,8 +18,25 @@ def _script_dir():
     # Resolve's script host does not always set __file__: fall back to the known Utility folders.
     home = os.path.expanduser("~")
     guesses = [
-        os.path.join(os.environ.get("APPDATA", ""), "Blackmagic Design", "DaVinci Resolve", "Support", "Fusion", "Scripts", "Utility"),
-        os.path.join(home, "Library", "Application Support", "Blackmagic Design", "DaVinci Resolve", "Fusion", "Scripts", "Utility"),
+        os.path.join(
+            os.environ.get("APPDATA", ""),
+            "Blackmagic Design",
+            "DaVinci Resolve",
+            "Support",
+            "Fusion",
+            "Scripts",
+            "Utility",
+        ),
+        os.path.join(
+            home,
+            "Library",
+            "Application Support",
+            "Blackmagic Design",
+            "DaVinci Resolve",
+            "Fusion",
+            "Scripts",
+            "Utility",
+        ),
         os.path.join(home, ".local", "share", "DaVinciResolve", "Fusion", "Scripts", "Utility"),
     ]
     for guess in guesses:
@@ -57,9 +74,11 @@ def _load_plugin():
 
 def _main():
     if sys.version_info < (3, 8):
-        msg = ("Better Captions needs Python 3.8 or newer, but Resolve is running scripts with Python %s. "
-               "Install a 64-bit Python 3.10-3.12 from python.org for all users and restart Resolve."
-               % ".".join(map(str, sys.version_info[:3])))
+        msg = (
+            "Better Captions needs Python 3.8 or newer, but Resolve is running scripts with Python %s. "
+            "Install a 64-bit Python 3.10-3.12 from python.org for all users and restart Resolve."
+            % ".".join(map(str, sys.version_info[:3]))
+        )
         print(msg)
         raise SystemExit(msg)
     app = _load_plugin()

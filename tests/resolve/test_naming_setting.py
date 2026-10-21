@@ -60,7 +60,9 @@ def test_provider_is_saved_in_config_json(tmp_path):
 @pytest.fixture
 def config(tmp_path):
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"engine": [sys.executable, "-I", FAKE_ENGINE], "naming_provider": "heuristic"}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"engine": [sys.executable, "-I", FAKE_ENGINE], "naming_provider": "heuristic"}), encoding="utf-8"
+    )
     return config_mod.load_config(str(path))
 
 
@@ -79,7 +81,9 @@ def test_full_flow_choice_reaches_the_next_engine_run(config):
 
 
 def _request(**kwargs):
-    return ReviewRequest(speakers=[SpeakerRow("SPEAKER_00", "Maria", 2, "Hey")], templates=["Style A  (Master)"], **kwargs)
+    return ReviewRequest(
+        speakers=[SpeakerRow("SPEAKER_00", "Maria", 2, "Hey")], templates=["Style A  (Master)"], **kwargs
+    )
 
 
 def test_uimanager_review_has_the_naming_choice():

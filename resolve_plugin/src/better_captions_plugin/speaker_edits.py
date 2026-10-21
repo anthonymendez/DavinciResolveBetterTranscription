@@ -219,22 +219,29 @@ class SpeakerEditor:
         ordered += sorted(sid for sid in with_cues if sid not in ordered)
         summaries = []
         for speaker_id in ordered:
-            own = sorted((c for c in cues if str(c.get("speaker")) == speaker_id), key=lambda c: (float(c["start"]), float(c["end"])))
+            own = sorted(
+                (c for c in cues if str(c.get("speaker")) == speaker_id),
+                key=lambda c: (float(c["start"]), float(c["end"])),
+            )
             texts = [_cue_text(c) for c in own]
             entry = _speaker_entry(self.data, speaker_id) or {}
-            summaries.append(SpeakerSummary(
-                id=speaker_id,
-                name=entry.get("name") or speaker_id,
-                cue_count=len(own),
-                sample=next((t for t in texts if t.strip()), ""),
-                source=entry.get("name_source"),
-            ))
+            summaries.append(
+                SpeakerSummary(
+                    id=speaker_id,
+                    name=entry.get("name") or speaker_id,
+                    cue_count=len(own),
+                    sample=next((t for t in texts if t.strip()), ""),
+                    source=entry.get("name_source"),
+                )
+            )
         return summaries
 
     def cues(self, speaker: "str | None" = None) -> "list[CueSummary]":
         """Cues in time order, optionally only one speaker's."""
         rows = [
-            CueSummary(index=i, start=float(c["start"]), end=float(c["end"]), speaker=str(c["speaker"]), text=_cue_text(c))
+            CueSummary(
+                index=i, start=float(c["start"]), end=float(c["end"]), speaker=str(c["speaker"]), text=_cue_text(c)
+            )
             for i, c in enumerate(self.data.get("cues", []))
             if speaker is None or str(c["speaker"]) == speaker
         ]
@@ -272,7 +279,9 @@ class SpeakerEditor:
     def split(self, cue_indexes, name: "str | None" = None) -> str:
         """Move cues to a new speaker; returns the new speaker's id."""
         new_id = new_speaker_id(self.data)
-        self._push({"op": "split", "cues": self._refs(cue_indexes), "speaker": new_id, "name": (name or "").strip() or None})
+        self._push(
+            {"op": "split", "cues": self._refs(cue_indexes), "speaker": new_id, "name": (name or "").strip() or None}
+        )
         return new_id
 
     def record_names(self, names: "dict[str, str]") -> "list[dict]":

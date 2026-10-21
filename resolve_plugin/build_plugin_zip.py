@@ -52,6 +52,7 @@ def build_bytes(src: str = SRC) -> bytes:
 def is_up_to_date(zip_path: str = ZIP, src: str = SRC) -> bool:
     if not os.path.isfile(zip_path):
         return False
+
     # Compare entries, not raw bytes: deflate output differs between zlib builds (e.g. on Windows).
     def entries(archive: zipfile.ZipFile) -> "dict[str, bytes]":
         return {name: archive.read(name) for name in archive.namelist()}

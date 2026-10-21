@@ -38,9 +38,25 @@ def with_words(transcript):
     for cue in transcript["cues"]:
         tokens = " ".join(cue["lines"]).split()
         step = (cue["end"] - cue["start"]) / len(tokens)
-        words = [{"text": " " + token, "start": round(cue["start"] + i * step, 3), "end": round(cue["start"] + (i + 0.8) * step, 3),
-                  "probability": 0.9, "speaker": cue["speaker"]} for i, token in enumerate(tokens)]
-        segments.append({"speaker": cue["speaker"], "start": cue["start"], "end": cue["end"], "text": " ".join(tokens), "words": words})
+        words = [
+            {
+                "text": " " + token,
+                "start": round(cue["start"] + i * step, 3),
+                "end": round(cue["start"] + (i + 0.8) * step, 3),
+                "probability": 0.9,
+                "speaker": cue["speaker"],
+            }
+            for i, token in enumerate(tokens)
+        ]
+        segments.append(
+            {
+                "speaker": cue["speaker"],
+                "start": cue["start"],
+                "end": cue["end"],
+                "text": " ".join(tokens),
+                "words": words,
+            }
+        )
     return dict(transcript, segments=segments)
 
 
@@ -72,7 +88,13 @@ def main(argv):
     sys.stderr.flush()
     print("not json: model loaded")
     sys.stdout.flush()
-    for stage, pct in (("transcribe", 10.0), ("transcribe", 55.0), ("diarize", 85.0), ("align", 88.0), ("naming", 98.0)):
+    for stage, pct in (
+        ("transcribe", 10.0),
+        ("transcribe", 55.0),
+        ("diarize", 85.0),
+        ("align", 88.0),
+        ("naming", 98.0),
+    ):
         emit({"event": "progress", "stage": stage, "pct": pct})
         if slow:
             time.sleep(0.3)
@@ -96,12 +118,22 @@ def main(argv):
         by_speaker.setdefault(cue["speaker"], []).append(cue)
     for speaker_id, cues in by_speaker.items():
         srt_path = os.path.join(out, speaker_id + ".srt")
-        blocks = ["%d\n%s --> %s\n%s\n" % (i, _ts(c["start"]), _ts(c["end"]), "\n".join(c["lines"])) for i, c in enumerate(cues, 1)]
+        blocks = [
+            "%d\n%s --> %s\n%s\n" % (i, _ts(c["start"]), _ts(c["end"]), "\n".join(c["lines"]))
+            for i, c in enumerate(cues, 1)
+        ]
         with open(srt_path, "w", encoding="utf-8") as handle:
             handle.write("\n".join(blocks))
         srt[speaker_id] = srt_path
     emit({"event": "progress", "stage": "export", "pct": 100.0})
-    emit({"event": "done", "transcript": path, "srt": srt, "speakers": [{"id": s["id"], "name": s["name"]} for s in transcript["speakers"]]})
+    emit(
+        {
+            "event": "done",
+            "transcript": path,
+            "srt": srt,
+            "speakers": [{"id": s["id"], "name": s["name"]} for s in transcript["speakers"]],
+        }
+    )
     return 0
 
 

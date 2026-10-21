@@ -36,11 +36,17 @@ def test_transcript_loader_rejects_newer_schema_and_garbage(tmp_path):
 
 
 def test_speakers_without_cues_are_skipped_and_unknown_speaker_ids_kept():
-    t = transcript_mod.from_dict({
-        "language": "en", "duration": 5,
-        "speakers": [{"id": "A"}, {"id": "B"}],
-        "cues": [{"speaker": "B", "start": 0, "end": 1, "lines": ["x"]}, {"speaker": "Z", "start": 1, "end": 2, "lines": ["y"]}],
-    })
+    t = transcript_mod.from_dict(
+        {
+            "language": "en",
+            "duration": 5,
+            "speakers": [{"id": "A"}, {"id": "B"}],
+            "cues": [
+                {"speaker": "B", "start": 0, "end": 1, "lines": ["x"]},
+                {"speaker": "Z", "start": 1, "end": 2, "lines": ["y"]},
+            ],
+        }
+    )
     assert t.speaker_ids_with_cues() == ["B", "Z"]
 
 
@@ -58,7 +64,12 @@ def test_place_cues_maps_seconds_to_absolute_frames_from_origin():
 
 def test_place_cues_never_overlaps_and_is_at_least_one_frame():
     clock = TimelineClock(fps=24, start_frame=0)
-    cues = [Cue("S", 1.0, 3.0, ["long"]), Cue("S", 2.0, 2.5, ["inside"]), Cue("S", 2.5, 2.51, ["tiny"]), Cue("S", 2.5, 2.52, ["same start"])]
+    cues = [
+        Cue("S", 1.0, 3.0, ["long"]),
+        Cue("S", 2.0, 2.5, ["inside"]),
+        Cue("S", 2.5, 2.51, ["tiny"]),
+        Cue("S", 2.5, 2.52, ["same start"]),
+    ]
     clips = place_cues(cues, clock)
     for a, b in zip(clips, clips[1:]):
         assert a.end_frame <= b.record_frame, (a, b)
@@ -100,8 +111,13 @@ def test_plan_tracks_names_tracks_after_speakers_and_avoids_existing(transcript)
 
 def test_plan_tracks_blank_name_falls_back_to_speaker_id_and_duplicates_get_numbered(transcript):
     clock = TimelineClock(fps=24)
-    plans = plan_tracks(transcript, {"SPEAKER_00": "Sam", "SPEAKER_01": "sam"}, planning.MODE_SUBTITLES, clock,
-                        srt_paths={"SPEAKER_00": "/tmp/a.srt"})
+    plans = plan_tracks(
+        transcript,
+        {"SPEAKER_00": "Sam", "SPEAKER_01": "sam"},
+        planning.MODE_SUBTITLES,
+        clock,
+        srt_paths={"SPEAKER_00": "/tmp/a.srt"},
+    )
     assert [p.name for p in plans] == ["Sam", "sam 2"]
     assert plans[0].srt_path == "/tmp/a.srt" and plans[1].srt_path is None
     plans = plan_tracks(transcript, {"SPEAKER_01": "   "}, planning.MODE_SUBTITLES, clock)

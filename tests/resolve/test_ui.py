@@ -160,7 +160,10 @@ class FakeFusion:
 
 def _request():
     return ReviewRequest(
-        speakers=[SpeakerRow("SPEAKER_00", "Maria", 2, "Hey Jordan"), SpeakerRow("SPEAKER_01", "SPEAKER_01", 2, "Good")],
+        speakers=[
+            SpeakerRow("SPEAKER_00", "Maria", 2, "Hey Jordan"),
+            SpeakerRow("SPEAKER_01", "SPEAKER_01", 2, "Good"),
+        ],
         templates=["Style A  (Master)", "Style B  (Master)"],
         timeline_name="Timeline 1",
         range_label="whole timeline",
@@ -179,8 +182,13 @@ def test_uimanager_review_collects_edits():
     bmd = FakeBmd(script)
     backend = UIManagerBackend(FakeFusion(), bmd)
     result = backend.review(_request())
-    assert result == ReviewResult(names={"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"}, subtitles=False, textplus=True,
-                                  template_index={"SPEAKER_00": 0, "SPEAKER_01": 1}, naming_provider="auto")
+    assert result == ReviewResult(
+        names={"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"},
+        subtitles=False,
+        textplus=True,
+        template_index={"SPEAKER_00": 0, "SPEAKER_01": 1},
+        naming_provider="auto",
+    )
     window = bmd.dispatcher.windows[-1]
     assert window.shown is False  # hidden after the loop
     assert window.GetItems()["Template_SPEAKER_00"].items == ["Style A  (Master)", "Style B  (Master)"]
@@ -249,7 +257,10 @@ def test_uimanager_fix_speakers_merges_moves_undoes_and_rebuilds_the_review():
         items = window.GetItems()
         speakers, cues = items["SpeakerTree"], items["CueTree"]
         assert speakers.header.Text == {0: "Speaker", 1: "Name", 2: "Cues"}
-        assert [r.Text for r in speakers.rows] == [{0: "SPEAKER_00", 1: "Maria R", 2: "2"}, {0: "SPEAKER_01", 1: "SPEAKER_01", 2: "2"}]
+        assert [r.Text for r in speakers.rows] == [
+            {0: "SPEAKER_00", 1: "Maria R", 2: "2"},
+            {0: "SPEAKER_01", 1: "SPEAKER_01", 2: "2"},
+        ]
         assert cues.texts() == ["#1", "#2", "#3", "#4"] and cues.rows[0].Text[3] == "Hey Jordan, / how are you?"
         assert items["Undo"].Enabled  # the rename typed in the review window is undoable here
 
@@ -287,9 +298,18 @@ def test_uimanager_fix_speakers_merges_moves_undoes_and_rebuilds_the_review():
     bmd = FakeBmd(script)
     request = _editable_request()
     result = UIManagerBackend(FakeFusion(), bmd).review(request)
-    assert result == ReviewResult(names={"SPEAKER_00": "Maria R"}, subtitles=True, textplus=True, template_index={"SPEAKER_00": 1},
-                                  naming_provider="auto")
-    assert [w.props["ID"] for w in bmd.dispatcher.windows] == ["BetterCaptionsReview", "BetterCaptionsSpeakers", "BetterCaptionsReview"]
+    assert result == ReviewResult(
+        names={"SPEAKER_00": "Maria R"},
+        subtitles=True,
+        textplus=True,
+        template_index={"SPEAKER_00": 1},
+        naming_provider="auto",
+    )
+    assert [w.props["ID"] for w in bmd.dispatcher.windows] == [
+        "BetterCaptionsReview",
+        "BetterCaptionsSpeakers",
+        "BetterCaptionsReview",
+    ]
     assert [op["op"] for op in request.editor.ops] == ["rename", "merge"]
     assert not any(w.shown for w in bmd.dispatcher.windows)
 
@@ -391,8 +411,14 @@ def test_choose_backend_prefers_uimanager_on_studio_only(monkeypatch):
     fusion = FakeFusion()
     assert ui_pkg.choose_backend(make_world(product="DaVinci Resolve Studio"), fusion, FakeBmd()).name == "uimanager"
     assert ui_pkg.choose_backend(make_world(product="DaVinci Resolve"), fusion, FakeBmd()).name == "tk"
-    assert ui_pkg.choose_backend(make_world(product="DaVinci Resolve"), fusion, FakeBmd(), preference="uimanager").name == "uimanager"
-    assert ui_pkg.choose_backend(make_world(product="DaVinci Resolve Studio"), fusion, FakeBmd(), preference="tk").name == "tk"
+    assert (
+        ui_pkg.choose_backend(make_world(product="DaVinci Resolve"), fusion, FakeBmd(), preference="uimanager").name
+        == "uimanager"
+    )
+    assert (
+        ui_pkg.choose_backend(make_world(product="DaVinci Resolve Studio"), fusion, FakeBmd(), preference="tk").name
+        == "tk"
+    )
     assert ui_pkg.choose_backend(None, None, None).name == "tk"
 
 
@@ -437,8 +463,13 @@ def test_tk_review_dialog_round_trip(tk_root):
     dialog.template_boxes["SPEAKER_01"].current(1)
     dialog.textplus_var.set(True)
     dialog._ok()
-    assert dialog.result == ReviewResult(names={"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"}, subtitles=True, textplus=True,
-                                         template_index={"SPEAKER_00": 0, "SPEAKER_01": 1}, naming_provider="auto")
+    assert dialog.result == ReviewResult(
+        names={"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"},
+        subtitles=True,
+        textplus=True,
+        template_index={"SPEAKER_00": 0, "SPEAKER_01": 1},
+        naming_provider="auto",
+    )
     view = backend.progress("t")
     view.set_status("x")
     view.set_progress(10)
@@ -483,5 +514,10 @@ def test_tk_fix_speakers_edits_and_rebuilds_the_review(tk_root, monkeypatch):
     assert list(dialog.name_vars) == ["SPEAKER_00"] and dialog.name_vars["SPEAKER_00"].get() == "Maria R"
     assert dialog.template_boxes["SPEAKER_00"].current() == 1
     dialog._ok()
-    assert dialog.result == ReviewResult(names={"SPEAKER_00": "Maria R"}, subtitles=True, textplus=False, template_index={"SPEAKER_00": 1},
-                                         naming_provider="auto")
+    assert dialog.result == ReviewResult(
+        names={"SPEAKER_00": "Maria R"},
+        subtitles=True,
+        textplus=False,
+        template_index={"SPEAKER_00": 1},
+        naming_provider="auto",
+    )

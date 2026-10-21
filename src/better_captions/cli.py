@@ -65,7 +65,11 @@ def key_command(args) -> int:
             print(f"{args.provider}: key stored in the OS keychain ({secrets.backend_name()})")
         elif args.key_action == "delete":
             removed = secrets.delete_key(args.provider)
-            print(f"{args.provider}: key removed from the OS keychain" if removed else f"{args.provider}: no key in the OS keychain")
+            print(
+                f"{args.provider}: key removed from the OS keychain"
+                if removed
+                else f"{args.provider}: no key in the OS keychain"
+            )
         elif args.key_action == "status":
             try:
                 print(f"keychain: {secrets.backend_name()}")
@@ -157,7 +161,9 @@ def main(argv: list[str] | None = None) -> int:
             max_speakers=args.max_speakers,
             diarization_backend=args.diarization_backend,
             naming_provider=args.naming,
-            cue_options=CueOptions(max_chars_per_line=args.max_chars, max_lines=args.max_lines, max_duration=args.max_duration),
+            cue_options=CueOptions(
+                max_chars_per_line=args.max_chars, max_lines=args.max_lines, max_duration=args.max_duration
+            ),
             use_cache=not args.no_cache,
         )
         try:

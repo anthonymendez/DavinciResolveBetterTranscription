@@ -12,7 +12,9 @@ def test_data_dir_per_platform_and_override(tmp_path):
     join = os.path.join
     assert config_mod.data_dir({"LOCALAPPDATA": "/la"}, platform="win32", home="/h") == join("/la", "BetterCaptions")
     assert config_mod.data_dir({}, platform="win32", home="/h") == join("/h", "AppData", "Local", "BetterCaptions")
-    assert config_mod.data_dir({}, platform="darwin", home="/h") == join("/h", "Library", "Application Support", "BetterCaptions")
+    assert config_mod.data_dir({}, platform="darwin", home="/h") == join(
+        "/h", "Library", "Application Support", "BetterCaptions"
+    )
     assert config_mod.data_dir({}, platform="linux", home="/h") == join("/h", ".local", "share", "BetterCaptions")
     assert config_mod.data_dir({"XDG_DATA_HOME": "/xdg"}, platform="linux", home="/h") == join("/xdg", "BetterCaptions")
 
@@ -40,8 +42,14 @@ def test_load_config_tolerates_bom_and_rejects_garbage(tmp_path):
 
 
 def test_engine_command_adds_flags_from_user_settings():
-    config = {"engine": [sys.executable, "-m", "better_captions.cli"], "model": "small", "naming_provider": "heuristic",
-              "num_speakers": 2, "language": "", "engine_args": ["--max-duration", "5"]}
+    config = {
+        "engine": [sys.executable, "-m", "better_captions.cli"],
+        "model": "small",
+        "naming_provider": "heuristic",
+        "num_speakers": 2,
+        "language": "",
+        "engine_args": ["--max-duration", "5"],
+    }
     argv = config_mod.engine_command(config, "/tmp/a.wav", "/tmp/out")
     assert argv[:7] == [sys.executable, "-m", "better_captions.cli", "run", "/tmp/a.wav", "--out", "/tmp/out"]
     assert argv[7:] == ["--model", "small", "--num-speakers", "2", "--naming", "heuristic", "--max-duration", "5"]
@@ -55,6 +63,8 @@ def test_engine_command_requires_usable_engine(tmp_path):
 
 
 def test_engine_environment_strips_resolve_python_settings():
-    env = config_mod.engine_environment({"PYTHONPATH": "/resolve/modules", "PYTHONHOME": "/x", "PATH": "/bin", "RESOLVE_SCRIPT_API": "/y"})
+    env = config_mod.engine_environment(
+        {"PYTHONPATH": "/resolve/modules", "PYTHONHOME": "/x", "PATH": "/bin", "RESOLVE_SCRIPT_API": "/y"}
+    )
     assert "PYTHONPATH" not in env and "PYTHONHOME" not in env and "RESOLVE_SCRIPT_API" not in env
     assert env["PATH"] == "/bin" and env["PYTHONIOENCODING"] == "utf-8"

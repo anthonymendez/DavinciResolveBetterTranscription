@@ -5,8 +5,19 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from better_captions_plugin.ui import (HIGHLIGHT_COLOR_LABEL, HIGHLIGHT_LABEL, NAMING_CHOICES, NAMING_LABEL, Backend, ProgressView,
-                                       ReviewRequest, ReviewResult, checked_highlight_color, naming_index, speaker_rows)
+from better_captions_plugin.ui import (
+    HIGHLIGHT_COLOR_LABEL,
+    HIGHLIGHT_LABEL,
+    NAMING_CHOICES,
+    NAMING_LABEL,
+    Backend,
+    ProgressView,
+    ReviewRequest,
+    ReviewResult,
+    checked_highlight_color,
+    naming_index,
+    speaker_rows,
+)
 from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
 
 TITLE = "Better Captions"
@@ -124,7 +135,9 @@ class _ReviewDialog:
         if header:
             ttk.Label(frame, text=header).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
         if request.note:
-            ttk.Label(frame, text=request.note, foreground="#666").grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 8))
+            ttk.Label(frame, text=request.note, foreground="#666").grid(
+                row=1, column=0, columnspan=4, sticky="w", pady=(0, 8)
+            )
 
         self.table = ttk.Frame(frame)
         self.table.grid(row=2, column=0, columnspan=4, sticky="we")
@@ -136,13 +149,19 @@ class _ReviewDialog:
         self.subtitles_var = tk.BooleanVar(value=request.default_subtitles and request.allow_subtitles)
         self.textplus_var = tk.BooleanVar(value=request.default_textplus and bool(request.templates))
         ttk.Separator(frame).grid(row=row_index, column=0, columnspan=4, sticky="we", pady=10)
-        subtitle_box = ttk.Checkbutton(frame, text="Subtitle tracks: one subtitle track per speaker, named after the speaker",
-                                       variable=self.subtitles_var)
+        subtitle_box = ttk.Checkbutton(
+            frame,
+            text="Subtitle tracks: one subtitle track per speaker, named after the speaker",
+            variable=self.subtitles_var,
+        )
         subtitle_box.grid(row=row_index + 1, column=0, columnspan=4, sticky="w")
         if not request.allow_subtitles:
             subtitle_box.state(["disabled"])
-        textplus_box = ttk.Checkbutton(frame, text="Text+ captions: one video track per speaker using the chosen template",
-                                       variable=self.textplus_var)
+        textplus_box = ttk.Checkbutton(
+            frame,
+            text="Text+ captions: one video track per speaker using the chosen template",
+            variable=self.textplus_var,
+        )
         textplus_box.grid(row=row_index + 2, column=0, columnspan=4, sticky="w")
         if not request.templates:
             textplus_box.state(["disabled"])
@@ -161,11 +180,14 @@ class _ReviewDialog:
         self.textplus_var.trace_add("write", lambda *_args: self._sync_highlight_state())
         self._sync_highlight_state()
         ttk.Label(frame, text="New tracks are added; existing tracks are never changed.", foreground="#666").grid(
-            row=row_index + 4, column=0, columnspan=4, sticky="w", pady=(6, 0))
+            row=row_index + 4, column=0, columnspan=4, sticky="w", pady=(6, 0)
+        )
         naming_row = ttk.Frame(frame)
         naming_row.grid(row=row_index + 5, column=0, columnspan=4, sticky="w", pady=(10, 0))
         ttk.Label(naming_row, text=NAMING_LABEL).pack(side="left")
-        self.naming_box = ttk.Combobox(naming_row, values=[label for _value, label in NAMING_CHOICES], state="readonly", width=60)
+        self.naming_box = ttk.Combobox(
+            naming_row, values=[label for _value, label in NAMING_CHOICES], state="readonly", width=60
+        )
         self.naming_box.current(naming_index(request.naming_provider))
         self.naming_box.pack(side="left", padx=(6, 0))
 
@@ -202,7 +224,9 @@ class _ReviewDialog:
             box.current(template_choice.get(speaker.id, default))
             box.grid(row=row_index, column=2, sticky="we", padx=(0, 8))
             self.template_boxes[speaker.id] = box
-            ttk.Label(self.table, text=_shorten(speaker.sample, 48), foreground="#666").grid(row=row_index, column=3, sticky="w")
+            ttk.Label(self.table, text=_shorten(speaker.sample, 48), foreground="#666").grid(
+                row=row_index, column=3, sticky="w"
+            )
 
     def _fix_speakers(self):
         """Open the speaker editor; names typed so far go in as renames, the rows are rebuilt after."""
@@ -233,15 +257,21 @@ class _ReviewDialog:
 
     def _ok(self):
         if not self.subtitles_var.get() and not self.textplus_var.get():
-            messagebox.showwarning(TITLE, "Pick at least one output: subtitle tracks and/or Text+ captions.", parent=self.window)
+            messagebox.showwarning(
+                TITLE, "Pick at least one output: subtitle tracks and/or Text+ captions.", parent=self.window
+            )
             return
         color = checked_highlight_color(self.highlight_color_var.get())
         if self.highlight_var.get() and self.textplus_var.get() and color is None:
             messagebox.showwarning(TITLE, "The highlight colour must look like #FFD400.", parent=self.window)
             return
-        result = ReviewResult(subtitles=bool(self.subtitles_var.get()), textplus=bool(self.textplus_var.get()),
-                              highlight_words=bool(self.highlight_var.get()), highlight_color=color or self.request.highlight_color,
-                              naming_provider=NAMING_CHOICES[max(0, int(self.naming_box.current()))][0])
+        result = ReviewResult(
+            subtitles=bool(self.subtitles_var.get()),
+            textplus=bool(self.textplus_var.get()),
+            highlight_words=bool(self.highlight_var.get()),
+            highlight_color=color or self.request.highlight_color,
+            naming_provider=NAMING_CHOICES[max(0, int(self.naming_box.current()))][0],
+        )
         for speaker in self.speakers:
             result.names[speaker.id] = self.name_vars[speaker.id].get().strip() or speaker.id
             if self.request.templates:
@@ -277,7 +307,9 @@ class _SpeakerEditorDialog:
         left = ttk.LabelFrame(frame, text="Speakers", padding=8)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         left.columnconfigure(1, weight=1)
-        self.speaker_tree = ttk.Treeview(left, columns=("id", "name", "cues"), show="headings", selectmode="browse", height=8)
+        self.speaker_tree = ttk.Treeview(
+            left, columns=("id", "name", "cues"), show="headings", selectmode="browse", height=8
+        )
         for column, title, width in (("id", "Speaker", 110), ("name", "Name", 140), ("cues", "Cues", 50)):
             self.speaker_tree.heading(column, text=title)
             self.speaker_tree.column(column, width=width, stretch=column == "name")
@@ -288,13 +320,18 @@ class _SpeakerEditorDialog:
         name_entry = ttk.Entry(left, textvariable=self.name_var, width=20)
         name_entry.grid(row=1, column=1, sticky="we", pady=(8, 0))
         name_entry.bind("<Return>", lambda _e: self._rename())
-        ttk.Button(left, text="Rename", command=self._rename).grid(row=1, column=2, sticky="e", padx=(6, 0), pady=(8, 0))
+        ttk.Button(left, text="Rename", command=self._rename).grid(
+            row=1, column=2, sticky="e", padx=(6, 0), pady=(8, 0)
+        )
         ttk.Label(left, text="Merge into:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self.merge_box = ttk.Combobox(left, state="readonly", width=20)
         self.merge_box.grid(row=2, column=1, sticky="we", pady=(6, 0))
         ttk.Button(left, text="Merge", command=self._merge).grid(row=2, column=2, sticky="e", padx=(6, 0), pady=(6, 0))
-        ttk.Label(left, text="Merge moves all of the selected speaker's cues;\nthe speaker merged into keeps its name.",
-                  foreground="#666").grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(
+            left,
+            text="Merge moves all of the selected speaker's cues;\nthe speaker merged into keeps its name.",
+            foreground="#666",
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         right = ttk.LabelFrame(frame, text="Cues", padding=8)
         right.grid(row=0, column=1, sticky="nsew")
@@ -304,8 +341,15 @@ class _SpeakerEditorDialog:
         self.filter_box = ttk.Combobox(right, state="readonly", width=30)
         self.filter_box.grid(row=0, column=1, sticky="w")
         self.filter_box.bind("<<ComboboxSelected>>", lambda _e: self._refresh_cues())
-        self.cue_tree = ttk.Treeview(right, columns=("num", "time", "speaker", "text"), show="headings", selectmode="extended", height=14)
-        for column, title, width in (("num", "#", 50), ("time", "Time", 100), ("speaker", "Speaker", 120), ("text", "Text", 360)):
+        self.cue_tree = ttk.Treeview(
+            right, columns=("num", "time", "speaker", "text"), show="headings", selectmode="extended", height=14
+        )
+        for column, title, width in (
+            ("num", "#", 50),
+            ("time", "Time", 100),
+            ("speaker", "Speaker", 120),
+            ("text", "Text", 360),
+        ):
             self.cue_tree.heading(column, text=title)
             self.cue_tree.column(column, width=width, stretch=column == "text")
         scroll = ttk.Scrollbar(right, orient="vertical", command=self.cue_tree.yview)

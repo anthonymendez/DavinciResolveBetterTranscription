@@ -29,9 +29,7 @@ def test_to_srt_numbered_blocks():
         Cue("S0", 2.0, 3.5, ["Two", "lines"]),
     ]
     assert to_srt(cues) == (
-        "1\n00:00:00,000 --> 00:00:01,250\nHello there\n"
-        "\n"
-        "2\n00:00:02,000 --> 00:00:03,500\nTwo\nlines\n"
+        "1\n00:00:00,000 --> 00:00:01,250\nHello there\n\n2\n00:00:02,000 --> 00:00:03,500\nTwo\nlines\n"
     )
 
 
@@ -57,12 +55,9 @@ def test_write_speaker_srts_one_file_per_speaker_with_cues(tmp_path):
     assert not (tmp_path / "out" / "SPEAKER_02.srt").exists()
     # Each file is numbered from 1 and only holds its own speaker's cues, UTF-8 encoded.
     assert paths["SPEAKER_00"].read_bytes().decode("utf-8") == (
-        "1\n00:00:00,000 --> 00:00:01,000\nCafé time\n\n"
-        "2\n00:00:03,000 --> 00:00:04,000\nAgain\n"
+        "1\n00:00:00,000 --> 00:00:01,000\nCafé time\n\n2\n00:00:03,000 --> 00:00:04,000\nAgain\n"
     )
-    assert paths["SPEAKER_01"].read_text(encoding="utf-8") == (
-        "1\n00:00:01,500 --> 00:00:02,000\nYes\n"
-    )
+    assert paths["SPEAKER_01"].read_text(encoding="utf-8") == ("1\n00:00:01,500 --> 00:00:02,000\nYes\n")
 
 
 def test_to_vtt_header_and_dot_separator():

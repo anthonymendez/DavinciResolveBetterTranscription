@@ -34,10 +34,34 @@ def sample():
             {"id": "SPEAKER_02", "name": None, "name_confidence": 0.0, "name_source": None},
         ],
         "segments": [
-            {"speaker": "SPEAKER_00", "start": 0.5, "end": 2.0, "text": "Hey Jordan, how are you?", "words": [_word("Hey", 0.5, 0.8, "SPEAKER_00")]},
-            {"speaker": "SPEAKER_01", "start": 2.1, "end": 3.6, "text": "Good, thanks Maria.", "words": [_word("Good,", 2.1, 2.5, "SPEAKER_01")]},
-            {"speaker": "SPEAKER_00", "start": 4.0, "end": 6.5, "text": "Ready for the race?", "words": [_word("Ready", 4.0, 4.3, "SPEAKER_00")]},
-            {"speaker": "SPEAKER_02", "start": 6.4, "end": 8.0, "text": "Always.", "words": [_word("Always.", 6.4, 7.0, "SPEAKER_02")]},
+            {
+                "speaker": "SPEAKER_00",
+                "start": 0.5,
+                "end": 2.0,
+                "text": "Hey Jordan, how are you?",
+                "words": [_word("Hey", 0.5, 0.8, "SPEAKER_00")],
+            },
+            {
+                "speaker": "SPEAKER_01",
+                "start": 2.1,
+                "end": 3.6,
+                "text": "Good, thanks Maria.",
+                "words": [_word("Good,", 2.1, 2.5, "SPEAKER_01")],
+            },
+            {
+                "speaker": "SPEAKER_00",
+                "start": 4.0,
+                "end": 6.5,
+                "text": "Ready for the race?",
+                "words": [_word("Ready", 4.0, 4.3, "SPEAKER_00")],
+            },
+            {
+                "speaker": "SPEAKER_02",
+                "start": 6.4,
+                "end": 8.0,
+                "text": "Always.",
+                "words": [_word("Always.", 6.4, 7.0, "SPEAKER_02")],
+            },
         ],
         "cues": [
             {"speaker": "SPEAKER_00", "start": 0.5, "end": 2.0, "lines": ["Hey Jordan,", "how are you?"]},
@@ -67,7 +91,10 @@ def test_merge_relabels_cues_segments_and_words_and_keeps_the_target_name():
     assert _cue_speakers(editor) == ["SPEAKER_00", "SPEAKER_00", "SPEAKER_00", "SPEAKER_02"]
     assert _segment_speakers(editor) == [("SPEAKER_00", ["SPEAKER_00"])] * 3 + [("SPEAKER_02", ["SPEAKER_02"])]
     assert [s["id"] for s in editor.data["speakers"]] == ["SPEAKER_00", "SPEAKER_02"]
-    assert [(s.id, s.name, s.cue_count) for s in editor.speakers()] == [("SPEAKER_00", "Maria", 3), ("SPEAKER_02", "SPEAKER_02", 1)]
+    assert [(s.id, s.name, s.cue_count) for s in editor.speakers()] == [
+        ("SPEAKER_00", "Maria", 3),
+        ("SPEAKER_02", "SPEAKER_02", 1),
+    ]
     # Merging a named speaker into an unnamed one keeps the target unnamed: names come from A.
     editor.merge("SPEAKER_00", "SPEAKER_02")
     assert [(s.id, s.name, s.cue_count) for s in editor.speakers()] == [("SPEAKER_02", "SPEAKER_02", 4)]
@@ -90,10 +117,18 @@ def test_split_off_a_new_speaker_from_selected_cues():
     new_id = editor.split([1, 3], name="  Sam ")
     assert new_id == "SPEAKER_03"
     assert _cue_speakers(editor) == ["SPEAKER_00", "SPEAKER_03", "SPEAKER_00", "SPEAKER_03"]
-    assert editor.data["speakers"][-1] == {"id": "SPEAKER_03", "name": "Sam", "name_confidence": 1.0, "name_source": "user"}
+    assert editor.data["speakers"][-1] == {
+        "id": "SPEAKER_03",
+        "name": "Sam",
+        "name_confidence": 1.0,
+        "name_source": "user",
+    }
     assert _segment_speakers(editor)[1] == ("SPEAKER_03", ["SPEAKER_03"])
     # SPEAKER_01 and SPEAKER_02 lost all their cues and drop out of the speaker list shown.
-    assert [(s.id, s.name, s.cue_count) for s in editor.speakers()] == [("SPEAKER_00", "Maria", 2), ("SPEAKER_03", "Sam", 2)]
+    assert [(s.id, s.name, s.cue_count) for s in editor.speakers()] == [
+        ("SPEAKER_00", "Maria", 2),
+        ("SPEAKER_03", "Sam", 2),
+    ]
     assert editor.split([0]) == "SPEAKER_04" and editor.display_name("SPEAKER_04") == "SPEAKER_04"
 
 
@@ -125,14 +160,17 @@ def test_every_edit_is_undoable_in_order():
     assert editor.data == original == editor.base  # the original transcript was never touched
 
 
-@pytest.mark.parametrize("action", [
-    lambda e: e.merge("SPEAKER_00", "SPEAKER_00"),
-    lambda e: e.merge("SPEAKER_09", "SPEAKER_00"),
-    lambda e: e.reassign([0], "SPEAKER_09"),
-    lambda e: e.reassign([7], "SPEAKER_01"),
-    lambda e: e.split([]),
-    lambda e: e.rename("SPEAKER_09", "x"),
-])
+@pytest.mark.parametrize(
+    "action",
+    [
+        lambda e: e.merge("SPEAKER_00", "SPEAKER_00"),
+        lambda e: e.merge("SPEAKER_09", "SPEAKER_00"),
+        lambda e: e.reassign([0], "SPEAKER_09"),
+        lambda e: e.reassign([7], "SPEAKER_01"),
+        lambda e: e.split([]),
+        lambda e: e.rename("SPEAKER_09", "x"),
+    ],
+)
 def test_invalid_edits_raise_and_change_nothing(action):
     editor = SpeakerEditor(sample())
     with pytest.raises(EditError):
@@ -151,7 +189,9 @@ def test_apply_op_rejects_unknown_and_malformed_edits():
 
 def test_record_names_adds_renames_only_for_changed_names():
     editor = SpeakerEditor(sample())
-    pushed = editor.record_names({"SPEAKER_00": "Maria", "SPEAKER_01": " Jordan  B ", "SPEAKER_02": "", "SPEAKER_09": "Ghost"})
+    pushed = editor.record_names(
+        {"SPEAKER_00": "Maria", "SPEAKER_01": " Jordan  B ", "SPEAKER_02": "", "SPEAKER_09": "Ghost"}
+    )
     assert pushed == [{"op": "rename", "speaker": "SPEAKER_01", "name": "Jordan B"}]
     assert editor.display_name("SPEAKER_01") == "Jordan B"
 
@@ -175,7 +215,13 @@ def test_saved_edits_reapply_to_a_rerun_by_cue_time(tmp_path):
     rerun["cues"].insert(0, {"speaker": "SPEAKER_01", "start": 0.0, "end": 0.4, "lines": ["Hm."]})
     again = SpeakerEditor(rerun)
     assert again.reapply(saved["ops"]) == 3 and again.skipped == []
-    assert [c["speaker"] for c in again.data["cues"]] == ["SPEAKER_01", new_id, "SPEAKER_01", "SPEAKER_01", "SPEAKER_01"]
+    assert [c["speaker"] for c in again.data["cues"]] == [
+        "SPEAKER_01",
+        new_id,
+        "SPEAKER_01",
+        "SPEAKER_01",
+        "SPEAKER_01",
+    ]
     assert again.display_name(new_id) == "Sam"
     # Re-applied edits are on the stack like any other.
     assert again.undo()["op"] == "split"
@@ -200,11 +246,16 @@ def test_find_saved_edits_matches_the_audio(tmp_path):
     first, second = str(tmp_path / "a.json"), str(tmp_path / "b.json")
     speaker_edits.save_edits(first, editor, audio_sha256="other-audio")
     speaker_edits.save_edits(second, editor, audio_sha256="this-audio")
-    assert speaker_edits.find_saved_edits([None, str(tmp_path / "missing.json"), first, second], "this-audio")[0] == second
+    assert (
+        speaker_edits.find_saved_edits([None, str(tmp_path / "missing.json"), first, second], "this-audio")[0] == second
+    )
     assert speaker_edits.find_saved_edits([first], "this-audio") == (None, None)
     (tmp_path / "garbage.json").write_text("{nope")
     (tmp_path / "newer.json").write_text(json.dumps({"version": 99, "ops": []}))
-    assert speaker_edits.find_saved_edits([str(tmp_path / "garbage.json"), str(tmp_path / "newer.json")]) == (None, None)
+    assert speaker_edits.find_saved_edits([str(tmp_path / "garbage.json"), str(tmp_path / "newer.json")]) == (
+        None,
+        None,
+    )
     assert speaker_edits.audio_fingerprint(str(tmp_path / "missing.wav")) is None
 
 
@@ -226,7 +277,12 @@ def test_planning_after_merge_puts_every_cue_on_one_track():
     clock = TimelineClock(fps=24, start_frame=86400)
     plans = planning.plan_tracks(editor.transcript(), {}, planning.MODE_TEXTPLUS, clock)
     assert [(p.speaker_id, p.name) for p in plans] == [("SPEAKER_00", "Maria")]
-    assert [c.text for c in plans[0].clips] == ["Hey Jordan,\nhow are you?", "Good, thanks Maria.", "Ready for the race?", "Always."]
+    assert [c.text for c in plans[0].clips] == [
+        "Hey Jordan,\nhow are you?",
+        "Good, thanks Maria.",
+        "Ready for the race?",
+        "Always.",
+    ]
     assert [c.record_frame for c in plans[0].clips] == [86412, 86450, 86496, 86554]
     for a, b in zip(plans[0].clips, plans[0].clips[1:]):
         assert a.end_frame <= b.record_frame  # 4.0-6.5 and 6.4-8.0 overlapped once on one track
@@ -236,7 +292,9 @@ def test_planning_after_reassign_and_split():
     editor = SpeakerEditor(TRANSCRIPT)
     editor.reassign([3], "SPEAKER_00")
     new_id = editor.split([1], name="Sam")
-    plans = planning.plan_tracks(editor.transcript(), {"SPEAKER_00": "Maria"}, planning.MODE_SUBTITLES, TimelineClock(fps=24))
+    plans = planning.plan_tracks(
+        editor.transcript(), {"SPEAKER_00": "Maria"}, planning.MODE_SUBTITLES, TimelineClock(fps=24)
+    )
     assert [(p.speaker_id, p.name, [c.text for c in p.clips]) for p in plans] == [
         ("SPEAKER_00", "Maria", ["Hey Jordan,\nhow are you?", "Ready for the race?", "Always."]),
         (new_id, "Sam", ["Good, thanks Maria."]),
@@ -249,16 +307,28 @@ def test_planning_after_reassign_and_split():
 def test_editor_controller_lists_filters_moves_merges_and_undoes():
     controller = EditorController(SpeakerEditor(TRANSCRIPT))
     assert controller.speaker_rows() == [("SPEAKER_00", "Maria", "2"), ("SPEAKER_01", "SPEAKER_01", "2")]
-    assert controller.filter_choices() == [("All speakers", None), ("Maria (SPEAKER_00)", "SPEAKER_00"), ("SPEAKER_01", "SPEAKER_01")]
-    assert controller.cue_rows("SPEAKER_01") == [("#2", "0:02.1", "SPEAKER_01", "Good, thanks Maria."), ("#4", "0:06.4", "SPEAKER_01", "Always.")]
+    assert controller.filter_choices() == [
+        ("All speakers", None),
+        ("Maria (SPEAKER_00)", "SPEAKER_00"),
+        ("SPEAKER_01", "SPEAKER_01"),
+    ]
+    assert controller.cue_rows("SPEAKER_01") == [
+        ("#2", "0:02.1", "SPEAKER_01", "Good, thanks Maria."),
+        ("#4", "0:06.4", "SPEAKER_01", "Always."),
+    ]
     assert controller.cue_rows()[0] == ("#1", "0:00.5", "Maria", "Hey Jordan, / how are you?")
     assert controller.merge_choices("SPEAKER_00") == [("SPEAKER_01", "SPEAKER_01")]
     assert controller.move_choices()[-1] == ("New speaker", NEW_SPEAKER)
 
-    assert controller.move([cue_index("#4")], NEW_SPEAKER) and controller.status == "Moved 1 cue to new speaker SPEAKER_02."
+    assert (
+        controller.move([cue_index("#4")], NEW_SPEAKER)
+        and controller.status == "Moved 1 cue to new speaker SPEAKER_02."
+    )
     assert controller.rename("SPEAKER_02", "Sam") and controller.cue_rows("SPEAKER_02")[0][2] == "Sam"
     assert controller.move([0, 2], "SPEAKER_01") and controller.status == "Moved 2 cues to SPEAKER_01."
-    assert controller.merge("SPEAKER_02", "SPEAKER_01") and controller.speaker_rows() == [("SPEAKER_01", "SPEAKER_01", "4")]
+    assert controller.merge("SPEAKER_02", "SPEAKER_01") and controller.speaker_rows() == [
+        ("SPEAKER_01", "SPEAKER_01", "4")
+    ]
     assert controller.undo() and controller.status == "Undid merge."
     assert [row[0] for row in controller.speaker_rows()] == ["SPEAKER_01", "SPEAKER_02"]
 
@@ -292,7 +362,9 @@ def config(tmp_path):
 
 
 def _run(resolve, backend, config, tmp_path, name):
-    return app.main(resolve=resolve, backend=backend, config=config, sleep=lambda s: None, work_dir=str(tmp_path / name))
+    return app.main(
+        resolve=resolve, backend=backend, config=config, sleep=lambda s: None, work_dir=str(tmp_path / name)
+    )
 
 
 def _frames(timeline, cues):
@@ -321,7 +393,9 @@ def test_app_merge_in_review_writes_one_track_and_saves_edits(config, tmp_path):
 
 
 def test_app_rerun_on_the_same_audio_reapplies_saved_edits_and_undo_forgets_them(config, tmp_path):
-    first = FakeBackend(edit_then_accept(lambda editor: editor.merge("SPEAKER_01", "SPEAKER_00"), names={"SPEAKER_00": "Maria R"}))
+    first = FakeBackend(
+        edit_then_accept(lambda editor: editor.merge("SPEAKER_01", "SPEAKER_00"), names={"SPEAKER_00": "Maria R"})
+    )
     _run(make_world(), first, config, tmp_path, "run1")
 
     # Re-run in a fresh work dir: the store finds the edits by the rendered audio.
@@ -332,7 +406,10 @@ def test_app_rerun_on_the_same_audio_reapplies_saved_edits_and_undo_forgets_them
     assert [(r.id, r.name, r.cue_count) for r in request.speakers] == [("SPEAKER_00", "Maria R", 4)]
     assert "Re-applied 2 speaker fixes" in request.note
     assert [t.name for t in resolve.project.timeline.tracks["subtitle"]] == ["Maria R"]
-    assert json.load(open(os.path.join(outcome.work_dir, "out", "edits.json"), encoding="utf-8"))["ops"][0]["op"] == "merge"
+    assert (
+        json.load(open(os.path.join(outcome.work_dir, "out", "edits.json"), encoding="utf-8"))["ops"][0]["op"]
+        == "merge"
+    )
 
     # Third run: the user undoes everything; the saved fixes are forgotten.
     def undo_all(editor):

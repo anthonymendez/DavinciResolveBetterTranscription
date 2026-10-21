@@ -70,8 +70,16 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
     """
     on_event = on_event or (lambda event: None)
     popen = popen or subprocess.Popen
-    kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, env=env,
-                  universal_newlines=True, encoding="utf-8", errors="replace", bufsize=1)
+    kwargs = dict(
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        env=env,
+        universal_newlines=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
     if sys.platform == "win32":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
@@ -124,7 +132,9 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
         raise EngineError(str(error.get("message") or "engine failed"))
     if done is None or returncode != 0:
         tail = "\n".join(stderr_lines[-15:]).strip()
-        raise EngineError("engine exited with code %s without finishing%s" % (returncode, ("\n" + tail) if tail else ""))
+        raise EngineError(
+            "engine exited with code %s without finishing%s" % (returncode, ("\n" + tail) if tail else "")
+        )
     return done
 
 

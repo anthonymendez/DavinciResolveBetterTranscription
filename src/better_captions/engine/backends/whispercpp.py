@@ -208,7 +208,9 @@ def _extract(archive: Path, dest: Path) -> None:
         return
     with tarfile.open(archive, "r:*") as tar:
         members = [m for m in tar.getmembers() if (m.isfile() or m.isdir() or m.issym()) and _inside(dest, m.name)]
-        members = [m for m in members if not m.issym() or _inside(dest, os.path.join(os.path.dirname(m.name), m.linkname))]
+        members = [
+            m for m in members if not m.issym() or _inside(dest, os.path.join(os.path.dirname(m.name), m.linkname))
+        ]
         try:
             tar.extractall(dest, members=members, filter="data")
         except TypeError:  # Python without PEP 706 filters: members are already vetted above
@@ -265,7 +267,9 @@ def ggml_model_name(model: str) -> str:
     """Our model name (faster-whisper style, e.g. large-v3-turbo) -> ggml file name."""
     name = MODEL_ALIASES.get(model, model)
     if name not in KNOWN_MODELS:
-        raise ValueError(f"unknown whisper.cpp model {model!r}; expected one of {', '.join(KNOWN_MODELS)} or a path to a ggml .bin")
+        raise ValueError(
+            f"unknown whisper.cpp model {model!r}; expected one of {', '.join(KNOWN_MODELS)} or a path to a ggml .bin"
+        )
     return f"ggml-{name}.bin"
 
 
@@ -289,7 +293,7 @@ def ensure_model(model: str) -> Path:
 
 
 def device_args(device: str) -> list[str]:
-    """"cpu" -> no GPU; "auto"/"vulkan"/"gpu"/"cuda" (optionally ":N") -> Vulkan device N."""
+    """ "cpu" -> no GPU; "auto"/"vulkan"/"gpu"/"cuda" (optionally ":N") -> Vulkan device N."""
     name, _, index = device.partition(":")
     if name == "cpu":
         return ["-ng"]
@@ -324,7 +328,14 @@ def _run(cmd: list[str], env: dict[str, str], progress: ProgressFn | None) -> fl
     Raises RuntimeError with the tail of stderr when whisper-cli exits non-zero.
     """
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env, **_popen_flags()
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        **_popen_flags(),
     )
     tail: list[str] = []
     last = 0.0
@@ -425,7 +436,9 @@ def _download(url: str, dest: Path, sha256: str | None = None) -> None:
                 f.write(chunk)
     except Exception as e:
         tmp.unlink(missing_ok=True)
-        raise RuntimeError(f"could not download {url} to {dest}: {e} (download it there by hand to work offline)") from e
+        raise RuntimeError(
+            f"could not download {url} to {dest}: {e} (download it there by hand to work offline)"
+        ) from e
     if sha256 is not None and digest.hexdigest() != sha256:
         tmp.unlink(missing_ok=True)
         raise RuntimeError(f"checksum mismatch for {url}: expected sha256 {sha256}, got {digest.hexdigest()}")

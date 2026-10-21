@@ -15,7 +15,9 @@ from better_captions.schema import Segment, Speaker, Transcript
 def make_transcript(*lines: tuple[str, str], speakers: list[Speaker] | None = None) -> Transcript:
     segments = [Segment(speaker=sid, start=float(i), end=i + 0.9, text=text) for i, (sid, text) in enumerate(lines)]
     ids = list(dict.fromkeys(sid for sid, _ in lines))
-    return Transcript(language="en", duration=float(len(lines)), speakers=speakers or [Speaker(id=s) for s in ids], segments=segments)
+    return Transcript(
+        language="en", duration=float(len(lines)), speakers=speakers or [Speaker(id=s) for s in ids], segments=segments
+    )
 
 
 DIALOGUE = make_transcript(("SPEAKER_00", "Hey Jordan, how are you?"), ("SPEAKER_01", "Good, thanks Maria."))
@@ -146,15 +148,19 @@ def test_build_transcript_labels_merges_and_truncates():
 
 
 def test_parse_reply_handles_fences_nulls_and_duplicates():
-    reply = "```json\n" + json.dumps(
-        {
-            "SPEAKER_00": {"name": "Maria", "confidence": 0.9, "evidence": "thanks Maria"},
-            "SPEAKER_01": {"name": "maria", "confidence": 0.4, "evidence": "?"},
-            "SPEAKER_02": None,
-            "SPEAKER_03": {"name": None, "confidence": 0},
-            "SPEAKER_99": {"name": "Ghost", "confidence": 1},
-        }
-    ) + "\n```"
+    reply = (
+        "```json\n"
+        + json.dumps(
+            {
+                "SPEAKER_00": {"name": "Maria", "confidence": 0.9, "evidence": "thanks Maria"},
+                "SPEAKER_01": {"name": "maria", "confidence": 0.4, "evidence": "?"},
+                "SPEAKER_02": None,
+                "SPEAKER_03": {"name": None, "confidence": 0},
+                "SPEAKER_99": {"name": "Ghost", "confidence": 1},
+            }
+        )
+        + "\n```"
+    )
     parsed = llm.parse_reply(reply, ["SPEAKER_00", "SPEAKER_01", "SPEAKER_02", "SPEAKER_03"])
     assert parsed["SPEAKER_00"] == llm.LLMName("Maria", 0.9, "thanks Maria")
     assert parsed["SPEAKER_01"] is None and parsed["SPEAKER_02"] is None and parsed["SPEAKER_03"] is None
@@ -258,7 +264,9 @@ def test_anthropic_provider_options_override_key_and_model(fake_anthropic, monke
 
 def test_anthropic_null_names_stay_unnamed(fake_anthropic, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    fake_anthropic._reply = json.dumps({"SPEAKER_00": None, "SPEAKER_01": {"name": "Jordan", "confidence": 0.7, "evidence": "x"}})
+    fake_anthropic._reply = json.dumps(
+        {"SPEAKER_00": None, "SPEAKER_01": {"name": "Jordan", "confidence": 0.7, "evidence": "x"}}
+    )
     result = naming.name_speakers(DIALOGUE, provider="anthropic")
     assert names(result) == {"SPEAKER_00": None, "SPEAKER_01": "Jordan"}
     assert result[0].name_source is None

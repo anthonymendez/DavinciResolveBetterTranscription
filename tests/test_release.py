@@ -88,9 +88,7 @@ def test_version_fallback_when_not_installed(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def _check_version(tag: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(CHECK_VERSION), tag], capture_output=True, text=True, timeout=60
-    )
+    return subprocess.run([sys.executable, str(CHECK_VERSION), tag], capture_output=True, text=True, timeout=60)
 
 
 def test_release_tag_check_accepts_matching_tag() -> None:
@@ -190,7 +188,10 @@ def _sh(tmp_path: Path, command: str, **env: str) -> subprocess.CompletedProcess
     run_env.update(env)
     return subprocess.run(
         ["bash", "-c", f'source "$1"; {command}', "_", str(INSTALL_SH)],
-        env=run_env, capture_output=True, text=True, timeout=60,
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
 
@@ -218,7 +219,8 @@ def test_sh_reads_minified_api_response(tmp_path: Path) -> None:
 
 @bash_only
 @pytest.mark.parametrize(
-    "response", [RATE_LIMITED_JSON, NOT_FOUND_JSON, "<html>502 Bad Gateway</html>", None],
+    "response",
+    [RATE_LIMITED_JSON, NOT_FOUND_JSON, "<html>502 Bad Gateway</html>", None],
     ids=["rate-limited", "no-release", "garbage", "api-unreachable"],
 )
 def test_sh_falls_back_to_main_with_warning(tmp_path: Path, response: dict | str | None) -> None:
@@ -236,7 +238,9 @@ def test_sh_api_failure_over_http_falls_back(tmp_path: Path) -> None:
     result = _sh(tmp_path, "install_ref")
     assert result.stdout == "main\n", result.stderr
     assert "warning: could not find the latest release" in result.stderr
-    assert "api.github.com/repos/anthonymendez/DavinciResolveBetterTranscription/releases/latest" in _curl_calls(tmp_path)
+    assert "api.github.com/repos/anthonymendez/DavinciResolveBetterTranscription/releases/latest" in _curl_calls(
+        tmp_path
+    )
 
 
 @bash_only
@@ -255,9 +259,7 @@ def test_sh_downloads_the_resolved_ref(tmp_path: Path) -> None:
     api = _api_file(tmp_path, RELEASE_JSON)
     work = tmp_path / "work"
     work.mkdir()
-    result = _sh(
-        tmp_path, f'fetch_source "{work}" "$(install_ref)"', BETTER_CAPTIONS_RELEASE_API=str(api)
-    )
+    result = _sh(tmp_path, f'fetch_source "{work}" "$(install_ref)"', BETTER_CAPTIONS_RELEASE_API=str(api))
     # The stub curl fails the download, after recording which archive was asked for.
     assert result.returncode != 0
     assert "Downloading anthonymendez/DavinciResolveBetterTranscription@v1.2.3" in result.stderr
@@ -277,13 +279,16 @@ def _pwsh(tmp_path: Path, command: str, **env: str) -> subprocess.CompletedProce
     script = f"$ErrorActionPreference = 'Stop'; . '{INSTALL_PS1}'; {command}"
     return subprocess.run(
         [pwsh, "-NoProfile", "-NonInteractive", "-Command", script],
-        env=run_env, capture_output=True, text=True, timeout=120,
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
 
 
 def test_ps1_defaults_to_latest_release(tmp_path: Path) -> None:
     api = _api_file(tmp_path, RELEASE_JSON)
-    result = _pwsh(tmp_path, "Write-Output \"ref=$(Get-InstallRef)\"", BETTER_CAPTIONS_RELEASE_API=str(api))
+    result = _pwsh(tmp_path, 'Write-Output "ref=$(Get-InstallRef)"', BETTER_CAPTIONS_RELEASE_API=str(api))
     assert result.returncode == 0, result.stderr
     assert "ref=v1.2.3" in result.stdout
     assert "Latest release: v1.2.3" in result.stdout
@@ -294,9 +299,7 @@ def test_ps1_defaults_to_latest_release(tmp_path: Path) -> None:
 )
 def test_ps1_falls_back_to_main_with_warning(tmp_path: Path, response: dict | None) -> None:
     api = _api_file(tmp_path, response) if response is not None else tmp_path / "missing.json"
-    result = _pwsh(
-        tmp_path, "Write-Output \"ref=$(Get-InstallRef 3>&1)\"", BETTER_CAPTIONS_RELEASE_API=str(api)
-    )
+    result = _pwsh(tmp_path, 'Write-Output "ref=$(Get-InstallRef 3>&1)"', BETTER_CAPTIONS_RELEASE_API=str(api))
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().endswith("main")
     assert "could not find the latest release" in result.stdout
@@ -306,7 +309,7 @@ def test_ps1_falls_back_to_main_with_warning(tmp_path: Path, response: dict | No
 def test_ps1_explicit_ref_wins(tmp_path: Path, ref: str) -> None:
     api = _api_file(tmp_path, RELEASE_JSON)
     result = _pwsh(
-        tmp_path, "Write-Output \"ref=$(Get-InstallRef)\"", BETTER_CAPTIONS_REF=ref, BETTER_CAPTIONS_RELEASE_API=str(api)
+        tmp_path, 'Write-Output "ref=$(Get-InstallRef)"', BETTER_CAPTIONS_REF=ref, BETTER_CAPTIONS_RELEASE_API=str(api)
     )
     assert result.returncode == 0, result.stderr
     assert f"ref={ref}" in result.stdout

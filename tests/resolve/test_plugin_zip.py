@@ -26,7 +26,9 @@ def _build_module():
 def test_zip_is_up_to_date_with_source():
     build = _build_module()
     assert os.path.isfile(ZIP), "run: uv run python resolve_plugin/build_plugin_zip.py"
-    assert build.is_up_to_date(), "resolve_plugin/Utility/better_captions_plugin.zip is stale; run: uv run python resolve_plugin/build_plugin_zip.py"
+    assert build.is_up_to_date(), (
+        "resolve_plugin/Utility/better_captions_plugin.zip is stale; run: uv run python resolve_plugin/build_plugin_zip.py"
+    )
 
 
 def test_zip_is_deterministic_and_contains_only_the_package(tmp_path):
@@ -67,14 +69,15 @@ def test_launcher_runs_the_plugin_from_the_zip(tmp_path):
         "import better_captions_plugin as loaded\n"
         "assert loaded is not stale, 'stale module kept'\n"
         "assert 'better_captions_plugin.zip' in loaded.__file__, loaded.__file__\n"
-        "print('LOADED-FROM-ZIP')\n"
-        % (os.path.join(PLUGIN, "src"), str(install / "Better Captions.py"))
+        "print('LOADED-FROM-ZIP')\n" % (os.path.join(PLUGIN, "src"), str(install / "Better Captions.py"))
     )
     env = dict(os.environ, BETTER_CAPTIONS_HOME=str(tmp_path / "nowhere"))
     result = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True, env=env, cwd=str(tmp_path))
     assert result.returncode == 0, result.stderr
     # Without a config.json the flow stops before any UI is needed and explains the installer.
-    assert "not installed for this user" in result.stdout and "LOADED-FROM-ZIP" in result.stdout, result.stdout + result.stderr
+    assert "not installed for this user" in result.stdout and "LOADED-FROM-ZIP" in result.stdout, (
+        result.stdout + result.stderr
+    )
 
 
 def test_launcher_falls_back_to_src_when_zip_is_missing(tmp_path):
@@ -87,7 +90,8 @@ def test_launcher_falls_back_to_src_when_zip_is_missing(tmp_path):
     driver = tmp_path / "driver.py"
     driver.write_text(
         "import runpy, sys\n"
-        "runpy.run_path(%r, init_globals={'resolve': None}, run_name='__main__')\n" % str(utility / "Better Captions.py")
+        "runpy.run_path(%r, init_globals={'resolve': None}, run_name='__main__')\n"
+        % str(utility / "Better Captions.py")
     )
     env = dict(os.environ, BETTER_CAPTIONS_HOME=str(tmp_path / "nowhere"))
     result = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True, env=env, cwd=str(tmp_path))
@@ -110,4 +114,7 @@ def test_plugin_is_stdlib_only_and_never_imports_the_engine():
                     continue
                 root = match.group(1).split(".")[0]
                 assert root != "better_captions", "%s imports the engine: %s" % (rel, line.strip())
-                assert root in stdlib or root == "better_captions_plugin", "%s: non-stdlib import %s" % (rel, line.strip())
+                assert root in stdlib or root == "better_captions_plugin", "%s: non-stdlib import %s" % (
+                    rel,
+                    line.strip(),
+                )

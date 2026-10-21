@@ -7,8 +7,14 @@ from better_captions.engine import diarize, transcribe
 from better_captions.schema import SpeakerTurn, Transcript, Word
 
 WORDS = [
-    ("Hey", 0.0), ("Jordan,", 0.3), ("how", 0.7), ("are", 0.9), ("you?", 1.1),
-    ("Good,", 2.0), ("thanks", 2.3), ("Maria.", 2.6),
+    ("Hey", 0.0),
+    ("Jordan,", 0.3),
+    ("how", 0.7),
+    ("are", 0.9),
+    ("you?", 1.1),
+    ("Good,", 2.0),
+    ("thanks", 2.3),
+    ("Maria.", 2.6),
 ]
 
 

@@ -69,7 +69,10 @@ class ReviewRequest:
 
 def speaker_rows(editor) -> "list[SpeakerRow]":
     """Review rows for the editor's current speakers."""
-    return [SpeakerRow(id=s.id, name=s.name, cue_count=s.cue_count, sample=s.sample, source=s.source) for s in editor.speakers()]
+    return [
+        SpeakerRow(id=s.id, name=s.name, cue_count=s.cue_count, sample=s.sample, source=s.source)
+        for s in editor.speakers()
+    ]
 
 
 @dataclass
@@ -126,7 +129,9 @@ class Backend:
         pass
 
 
-def choose_backend(resolve=None, fusion=None, bmd=None, preference: str = "auto", studio: "bool | None" = None) -> Backend:
+def choose_backend(
+    resolve=None, fusion=None, bmd=None, preference: str = "auto", studio: "bool | None" = None
+) -> Backend:
     """``preference``: "auto" (UIManager on Studio, tkinter otherwise), "uimanager" or "tk"."""
     preference = (preference or "auto").lower()
     if studio is None:

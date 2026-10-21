@@ -26,7 +26,7 @@ class MemoryKeyring(KeyringBackend):
 
 @pytest.fixture(autouse=True)
 def no_agent_clis(monkeypatch):
-    """"auto" naming must never find (and run) a real claude / agy installed on this machine."""
+    """ "auto" naming must never find (and run) a real claude / agy installed on this machine."""
     from better_captions.naming import agent_cli
 
     monkeypatch.setattr(agent_cli, "available", lambda cli, options: None)
