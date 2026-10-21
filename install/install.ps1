@@ -2,7 +2,9 @@
 #
 #   irm https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install.ps1 | iex
 #
-# Re-running it upgrades an existing install. Never needs admin rights.
+# Re-running it upgrades an existing install. Needs admin rights (one UAC
+# prompt) only to install python.org's Python for all users when Resolve
+# has none.
 # Install layout: see docs/ARCHITECTURE.md ("Install layout").
 #
 # Environment:
@@ -10,6 +12,8 @@
 #   BETTER_CAPTIONS_REF        git ref to install from GitHub (default: main)
 #   BETTER_CAPTIONS_SOURCE     install from this local source dir instead of GitHub (dev/tests)
 #   BETTER_CAPTIONS_SKIP_DEPS  =1: install the package with --no-deps (tests only)
+#   BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON  =1: don't check/install the Python Resolve runs the plugin with
+#   BETTER_CAPTIONS_RESOLVE_PYTHONS     semicolon-separated Pythons to check instead of Resolve's locations (tests)
 #
 # Runs via `iex`, so it never calls `exit` (that would close the user's
 # shell): errors are thrown and reported by the try/catch at the bottom.
@@ -20,6 +24,8 @@
 
     $Repo = 'anthonymendez/DavinciResolveBetterTranscription'
     $PythonVersion = '3.12'
+    # Last 3.12 release with python.org installers.
+    $ResolvePythonRelease = '3.12.10'
 
     function Say([string]$Message) { Write-Host "==> $Message" }
     function Warn([string]$Message) { Write-Warning $Message }
@@ -167,14 +173,103 @@
     }
 
     # -----------------------------------------------------------------------
-    # RESOLVE SYSTEM PYTHON (placeholder)
-    # If the Resolve plugin turns out to need a system Python for Resolve's
-    # own scripting host (Workspace > Scripts runs .py scripts with an
-    # external Python 3), detect/install it here and point Resolve at it.
-    # Currently a no-op: the plugin talks to the engine through
-    # config.json["engine"].
+    # RESOLVE SYSTEM PYTHON
+    # Resolve runs the plugin with a system Python it finds by itself: a
+    # 64-bit python.org CPython 3.10-3.12 with tkinter, installed for all
+    # users (C:\Program Files\Python3xx, HKLM\SOFTWARE\Python\PythonCore).
+    # Resolve does not detect per-user installs, so this is the one step
+    # that needs admin rights. See docs/RESOLVE_INTEGRATION.md
+    # ("Installer requirements").
     # -----------------------------------------------------------------------
-    function Ensure-ResolvePython {
+
+    # Where Resolve looks for Python, best first. BETTER_CAPTIONS_RESOLVE_PYTHONS
+    # (semicolon-separated paths) replaces the list (tests).
+    function Get-ResolvePythonCandidates {
+        if ($env:BETTER_CAPTIONS_RESOLVE_PYTHONS) {
+            return @($env:BETTER_CAPTIONS_RESOLVE_PYTHONS -split ';' | Where-Object { $_ })
+        }
+        $candidates = @()
+        if ($env:RESOLVE_PYTHON3_HOME) { $candidates += Join-Path $env:RESOLVE_PYTHON3_HOME 'python.exe' }
+        foreach ($v in '3.12', '3.11', '3.10') {
+            $key = "HKLM:\SOFTWARE\Python\PythonCore\$v\InstallPath"
+            $installPath = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).'(default)'
+            if ($installPath) { $candidates += Join-Path $installPath 'python.exe' }
+            $candidates += Join-Path $env:ProgramFiles ('Python' + $v.Replace('.', '') + '\python.exe')
+        }
+        return $candidates
+    }
+
+    # Returns @{Path; Version} for the first candidate that is a 64-bit
+    # Python 3.10-3.12 with tkinter, or $null.
+    function Find-ResolvePython {
+        $probe = "import struct, sys, tkinter; print('%d.%d %d' % (sys.version_info[:2] + (struct.calcsize('P') * 8,)))"
+        foreach ($py in Get-ResolvePythonCandidates) {
+            if (-not (Test-Path -PathType Leaf $py)) { continue }
+            try { $info = & $py -c $probe 2>$null } catch { continue }
+            if ($LASTEXITCODE -ne 0 -or -not $info) { continue }
+            $version, $bits = "$info".Trim() -split ' '
+            if (($version -in @('3.10', '3.11', '3.12')) -and $bits -eq '64') {
+                return @{ Path = $py; Version = $version }
+            }
+        }
+        return $null
+    }
+
+    # Installs python.org 3.12 for all users, silently. Windows shows one
+    # UAC prompt for it.
+    function Install-ResolvePython([string]$WorkDir) {
+        Say "Resolve needs Python $PythonVersion from python.org, installed for all users, to run the plugin."
+        Say 'Installing it now. Windows will ask for administrator permission (UAC): Resolve only finds'
+        Say "Python installed for all users under C:\Program Files. Choose Yes to continue."
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            & winget install -e --id Python.Python.3.12 --scope machine --silent --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -eq 0) { return $true }
+            Warn "winget could not install Python (exit code $LASTEXITCODE); trying the python.org installer"
+        }
+        $url = "https://www.python.org/ftp/python/$ResolvePythonRelease/python-$ResolvePythonRelease-amd64.exe"
+        $exe = Join-Path $WorkDir "python-$ResolvePythonRelease-amd64.exe"
+        Say "Downloading $url"
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+        } catch {
+            Warn "could not download ${url}: $_"
+            return $false
+        }
+        $installerArgs = @('/quiet', 'InstallAllUsers=1', 'Include_tcltk=1', 'PrependPath=0', 'Include_test=0')
+        try {
+            $proc = Start-Process -FilePath $exe -ArgumentList $installerArgs -Verb RunAs -Wait -PassThru
+        } catch {
+            Warn "the Python installer did not run (was the UAC prompt declined?): $_"
+            return $false
+        }
+        if ($proc.ExitCode -ne 0) {
+            Warn "the Python installer failed (exit code $($proc.ExitCode))"
+            return $false
+        }
+        return $true
+    }
+
+    function Ensure-ResolvePython([string]$WorkDir) {
+        if ($env:BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON -eq '1') {
+            Say 'Skipping the system Python check for Resolve (BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON=1)'
+            return
+        }
+        $found = Find-ResolvePython
+        if ($found) {
+            Say "Resolve will use Python $($found.Version) at $($found.Path)"
+            return
+        }
+        if (-not (Install-ResolvePython $WorkDir)) {
+            Warn "Python was not installed. Install Python $PythonVersion (64-bit) from python.org with"
+            Warn '"Install for all users" checked before using the plugin.'
+            return
+        }
+        $found = Find-ResolvePython
+        if ($found) {
+            Say "Installed Python $($found.Version) at $($found.Path); restart DaVinci Resolve to pick it up"
+        } else {
+            Warn "Python was installed but Resolve's Python is still not found; see docs/RESOLVE_INTEGRATION.md"
+        }
     }
 
     function Show-NextSteps([string]$Data) {
@@ -205,7 +300,7 @@ Re-run this installer any time to upgrade.
         Install-Package $data $src
         Write-Config $data
         Install-Plugin $data $src
-        Ensure-ResolvePython
+        Ensure-ResolvePython $workDir
         Show-NextSteps $data
     } catch {
         Write-Host "error: $_" -ForegroundColor Red

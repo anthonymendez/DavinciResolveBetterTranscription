@@ -74,6 +74,7 @@ def sandbox(tmp_path: Path, uv_dirs: dict[str, str], source: Path) -> dict[str, 
         TMPDIR=str(tmp),
         BETTER_CAPTIONS_SOURCE=str(source),
         BETTER_CAPTIONS_SKIP_DEPS="1",
+        BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON="1",
     )
     return env
 
@@ -145,6 +146,7 @@ def test_install_upgrade_uninstall(sandbox: dict[str, str], source: Path) -> Non
     first = _run("install.sh", sandbox)
     _assert_installed(sandbox, source)
     assert "Workspace > Scripts" in first.stdout
+    assert "Skipping the system Python check" in first.stdout
     assert "GPU" in first.stdout
     if not Path("/opt/resolve").exists() and not Path("/Applications/DaVinci Resolve").exists():
         assert "Resolve was not found" in first.stderr
@@ -183,6 +185,87 @@ def test_home_override(sandbox: dict[str, str], source: Path, tmp_path: Path) ->
     assert not (custom / "venv").exists()
     assert not (custom / "config.json").exists()
     assert (custom / "keep.txt").exists()
+
+
+def _fake_python(path: Path, info: str | None) -> Path:
+    """An executable that answers install.sh's probe with `info` ("3.12 64"), or fails like a Python without tkinter."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = f'echo "{info}"' if info else "echo 'No module named tkinter' >&2; exit 1"
+    path.write_text(f"#!/bin/sh\n{body}\n")
+    path.chmod(0o755)
+    return path
+
+
+def _ensure_resolve_python(
+    os_name: str, tmp_path: Path, pythons: list[Path], **env: str
+) -> subprocess.CompletedProcess[str]:
+    """Runs only install.sh's ensure_resolve_python step, checking `pythons` instead of Resolve's locations."""
+    workdir = tmp_path / "work"
+    workdir.mkdir(exist_ok=True)
+    run_env = {k: v for k, v in os.environ.items() if not k.startswith("BETTER_CAPTIONS_")}
+    run_env.update(
+        BETTER_CAPTIONS_LIB="1",
+        BETTER_CAPTIONS_NONINTERACTIVE="1",
+        # A non-empty list that matches nothing when no Pythons are given.
+        BETTER_CAPTIONS_RESOLVE_PYTHONS=":".join(str(p) for p in pythons) or str(tmp_path / "none"),
+    )
+    run_env.update(env)
+    return subprocess.run(
+        ["bash", "-c", 'source "$1"; ensure_resolve_python "$2" "$3"', "_",
+         str(INSTALL / "install.sh"), os_name, str(workdir)],
+        env=run_env, capture_output=True, text=True, timeout=60, start_new_session=True,
+    )
+
+
+def test_resolve_python_finds_suitable_fake(tmp_path: Path) -> None:
+    good = _fake_python(tmp_path / "dir with space" / "python3", "3.12 64")
+    pythons = [tmp_path / "missing" / "python3", _fake_python(tmp_path / "old" / "python3", "3.9 64"), good]
+    result = _ensure_resolve_python("linux", tmp_path, pythons)
+    assert result.returncode == 0, result.stderr
+    assert f"Resolve will use Python 3.12 at {good}" in result.stdout
+    assert "sudo" not in result.stderr
+
+
+@pytest.mark.parametrize("info", ["3.9 64", "3.13 64", "3.12 32", None])
+def test_resolve_python_rejects_unsuitable(tmp_path: Path, info: str | None) -> None:
+    bad = _fake_python(tmp_path / "bad" / "python3", info)
+    result = _ensure_resolve_python("linux", tmp_path, [bad])
+    assert result.returncode == 0, result.stderr
+    assert "Resolve will use" not in result.stdout
+    assert "Resolve needs a 64-bit Python 3.10-3.12 with tkinter" in result.stderr
+
+
+def test_resolve_python_skip_flag(tmp_path: Path) -> None:
+    good = _fake_python(tmp_path / "good" / "python3", "3.12 64")
+    result = _ensure_resolve_python("linux", tmp_path, [good], BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON="1")
+    assert result.returncode == 0, result.stderr
+    assert "Skipping the system Python check" in result.stdout
+    assert "Resolve will use" not in result.stdout
+
+
+def test_resolve_python_linux_prints_package_hint(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _fake_python(bin_dir / "apt-get", "should not run")
+    path = f"{bin_dir}:{os.environ['PATH']}"
+    result = _ensure_resolve_python("linux", tmp_path, [], PATH=path)
+    assert result.returncode == 0, result.stderr
+    assert "sudo apt-get install python3 python3-tk" in result.stderr
+    assert "doesn't install system packages" in result.stderr
+
+
+def test_resolve_python_macos_noninteractive_skips_download(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    marker = tmp_path / "downloaded"
+    for tool in ("curl", "sudo"):
+        (bin_dir / tool).parent.mkdir(parents=True, exist_ok=True)
+        (bin_dir / tool).write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+        (bin_dir / tool).chmod(0o755)
+    path = f"{bin_dir}:{os.environ['PATH']}"
+    result = _ensure_resolve_python("macos", tmp_path, [], PATH=path)
+    assert result.returncode == 0, result.stderr
+    assert "not running interactively" in result.stderr
+    assert "python.org" in result.stderr
+    assert not marker.exists()
 
 
 def test_bad_source_fails_clearly(sandbox: dict[str, str], tmp_path: Path) -> None:
