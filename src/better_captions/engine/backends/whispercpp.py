@@ -83,6 +83,8 @@ _QUANT_SUFFIX = re.compile(r"-q\d_\d$")
 # Languages written without spaces: every token is a word (same list faster-whisper uses).
 NO_SPACE_LANGUAGES = {"zh", "ja", "th", "lo", "my"}
 _SPECIAL_TOKEN = re.compile(r"^\[_[A-Z0-9_]+\]$")  # [_BEG_], [_TT_397], [_SOT_], ...
+# whisper.cpp non-speech annotations: [BLANK_AUDIO], [MUSIC], (music), (applause), *laughs*
+_NON_SPEECH = re.compile(r"^(?:\[[^\]]*\]|\([^()]*\)|\*[^*]*\*)$")
 _PROGRESS = re.compile(r"progress\s*=\s*(\d+)%")
 
 VK_PHYSICAL_DEVICE_TYPE_CPU = 4  # software rasterisers such as llvmpipe/lavapipe
@@ -114,7 +116,7 @@ def transcribe(
     """Return (language, duration_seconds, words) like engine.transcribe.transcribe()."""
     binary = ensure_binary()
     model_path = ensure_model(model)
-    dtw = dtw_preset(model) if supports_dtw(binary) else None
+    dtw = dtw_preset(model) if _dtw_enabled() and supports_dtw(binary) else None
     with tempfile.TemporaryDirectory(prefix="better-captions-") as tmp:
         out_base = Path(tmp) / "out"
         cmd = build_command(binary, model_path, audio_path, language, device, out_base, dtw)
@@ -145,7 +147,10 @@ def bin_dir() -> Path:
 
 def binary_path() -> Path | None:
     """The installed whisper-cli, or None (the Linux tarball nests it in a top-level folder)."""
-    root = bin_dir()
+    return _find_binary(bin_dir())
+
+
+def _find_binary(root: Path) -> Path | None:
     if not root.is_dir():
         return None
     return next((p for p in sorted(root.rglob(BINARY_NAME)) if p.is_file()), None)
@@ -163,19 +168,33 @@ def ensure_binary() -> Path:
             "see docs/GPU_VULKAN.md"
         )
     root = bin_dir()
-    archive = root / asset.name
-    if not archive.exists():
-        _download(asset.url, archive, sha256=asset.sha256)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    # Download and extract into a sibling staging directory, renamed into place only once that has
+    # succeeded: an interrupted install never leaves a partial bin_dir() for binary_path() to find.
+    staging = Path(tempfile.mkdtemp(prefix=f"{root.name}.staging-", dir=root.parent))
     try:
-        _extract(archive, root)
+        archive = staging / asset.name
+        _download(asset.url, archive, sha256=asset.sha256)
+        _extract(archive, staging)
+        archive.unlink()
+        staged = _find_binary(staging)
+        if staged is None:
+            raise RuntimeError(f"{BINARY_NAME} not found in {asset.name} (extracted to {root})")
+        if sys.platform != "win32":
+            staged.chmod(staged.stat().st_mode | 0o111)
+        try:
+            if root.exists() and binary_path() is None:  # left behind by an older, interrupted install
+                shutil.rmtree(root)
+            os.replace(staging, root)
+        except OSError:
+            # A concurrent install finished first and its copy is complete: use that one.
+            found = binary_path()
+            if found is None:
+                raise
+            return found
+        return root / staged.relative_to(staging)
     finally:
-        archive.unlink(missing_ok=True)
-    found = binary_path()
-    if found is None:
-        raise RuntimeError(f"{BINARY_NAME} not found in {asset.name} (extracted to {root})")
-    if sys.platform != "win32":
-        found.chmod(found.stat().st_mode | 0o111)
-    return found
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def _extract(archive: Path, dest: Path) -> None:
@@ -218,6 +237,11 @@ def supports_dtw(binary: Path) -> bool:
         except Exception:
             _help_cache[key] = False
     return _help_cache[key]
+
+
+def _dtw_enabled() -> bool:
+    """BETTER_CAPTIONS_WHISPERCPP_DTW=0 turns DTW (and with it -nfa) off, for speed."""
+    return os.environ.get("BETTER_CAPTIONS_WHISPERCPP_DTW", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def _environment(binary: Path) -> dict[str, str]:
@@ -337,7 +361,8 @@ def merge_tokens(tokens: list[dict], split_every_token: bool = False) -> list[Wo
     """Merge one segment's sub-word tokens into words.
 
     A token starting with whitespace begins a new word; others (word pieces, punctuation) join the
-    previous one. Special tokens ([_BEG_], [_TT_n]) are dropped. Times are the token ``offsets``
+    previous one. Special tokens ([_BEG_], [_TT_n]) and non-speech annotations ([BLANK_AUDIO], (music),
+    *laughs*) are dropped. Times are the token ``offsets``
     (ms); when every token of a word carries a DTW time (``t_dtw``, centiseconds, roughly where the
     token ends) the word ends there and starts where the previous word ended.
     """
@@ -355,6 +380,8 @@ def merge_tokens(tokens: list[dict], split_every_token: bool = False) -> list[Wo
     prev_dtw_end: float | None = None
     for group in groups:
         text = "".join(t["text"] for t in group).strip()
+        if _NON_SPEECH.match(text):
+            continue
         offsets = [t.get("offsets") for t in group if t.get("offsets")]
         start = float(offsets[0]["from"]) / 1000.0 if offsets else (words[-1].end if words else 0.0)
         end = float(offsets[-1]["to"]) / 1000.0 if offsets else start

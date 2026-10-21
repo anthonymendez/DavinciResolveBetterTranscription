@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import os
 import subprocess
 import tarfile
 import zipfile
@@ -113,6 +114,28 @@ def test_merge_sub_word_tokens_and_punctuation():
     assert words[0].probability == pytest.approx((0.8 + 0.6 + 0.9) / 3)
 
 
+def test_non_speech_annotations_are_dropped():
+    words = wc.merge_tokens(
+        [
+            tok(" Hi", 0, 100),
+            tok(" [", 100, 150),
+            tok("BLANK", 150, 200),
+            tok("_AUDIO", 200, 250),
+            tok("]", 250, 260),
+            tok(" (", 300, 310),
+            tok("music", 310, 400),
+            tok(")", 400, 410),
+            tok(" *", 500, 510),
+            tok("laughs", 510, 600),
+            tok("*", 600, 610),
+            tok(" [MUSIC]", 620, 700),
+            tok(" (applause)", 710, 800),
+            tok(" there", 900, 1000),
+        ]
+    )
+    assert [w.text for w in words] == ["Hi", "there"]
+
+
 def test_merge_skips_specials_and_blank_tokens_and_handles_missing_offsets():
     words = wc.merge_tokens([tok("[_SOT_]", 0, 0), tok(" ", 0, 10), {"text": " a", "p": 0.5}, tok("b", 100, 200)])
     assert [(w.text, w.start, w.end) for w in words] == [("ab", 0.1, 0.2)]
@@ -167,7 +190,10 @@ def test_parse_progress_line(line, expected):
 def test_build_command(monkeypatch):
     monkeypatch.setattr(wc.os, "cpu_count", lambda: 32)
     cmd = wc.build_command(Path("/b/whisper-cli"), Path("/m/ggml-small.bin"), "in.wav", None, "auto", Path("/t/out"), "small")
-    assert cmd == ["/b/whisper-cli", "-m", "/m/ggml-small.bin", "-f", "in.wav", "-l", "auto", "-ojf", "-of", "/t/out", "-pp", "-np", "-t", "8", "-dtw", "small", "-nfa"]
+    assert cmd == [
+        str(Path("/b/whisper-cli")), "-m", str(Path("/m/ggml-small.bin")), "-f", "in.wav", "-l", "auto",
+        "-ojf", "-of", str(Path("/t/out")), "-pp", "-np", "-t", "8", "-dtw", "small", "-nfa",
+    ]  # fmt: skip
     cmd = wc.build_command(Path("w"), Path("m"), "in.wav", "en", "vulkan:1", Path("o"), None)
     assert "-dtw" not in cmd and "-nfa" not in cmd
     assert cmd[cmd.index("-l") + 1] == "en" and cmd[-2:] == ["-dev", "1"]
@@ -245,10 +271,47 @@ def test_ensure_binary_finds_cli_inside_tarball_folder(home, fake_downloads, mon
     fake_downloads.payloads[asset.url] = payload
     binary = wc.ensure_binary()
     assert binary == home / "bin" / f"whispercpp-{wc.RELEASE}" / "whisper-v1" / "whisper-cli"
-    assert binary.stat().st_mode & 0o111
+    if os.name != "nt":  # Windows has no executable bit
+        assert binary.stat().st_mode & 0o111
     assert not (home / "bin" / "escape").exists() and not (home / "escape").exists()
     env = wc._environment(binary)
     assert env["LD_LIBRARY_PATH"].split(wc.os.pathsep)[0] == str(binary.parent)
+
+
+def test_interrupted_extraction_is_not_treated_as_installed(home, fake_downloads, monkeypatch):
+    payload = make_tar({"whisper-cli": b"ELF", "libwhisper.so.1": b"SO"})
+    asset = pin(monkeypatch, "whisper-linux.tar.gz", payload)
+    fake_downloads.payloads[asset.url] = payload
+    real_extract = wc._extract
+
+    def interrupted(archive, dest):
+        (dest / "whisper-cli").write_bytes(b"ELF")  # partly extracted, then the process dies
+        raise OSError("disk full")
+
+    monkeypatch.setattr(wc, "_extract", interrupted)
+    with pytest.raises(OSError, match="disk full"):
+        wc.ensure_binary()
+    assert wc.binary_path() is None
+    monkeypatch.setattr(wc, "_extract", real_extract)
+    assert wc.ensure_binary() == home / "bin" / f"whispercpp-{wc.RELEASE}" / "whisper-cli"
+    assert sorted(p.name for p in (home / "bin").iterdir()) == [f"whispercpp-{wc.RELEASE}"]  # no staging leftovers
+
+
+def test_concurrent_install_that_finished_first_is_used(home, fake_downloads, monkeypatch):
+    payload = make_tar({"whisper-cli": b"ELF"})
+    asset = pin(monkeypatch, "whisper-linux.tar.gz", payload)
+    fake_downloads.payloads[asset.url] = payload
+    real_extract = wc._extract
+
+    def other_install_wins(archive, dest):
+        real_extract(archive, dest)
+        other = wc.bin_dir() / "whisper-cli"  # another process completes its install meanwhile
+        other.parent.mkdir(parents=True)
+        other.write_bytes(b"OTHER")
+
+    monkeypatch.setattr(wc, "_extract", other_install_wins)
+    assert wc.ensure_binary().read_bytes() == b"OTHER"
+    assert sorted(p.name for p in (home / "bin").iterdir()) == [f"whispercpp-{wc.RELEASE}"]
 
 
 def test_checksum_mismatch_removes_download_and_raises(home, fake_downloads, monkeypatch):
@@ -342,7 +405,7 @@ def test_supports_dtw_reads_help_once(monkeypatch, home):
     monkeypatch.setattr(wc.subprocess, "run", run)
     assert wc.supports_dtw(Path("/x/whisper-cli")) is True
     assert wc.supports_dtw(Path("/x/whisper-cli")) is True
-    assert calls == [["/x/whisper-cli", "--help"]]
+    assert calls == [[str(Path("/x/whisper-cli")), "--help"]]
     monkeypatch.setattr(wc.subprocess, "run", lambda cmd, **k: NS(stdout="usage: old", stderr="", returncode=0))
     assert wc.supports_dtw(Path("/y/whisper-cli")) is False
 
@@ -422,6 +485,16 @@ def test_transcribe_cpu_language_and_duration_fallback(fake_cli, monkeypatch):
     assert seen == [0.4, 1.0]  # completion reported even when whisper-cli stopped at 40%
     (call,) = FakePopen.calls
     assert "-ng" in call.cmd and call.cmd[call.cmd.index("-l") + 1] == "de"
+
+
+def test_dtw_can_be_disabled_by_env(fake_cli, monkeypatch):
+    monkeypatch.setenv("BETTER_CAPTIONS_WHISPERCPP_DTW", "0")
+    probed = []
+    monkeypatch.setattr(wc.subprocess, "run", lambda cmd, **k: probed.append(cmd) or NS(stdout="--dtw", stderr="", returncode=0))
+    wc.transcribe(fake_cli.audio, model="small")
+    (call,) = FakePopen.calls
+    assert "-dtw" not in call.cmd and "-nfa" not in call.cmd
+    assert probed == []  # --help is not probed either
 
 
 def test_transcribe_without_dtw_support(fake_cli, monkeypatch):
