@@ -123,6 +123,13 @@ def test_ci_is_reusable_and_skips_tag_pushes() -> None:
     assert "tags" not in on["push"]
 
 
+def test_ci_lints_with_ruff() -> None:
+    steps = _workflow("ci.yml")["jobs"]["lint"]["steps"]
+    commands = [step.get("run") for step in steps]
+    assert "uv run ruff check ." in commands
+    assert "uv run ruff format --check ." in commands
+
+
 def test_release_workflow_runs_ci_before_publishing() -> None:
     jobs = _workflow("release.yml")["jobs"]
     callers = [name for name, job in jobs.items() if job.get("uses") == "./.github/workflows/ci.yml"]
