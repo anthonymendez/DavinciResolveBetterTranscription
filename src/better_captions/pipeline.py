@@ -25,6 +25,7 @@ class RunOptions:
     model: str = "large-v3-turbo"
     language: str | None = None
     device: str = "auto"
+    backend: str = "auto"  # transcription backend, see engine.transcribe.BACKENDS
     num_speakers: int | None = None
     min_speakers: int | None = None
     max_speakers: int | None = None
@@ -57,7 +58,7 @@ def run(audio_path: str, out_dir: str | Path, options: RunOptions | None = None,
 
     p = _stage_progress(emit, "transcribe")
     language, duration, words = transcribe.transcribe(
-        audio_path, model=options.model, language=options.language, device=options.device, progress=p
+        audio_path, model=options.model, language=options.language, device=options.device, progress=p, backend=options.backend
     )
     p(1.0)
 

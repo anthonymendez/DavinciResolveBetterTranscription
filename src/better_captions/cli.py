@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--model", default="large-v3-turbo")
     r.add_argument("--language")
     r.add_argument("--device", default="auto")
+    r.add_argument("--backend", default="auto", help="auto|faster-whisper|mlx|whispercpp")
     r.add_argument("--num-speakers", type=int)
     r.add_argument("--min-speakers", type=int)
     r.add_argument("--max-speakers", type=int)
@@ -40,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             language=args.language,
             device=args.device,
+            backend=args.backend,
             num_speakers=args.num_speakers,
             min_speakers=args.min_speakers,
             max_speakers=args.max_speakers,

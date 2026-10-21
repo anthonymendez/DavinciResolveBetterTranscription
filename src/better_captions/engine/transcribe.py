@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from typing import Callable
 
 from better_captions.schema import Word
@@ -13,8 +14,17 @@ def transcribe(
     language: str | None = None,
     device: str = "auto",
     progress: ProgressFn | None = None,
+    backend: str = "auto",
 ) -> tuple[str, float, list[Word]]:
-    """Return (language, duration_seconds, words) with word-level timestamps; Word.speaker is None."""
+    """Return (language, duration_seconds, words) with word-level timestamps; Word.speaker is None.
+
+    backend: "faster-whisper", "mlx" (Apple Silicon), "whispercpp" (Vulkan: AMD/Intel/NVIDIA GPUs) or "auto".
+    Every backend module exposes transcribe() with this signature minus ``backend``, and available() -> bool.
+    """
+    name = choose_backend(backend)
+    if name != "faster-whisper":
+        module = importlib.import_module(f"better_captions.engine.backends.{BACKENDS[name]}")
+        return module.transcribe(audio_path, model=model, language=language, device=device, progress=progress)
     whisper = _load_model(model, device)
     # Segments are a generator: decoding happens while we iterate, so progress is live.
     segments, info = whisper.transcribe(audio_path, language=language, word_timestamps=True, vad_filter=True)
@@ -28,6 +38,38 @@ def transcribe(
         if progress and duration > 0:
             progress(min(float(seg.end) / duration, 1.0))
     return info.language, duration, words
+
+
+# backend name -> module under better_captions.engine.backends (faster-whisper lives in this module)
+BACKENDS = {"faster-whisper": None, "mlx": "mlx", "whispercpp": "whispercpp"}
+
+
+def choose_backend(backend: str = "auto") -> str:
+    """Resolve "auto" to the best backend available on this machine."""
+    if backend not in BACKENDS and backend != "auto":
+        raise ValueError(f"unknown backend {backend!r}; expected auto or one of {', '.join(BACKENDS)}")
+    if backend != "auto":
+        return backend
+    # A CUDA GPU makes faster-whisper the best choice; otherwise prefer a GPU-capable alternative.
+    if _cuda_available():
+        return "faster-whisper"
+    for name in AUTO_ORDER:
+        if _backend_available(name):
+            return name
+    return "faster-whisper"
+
+
+# Alternatives tried by "auto" when there is no CUDA GPU, in order of preference.
+AUTO_ORDER = ["mlx", "whispercpp"]
+
+
+def _backend_available(name: str) -> bool:
+    """Ask the backend module's available() (cheap: no model loading); missing modules count as unavailable."""
+    try:
+        module = importlib.import_module(f"better_captions.engine.backends.{BACKENDS[name]}")
+        return bool(module.available())
+    except Exception:
+        return False
 
 
 def resolve_device(device: str = "auto") -> tuple[str, int, str]:

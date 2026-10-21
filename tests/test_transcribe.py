@@ -118,3 +118,16 @@ def test_model_libraries_imported_lazily():
         "assert not heavy, heavy"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_choose_backend_auto_prefers_cuda_then_alternatives(monkeypatch):
+    monkeypatch.setattr(tr, "_cuda_available", lambda: True)
+    assert tr.choose_backend("auto") == "faster-whisper"
+    monkeypatch.setattr(tr, "_cuda_available", lambda: False)
+    monkeypatch.setattr(tr, "_backend_available", lambda name: name == "whispercpp")
+    assert tr.choose_backend("auto") == "whispercpp"
+    monkeypatch.setattr(tr, "_backend_available", lambda name: False)
+    assert tr.choose_backend("auto") == "faster-whisper"
+    assert tr.choose_backend("mlx") == "mlx"
+    with pytest.raises(ValueError):
+        tr.choose_backend("nope")
