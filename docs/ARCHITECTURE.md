@@ -27,8 +27,9 @@ Two halves, joined by a subprocess + JSON contract:
 | Module | Job |
 |---|---|
 | `schema.py` | dataclasses + JSON (de)serialisation, stdlib only |
-| `engine/transcribe.py` | faster-whisper, word timestamps |
+| `engine/transcribe.py` | faster-whisper, word timestamps; `--backend` picks an alternative from `engine/backends/` |
 | `engine/gpu.py` | NVIDIA GPU detection; makes the pip-installed CUDA runtime loadable (`docs/GPU.md`) |
+| `engine/backends/whispercpp.py` | whisper.cpp + Vulkan (AMD/Intel/NVIDIA GPUs, Windows/Linux); binary in `<data>/bin`, see `docs/GPU_VULKAN.md` |
 | `engine/diarize.py` | speaker turns; default backend sherpa-onnx (no HF token needed), optional pyannote |
 | `engine/align.py` | words -> speakers -> segments |
 | `naming/` | speaker names from context: heuristic + Anthropic / OpenAI-compatible (Ollama) LLM |
@@ -40,6 +41,7 @@ Two halves, joined by a subprocess + JSON contract:
 
 - Data dir: Windows `%LOCALAPPDATA%\BetterCaptions`, macOS `~/Library/Application Support/BetterCaptions`,
   Linux `${XDG_DATA_HOME:-~/.local/share}/BetterCaptions`. Overridable with env `BETTER_CAPTIONS_HOME`.
+- `<data>/models/`: downloaded model files; `<data>/bin/`: downloaded native tools (whisper.cpp).
 - `<data>/venv/`: engine venv. `<data>/config.json`:
   `{"engine": ["<abs path to venv python>", "-m", "better_captions.cli"], "version": "x.y.z", "gpu": "cuda"|"none"}`
   plus optional user settings (e.g. `"naming_provider"`, API keys are read from env or this file).
