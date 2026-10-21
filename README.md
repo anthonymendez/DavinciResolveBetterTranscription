@@ -4,6 +4,12 @@ Speaker-aware transcription for DaVinci Resolve: detects who is speaking, names
 speakers from context, and builds per-speaker subtitle tracks or styled Text+
 caption tracks using templates from your media pool.
 
+> [!WARNING]
+> **AI-generated ("vibe-coded") project, not fully tested.** This code was written largely by AI
+> coding agents. Its automated tests use fake speech models and a simulated Resolve, so it has
+> **not yet been verified inside a real DaVinci Resolve** or on real recordings. Expect rough edges,
+> try it on a copy of your project first, and please report issues. See [TODO.md](TODO.md).
+
 ## Install
 
 Windows (PowerShell):

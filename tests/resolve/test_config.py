@@ -12,9 +12,9 @@ def test_data_dir_per_platform_and_override(tmp_path):
     join = os.path.join
     assert config_mod.data_dir({"LOCALAPPDATA": "/la"}, platform="win32", home="/h") == join("/la", "BetterCaptions")
     assert config_mod.data_dir({}, platform="win32", home="/h") == join("/h", "AppData", "Local", "BetterCaptions")
-    assert config_mod.data_dir({}, platform="darwin", home="/h") == "/h/Library/Application Support/BetterCaptions"
-    assert config_mod.data_dir({}, platform="linux", home="/h") == "/h/.local/share/BetterCaptions"
-    assert config_mod.data_dir({"XDG_DATA_HOME": "/xdg"}, platform="linux", home="/h") == "/xdg/BetterCaptions"
+    assert config_mod.data_dir({}, platform="darwin", home="/h") == join("/h", "Library", "Application Support", "BetterCaptions")
+    assert config_mod.data_dir({}, platform="linux", home="/h") == join("/h", ".local", "share", "BetterCaptions")
+    assert config_mod.data_dir({"XDG_DATA_HOME": "/xdg"}, platform="linux", home="/h") == join("/xdg", "BetterCaptions")
 
 
 def test_config_path_uses_env_override(tmp_path):

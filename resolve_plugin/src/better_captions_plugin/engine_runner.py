@@ -91,15 +91,21 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
     done = None
     error = None
     open_streams = 2
+    last_pump = time.monotonic()
     while open_streams:
         try:
             kind, payload = events.get(timeout=poll_interval)
         except queue.Empty:
+            kind = None
+        # Keep the UI responsive even when the engine streams output non-stop.
+        if kind is None or time.monotonic() - last_pump >= poll_interval:
+            last_pump = time.monotonic()
             if pump:
                 pump()
             if should_cancel and should_cancel():
                 _terminate(process)
                 raise EngineCancelled("cancelled")
+        if kind is None:
             continue
         if kind == "eof":
             open_streams -= 1

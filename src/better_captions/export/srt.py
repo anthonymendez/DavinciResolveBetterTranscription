@@ -32,6 +32,6 @@ def write_speaker_srts(transcript: Transcript, out_dir: str | Path) -> dict[str,
     paths: dict[str, Path] = {}
     for speaker_id, cues in by_speaker.items():
         path = out / f"{speaker_id}.srt"
-        path.write_text(to_srt(cues), encoding="utf-8")
+        path.write_text(to_srt(cues), encoding="utf-8", newline="\n")
         paths[speaker_id] = path
     return paths
