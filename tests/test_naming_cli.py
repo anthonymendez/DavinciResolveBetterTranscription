@@ -209,7 +209,8 @@ def test_discovery_order_option_config_path_then_install_dirs(tmp_path, caplog):
     assert find({"claude_cli_path": option}) == option
     assert find() == configured
     write_config()
-    assert find() == on_path
+    # On Windows, shutil.which returns the PATHEXT casing (claude.EXE).
+    assert os.path.normcase(find()) == os.path.normcase(on_path)
     assert find(environ={"PATH": "/usr/bin/nothing-here"}) == local_bin  # Resolve's minimal PATH
     os.remove(local_bin)
     assert find(environ={"PATH": ""}) == claude_local
@@ -218,7 +219,7 @@ def test_discovery_order_option_config_path_then_install_dirs(tmp_path, caplog):
 
     # A configured path that isn't there is reported and skipped.
     with caplog.at_level(logging.WARNING):
-        assert find({"claude_cli_path": str(tmp_path / "missing")}) == on_path
+        assert os.path.normcase(find({"claude_cli_path": str(tmp_path / "missing")})) == os.path.normcase(on_path)
     assert "is not a program" in caplog.text
 
 
