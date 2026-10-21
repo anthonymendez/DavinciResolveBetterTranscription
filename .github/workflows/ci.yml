@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync
+      - name: Run tests
+        run: uv run pytest -q
+
+  windows-installer:
+    name: install.ps1 end to end (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and uninstall into a sandbox
+        shell: pwsh
+        env:
+          BETTER_CAPTIONS_SOURCE: ${{ github.workspace }}
+          BETTER_CAPTIONS_SKIP_DEPS: "1"
+          BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON: "1"
+        run: |
+          $sandbox = Join-Path $env:RUNNER_TEMP 'bc-sandbox'
+          $env:APPDATA = Join-Path $sandbox 'Roaming'
+          $env:LOCALAPPDATA = Join-Path $sandbox 'Local'
+          New-Item -ItemType Directory -Force $env:APPDATA, $env:LOCALAPPDATA | Out-Null
+
+          ./install/install.ps1
+          ./install/install.ps1   # re-run = upgrade, must be idempotent
+
+          $data = Join-Path $env:LOCALAPPDATA 'BetterCaptions'
+          $utility = Join-Path $env:APPDATA 'Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility'
+          $config = Get-Content (Join-Path $data 'config.json') | ConvertFrom-Json
+          if (-not (Test-Path $config.engine[0])) { throw "engine python missing: $($config.engine[0])" }
+          if (-not (Test-Path (Join-Path $utility 'Better Captions.py'))) { throw 'plugin launcher not installed' }
+          & $config.engine[0] -c "import better_captions; print(better_captions.__version__)"
+          if ($LASTEXITCODE) { throw 'engine package not importable' }
+
+          ./install/uninstall.ps1
+          if (Test-Path (Join-Path $utility 'Better Captions.py')) { throw 'uninstall left the plugin behind' }
+
+  build:
+    name: build package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
