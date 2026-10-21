@@ -172,16 +172,22 @@ def ask_anthropic(speakers: list[Speaker], segments: list[Segment], options: dic
     api_key = anthropic_api_key(options)
     if not api_key:
         raise NamingError("no Anthropic API key (set ANTHROPIC_API_KEY or options['api_key'])")
-    client = _anthropic_client(api_key, options.get("anthropic_base_url"))
+    base_url = options.get("anthropic_base_url")
+    client = _anthropic_client(api_key, base_url)
     prompt = build_prompt(speakers, segments, options.get("token_budget", DEFAULT_TOKEN_BUDGET))
+    # Passed as extra_body so older SDK releases in the supported range still accept them.
+    extra_body: dict = {"output_config": {"effort": "low"}}
+    betas: list[str] = []
+    if not base_url:  # server-side refusal fallback exists on the Claude API only
+        extra_body["fallbacks"] = "default"
+        betas.append("server-side-fallback-2026-07-01")
     response = client.beta.messages.create(
         model=options.get("model") or DEFAULT_ANTHROPIC_MODEL,
         max_tokens=MAX_OUTPUT_TOKENS,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
-        betas=["server-side-fallback-2026-07-01"],
-        # Passed as extra_body so older SDK releases in the supported range still accept them.
-        extra_body={"output_config": {"effort": "low"}, "fallbacks": "default"},
+        betas=betas,
+        extra_body=extra_body,
     )
     if response.stop_reason == "refusal":
         raise NamingError("model refused the request")

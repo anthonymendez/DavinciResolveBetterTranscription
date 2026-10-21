@@ -324,6 +324,50 @@ def test_openai_provider_env_settings(fake_openai, monkeypatch):
     assert fake_openai.calls[0]["model"] == "gpt-x"
 
 
+def test_anthropic_through_real_factory_with_fake_sdk_module(monkeypatch):
+    """The SDK module itself is faked, so the client construction code is exercised too."""
+    built = []
+
+    def Anthropic(**kwargs):
+        client = FakeAnthropic()
+        built.append((kwargs, client))
+        return client
+
+    monkeypatch.setitem(sys.modules, "anthropic", SimpleNamespace(Anthropic=Anthropic))
+    result = naming.name_speakers(DIALOGUE, provider="anthropic", api_key="sk-x")
+    assert names(result) == {"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"}
+    ((kwargs, client),) = built
+    assert kwargs == {"api_key": "sk-x"}
+    (call,) = client.calls
+    assert call["betas"] == ["server-side-fallback-2026-07-01"]
+    assert call["extra_body"] == {"output_config": {"effort": "low"}, "fallbacks": "default"}
+    assert call["max_tokens"] > 0
+
+    # A custom endpoint (proxy) gets no Claude-API-only fallback parameter.
+    built.clear()
+    naming.name_speakers(DIALOGUE, provider="anthropic", api_key="sk-x", anthropic_base_url="http://proxy")
+    ((kwargs, client),) = built
+    assert kwargs == {"api_key": "sk-x", "base_url": "http://proxy"}
+    assert client.calls[0]["betas"] == [] and "fallbacks" not in client.calls[0]["extra_body"]
+
+
+def test_openai_through_real_factory_with_fake_sdk_module(monkeypatch):
+    built = []
+
+    def OpenAI(**kwargs):
+        client = FakeOpenAI()
+        built.append((kwargs, client))
+        return client
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=OpenAI))
+    result = naming.name_speakers(DIALOGUE, provider="auto", openai_base_url="http://localhost:1234/v1", model="local")
+    assert names(result) == {"SPEAKER_00": "Maria", "SPEAKER_01": "Jordan"}
+    assert {s.name_source for s in result} == {"llm"}
+    ((kwargs, client),) = built
+    assert kwargs == {"api_key": "not-needed", "base_url": "http://localhost:1234/v1"}
+    assert client.calls[0]["model"] == "local" and client.calls[0]["temperature"] == 0
+
+
 def test_openai_client_factory_passes_base_url(monkeypatch):
     seen = {}
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda **kw: seen.update(kw) or "client"))
