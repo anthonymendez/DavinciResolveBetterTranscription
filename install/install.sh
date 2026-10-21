@@ -3,7 +3,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install.sh | bash
 #
-# Re-running it upgrades an existing install. Never needs sudo.
+# Re-running it upgrades an existing install. Never needs sudo, except to
+# install python.org's Python on macOS when Resolve has none (asks first).
 # Install layout: see docs/ARCHITECTURE.md ("Install layout").
 #
 # Environment:
@@ -11,6 +12,10 @@
 #   BETTER_CAPTIONS_REF        git ref to install from GitHub (default: main)
 #   BETTER_CAPTIONS_SOURCE     install from this local source dir instead of GitHub (dev/tests)
 #   BETTER_CAPTIONS_SKIP_DEPS  =1: install the package with --no-deps (tests only)
+#   BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON  =1: don't check/install the Python Resolve runs the plugin with
+#   BETTER_CAPTIONS_RESOLVE_PYTHONS     colon-separated Pythons to check instead of Resolve's locations (tests)
+#   BETTER_CAPTIONS_NONINTERACTIVE      =1: never prompt (tests)
+#   BETTER_CAPTIONS_LIB        =1: only define the functions, don't run main (tests)
 
 # Everything runs from main() at the bottom, so a truncated download via
 # `curl | bash` never runs half a script.
@@ -19,6 +24,8 @@ set -euo pipefail
 
 REPO="anthonymendez/DavinciResolveBetterTranscription"
 PYTHON_VERSION="3.12"
+# Last 3.12 release with python.org installers.
+RESOLVE_PYTHON_RELEASE="3.12.10"
 
 say() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
@@ -185,14 +192,126 @@ install_plugin() {
 }
 
 # ---------------------------------------------------------------------------
-# RESOLVE SYSTEM PYTHON (placeholder)
-# If the Resolve plugin turns out to need a system Python for Resolve's own
-# scripting host (Workspace > Scripts runs .py scripts with an external
-# Python 3), detect/install it here and point Resolve at it. Currently a
-# no-op: the plugin talks to the engine through config.json["engine"].
+# RESOLVE SYSTEM PYTHON
+# Resolve runs the plugin with a system Python it finds by itself: a 64-bit
+# CPython 3.10-3.12 with tkinter, from python.org on macOS
+# (/Library/Frameworks/Python.framework) or the distro's /usr/bin/python3 on
+# Linux. See docs/RESOLVE_INTEGRATION.md ("Installer requirements").
 # ---------------------------------------------------------------------------
+
+# Where Resolve looks for Python, best first. BETTER_CAPTIONS_RESOLVE_PYTHONS
+# (colon-separated paths) replaces the list (tests).
+resolve_python_candidates() {
+    if [ -n "${BETTER_CAPTIONS_RESOLVE_PYTHONS:-}" ]; then
+        printf '%s\n' "$BETTER_CAPTIONS_RESOLVE_PYTHONS" | tr ':' '\n'
+    elif [ "$1" = macos ]; then
+        local v
+        for v in 3.12 3.11 3.10; do
+            echo "/Library/Frameworks/Python.framework/Versions/$v/bin/python3"
+        done
+        echo /usr/local/bin/python3
+    else
+        echo /usr/bin/python3
+        echo /usr/local/bin/python3
+    fi
+}
+
+# Prints "<path> <major.minor>" for the first candidate that is a 64-bit
+# Python 3.10-3.12 with tkinter; fails if there is none.
+find_resolve_python() {
+    local py info version bits
+    while IFS= read -r py; do
+        [ -n "$py" ] && [ -x "$py" ] || continue
+        info="$("$py" -c "import struct, sys, tkinter; print('%d.%d %d' % (sys.version_info[:2] + (struct.calcsize('P') * 8,)))" 2>/dev/null)" ||
+            continue
+        version="${info% *}"
+        bits="${info#* }"
+        case "$version" in
+            3.10 | 3.11 | 3.12) ;;
+            *) continue ;;
+        esac
+        [ "$bits" = 64 ] || continue
+        echo "$py $version"
+        return 0
+    done < <(resolve_python_candidates "$1")
+    return 1
+}
+
+# The exact command that installs python3 + tkinter with this distro's
+# package manager (all of them if it can't tell).
+linux_python_hint() {
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "  sudo apt-get install python3 python3-tk"
+    elif command -v dnf >/dev/null 2>&1; then
+        echo "  sudo dnf install python3 python3-tkinter"
+    elif command -v pacman >/dev/null 2>&1; then
+        echo "  sudo pacman -S python tk"
+    else
+        echo "  Debian/Ubuntu:  sudo apt-get install python3 python3-tk"
+        echo "  Fedora:         sudo dnf install python3 python3-tkinter"
+        echo "  Arch:           sudo pacman -S python tk"
+    fi
+}
+
+# True when we can ask the user a question (even under `curl | bash`).
+can_prompt() {
+    [ "${BETTER_CAPTIONS_NONINTERACTIVE:-}" != 1 ] && { : </dev/tty; } 2>/dev/null
+}
+
+install_macos_python() {
+    local workdir="$1" pkg answer
+    local url="https://www.python.org/ftp/python/$RESOLVE_PYTHON_RELEASE/python-$RESOLVE_PYTHON_RELEASE-macos11.pkg"
+    if ! can_prompt; then
+        warn "not running interactively, so Python was not installed. Install Python $PYTHON_VERSION from"
+        warn "python.org ($url), or re-run this installer in a terminal."
+        return 1
+    fi
+    printf '\nResolve needs Python %s from python.org to run the plugin.\n' "$PYTHON_VERSION" >/dev/tty
+    printf 'Install Python %s now? This downloads the official installer and runs\n' "$RESOLVE_PYTHON_RELEASE" >/dev/tty
+    printf '`sudo installer`, which asks for your password. [y/N] ' >/dev/tty
+    read -r answer </dev/tty || answer=""
+    case "$answer" in
+        y | Y | yes | YES) ;;
+        *)
+            warn "skipped installing Python. Install Python $PYTHON_VERSION from $url before using the plugin."
+            return 1
+            ;;
+    esac
+    pkg="$workdir/python-$RESOLVE_PYTHON_RELEASE.pkg"
+    say "Downloading $url"
+    curl -fsSL "$url" -o "$pkg" || {
+        warn "could not download $url"
+        return 1
+    }
+    say "Installing Python $RESOLVE_PYTHON_RELEASE (sudo installer)"
+    sudo installer -pkg "$pkg" -target / || {
+        warn "the Python installer failed"
+        return 1
+    }
+}
+
 ensure_resolve_python() {
-    :
+    local os="$1" workdir="$2" found
+    if [ "${BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON:-}" = 1 ]; then
+        say "Skipping the system Python check for Resolve (BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON=1)"
+        return
+    fi
+    if found="$(find_resolve_python "$os")"; then
+        say "Resolve will use Python ${found##* } at ${found% *}"
+        return
+    fi
+    if [ "$os" = linux ]; then
+        warn "Resolve needs a 64-bit Python 3.10-3.12 with tkinter at /usr/bin/python3 to run the plugin."
+        warn "This installer doesn't install system packages; install them with:"
+        linux_python_hint >&2
+        return
+    fi
+    install_macos_python "$workdir" || return 0
+    if found="$(find_resolve_python "$os")"; then
+        say "Installed Python ${found##* } at ${found% *}; restart DaVinci Resolve to pick it up"
+    else
+        warn "Python was installed but Resolve's Python is still not found; see docs/RESOLVE_INTEGRATION.md"
+    fi
 }
 
 print_next_steps() {
@@ -230,8 +349,10 @@ main() {
     install_package "$data" "$src"
     write_config "$data"
     install_plugin "$os" "$data" "$src"
-    ensure_resolve_python
+    ensure_resolve_python "$os" "$workdir"
     print_next_steps "$data"
 }
 
-main "$@"
+if [ "${BETTER_CAPTIONS_LIB:-}" != 1 ]; then
+    main "$@"
+fi
