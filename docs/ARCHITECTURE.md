@@ -26,6 +26,7 @@ Two halves, joined by a subprocess + JSON contract:
 |---|---|
 | `schema.py` | dataclasses + JSON (de)serialisation, stdlib only |
 | `engine/transcribe.py` | faster-whisper, word timestamps |
+| `engine/gpu.py` | NVIDIA GPU detection; makes the pip-installed CUDA runtime loadable (`docs/GPU.md`) |
 | `engine/diarize.py` | speaker turns; default backend sherpa-onnx (no HF token needed), optional pyannote |
 | `engine/align.py` | words -> speakers -> segments |
 | `naming/` | speaker names from context: heuristic + Anthropic / OpenAI-compatible (Ollama) LLM |
@@ -38,8 +39,9 @@ Two halves, joined by a subprocess + JSON contract:
 - Data dir: Windows `%LOCALAPPDATA%\BetterCaptions`, macOS `~/Library/Application Support/BetterCaptions`,
   Linux `${XDG_DATA_HOME:-~/.local/share}/BetterCaptions`. Overridable with env `BETTER_CAPTIONS_HOME`.
 - `<data>/venv/`: engine venv. `<data>/config.json`:
-  `{"engine": ["<abs path to venv python>", "-m", "better_captions.cli"], "version": "x.y.z"}`
+  `{"engine": ["<abs path to venv python>", "-m", "better_captions.cli"], "version": "x.y.z", "gpu": "cuda"|"none"}`
   plus optional user settings (e.g. `"naming_provider"`, API keys are read from env or this file).
+  `"gpu"` records whether the installer added the NVIDIA CUDA runtime (the `cuda` extra); see `docs/GPU.md`.
 - Everything under `resolve_plugin/Utility/` is copied into Resolve's `Fusion/Scripts/Utility/` folder:
   - Windows `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility`
   - macOS `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility`

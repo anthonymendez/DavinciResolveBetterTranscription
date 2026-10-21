@@ -24,8 +24,12 @@ Then in Resolve: **Workspace > Scripts > Better Captions**.
 
 The installer sets up [uv](https://docs.astral.sh/uv/) if missing, puts the
 engine in its own Python 3.12 venv in your user data dir, and copies the plugin
-into Resolve's `Scripts/Utility` folder. An NVIDIA GPU with CUDA is used
-automatically if available. Re-run the same command to upgrade.
+into Resolve's `Scripts/Utility` folder. On Windows and Linux, if it finds an
+NVIDIA GPU it also installs the CUDA runtime (cuBLAS + cuDNN, about 1.5 GB) into
+the engine venv, so the GPU works without a separate CUDA install. Without one,
+the engine runs on the CPU. Run `better-captions doctor` (the installer prints
+the full command) to see what the engine detects, and see [docs/GPU.md](docs/GPU.md).
+Re-run the same command to upgrade.
 
 Requirements: Resolve runs the plugin with a system Python it finds by itself,
 a 64-bit Python 3.10–3.12 with tkinter. If you already have one where Resolve
@@ -48,6 +52,8 @@ Options (environment variables):
 - `BETTER_CAPTIONS_HOME`: install somewhere other than the default data dir
 - `BETTER_CAPTIONS_SOURCE`: install from a local checkout instead of GitHub
 - `BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON=1`: skip the system Python check/install
+- `BETTER_CAPTIONS_GPU`: `auto` (default) installs the NVIDIA CUDA runtime only when
+  an NVIDIA GPU is found, `cuda` always installs it, `none` never does
 
 To uninstall, run `install/uninstall.ps1` or `install/uninstall.sh` the same
 way (e.g. `curl -fsSL .../install/uninstall.sh | bash`).
