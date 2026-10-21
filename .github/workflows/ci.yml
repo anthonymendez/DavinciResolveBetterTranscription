@@ -39,16 +39,28 @@ jobs:
           $env:LOCALAPPDATA = Join-Path $sandbox 'Local'
           New-Item -ItemType Directory -Force $env:APPDATA, $env:LOCALAPPDATA | Out-Null
 
-          ./install/install.ps1
-          ./install/install.ps1   # re-run = upgrade, must be idempotent
-
           $data = Join-Path $env:LOCALAPPDATA 'BetterCaptions'
           $utility = Join-Path $env:APPDATA 'Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility'
+
+          ./install/install.ps1
+          # The runner has no NVIDIA GPU, so auto-detection must skip the CUDA runtime.
           $config = Get-Content (Join-Path $data 'config.json') | ConvertFrom-Json
+          if ($config.gpu -ne 'none') { throw "expected gpu=none on a runner without an NVIDIA GPU, got '$($config.gpu)'" }
+
+          # Re-run = upgrade, must be idempotent. Forcing the CUDA runtime exercises the "<src>[cuda]"
+          # install (the extra itself isn't downloaded: BETTER_CAPTIONS_SKIP_DEPS=1).
+          $env:BETTER_CAPTIONS_GPU = 'cuda'
+          ./install/install.ps1
+          Remove-Item Env:BETTER_CAPTIONS_GPU
+
+          $config = Get-Content (Join-Path $data 'config.json') | ConvertFrom-Json
+          if ($config.gpu -ne 'cuda') { throw "BETTER_CAPTIONS_GPU=cuda was not recorded, got '$($config.gpu)'" }
           if (-not (Test-Path $config.engine[0])) { throw "engine python missing: $($config.engine[0])" }
           if (-not (Test-Path (Join-Path $utility 'Better Captions.py'))) { throw 'plugin launcher not installed' }
           & $config.engine[0] -c "import better_captions; print(better_captions.__version__)"
           if ($LASTEXITCODE) { throw 'engine package not importable' }
+          & $config.engine[0] -m better_captions.cli doctor
+          if ($LASTEXITCODE) { throw 'better-captions doctor failed' }
 
           ./install/uninstall.ps1
           if (Test-Path (Join-Path $utility 'Better Captions.py')) { throw 'uninstall left the plugin behind' }

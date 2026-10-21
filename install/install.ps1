@@ -12,8 +12,11 @@
 #   BETTER_CAPTIONS_REF        git ref to install from GitHub (default: main)
 #   BETTER_CAPTIONS_SOURCE     install from this local source dir instead of GitHub (dev/tests)
 #   BETTER_CAPTIONS_SKIP_DEPS  =1: install the package with --no-deps (tests only)
+#   BETTER_CAPTIONS_GPU        auto (default): install the NVIDIA CUDA runtime when an NVIDIA GPU is
+#                              found; cuda: always install it; none: never (see docs/GPU.md)
 #   BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON  =1: don't check/install the Python Resolve runs the plugin with
 #   BETTER_CAPTIONS_RESOLVE_PYTHONS     semicolon-separated Pythons to check instead of Resolve's locations (tests)
+#   BETTER_CAPTIONS_LIB        =1: only define the functions (in the caller's session), don't install (tests)
 #
 # Runs via `iex`, so it never calls `exit` (that would close the user's
 # shell): errors are thrown and reported by the try/catch at the bottom.
@@ -113,16 +116,59 @@
         }
     }
 
-    function Install-Package([string]$Data, [string]$Src) {
+    # -----------------------------------------------------------------------
+    # NVIDIA GPU
+    # faster-whisper runs on NVIDIA GPUs with the CUDA 12 cuBLAS + cuDNN 9
+    # runtime, installed from pip as the package's `cuda` extra. See
+    # docs/GPU.md.
+    # -----------------------------------------------------------------------
+
+    # True when nvidia-smi (installed with the NVIDIA driver) lists a GPU, or
+    # Windows reports an NVIDIA display adapter.
+    function Test-NvidiaGpu {
+        $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+        if ($smi) {
+            try {
+                $out = & $smi.Source -L 2>$null
+                if ($LASTEXITCODE -eq 0 -and ("$out" -match 'GPU \d+')) { return $true }
+            } catch { }
+        }
+        if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+            try {
+                $adapters = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop
+                if ($adapters | Where-Object { "$($_.Name) $($_.AdapterCompatibility)" -match 'NVIDIA' }) { return $true }
+            } catch { }
+        }
+        return $false
+    }
+
+    # 'cuda' or 'none': whether to install the CUDA runtime.
+    # BETTER_CAPTIONS_GPU=auto|cuda|none overrides the detection.
+    function Get-GpuChoice {
+        $choice = if ($env:BETTER_CAPTIONS_GPU) { $env:BETTER_CAPTIONS_GPU } else { 'auto' }
+        switch ($choice) {
+            'cuda' { return 'cuda' }
+            'none' { return 'none' }
+            'auto' { if (Test-NvidiaGpu) { return 'cuda' } else { return 'none' } }
+        }
+        throw "BETTER_CAPTIONS_GPU must be auto, cuda or none (got '$choice')"
+    }
+
+    function Install-Package([string]$Data, [string]$Src, [string]$Gpu) {
         $py = Get-VenvPython $Data
         $uvArgs = @('pip', 'install', '--no-config', '--python', $py, '--reinstall-package', 'better-captions')
         if ($env:BETTER_CAPTIONS_SKIP_DEPS -eq '1') { $uvArgs += '--no-deps' }
+        $target = $Src
+        if ($Gpu -eq 'cuda') {
+            $target = $Src + '[cuda]'
+            Say 'NVIDIA GPU: also installing its CUDA runtime (cuBLAS + cuDNN, about 1.5 GB)'
+        }
         Say 'Installing the Better Captions engine (this can take a few minutes the first time)'
-        Invoke-Checked 'package install' { uv @uvArgs $Src }
+        Invoke-Checked 'package install' { uv @uvArgs $target }
     }
 
     # Writes config.json, keeping any user settings already in it.
-    function Write-Config([string]$Data) {
+    function Write-Config([string]$Data, [string]$Gpu) {
         $py = Get-VenvPython $Data
         $path = Join-Path $Data 'config.json'
         $version = & $py -c "import importlib.metadata as m; print(m.version('better-captions'))"
@@ -138,6 +184,7 @@
         }
         $config['engine'] = @($py, '-m', 'better_captions.cli')
         $config['version'] = "$version".Trim()
+        $config['gpu'] = $Gpu
         $json = $config | ConvertTo-Json -Depth 10
         # UTF-8 without BOM, so Python's json module reads it.
         [System.IO.File]::WriteAllText($path, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
@@ -272,7 +319,15 @@
         }
     }
 
-    function Show-NextSteps([string]$Data) {
+    function Show-NextSteps([string]$Data, [string]$Gpu) {
+        if ($Gpu -eq 'cuda') {
+            $gpuNote = "The NVIDIA GPU runtime (CUDA) is installed; the engine uses your GPU`n" +
+                "automatically and falls back to the CPU if it can't."
+        } else {
+            $gpuNote = "No NVIDIA GPU was detected, so the CUDA runtime was not installed. To`n" +
+                "install it anyway, set `$env:BETTER_CAPTIONS_GPU = 'cuda' and re-run."
+        }
+        $py = Get-VenvPython $Data
         Write-Host @"
 
 Better Captions is installed.
@@ -283,10 +338,20 @@ Next steps:
   1. Restart DaVinci Resolve if it is running.
   2. Open Workspace > Scripts > Better Captions.
 
-An NVIDIA GPU with CUDA is used automatically if available; otherwise the
-engine runs on the CPU.
+$gpuNote
+Check what the engine detects: & "$py" -m better_captions.cli doctor
 Re-run this installer any time to upgrade.
 "@
+    }
+
+    # Tests: make the functions above callable from the caller's session instead of installing.
+    if ($env:BETTER_CAPTIONS_LIB -eq '1') {
+        foreach ($f in Get-ChildItem function:) {
+            if ($f.ScriptBlock.File -and $f.ScriptBlock.File -eq $PSCommandPath) {
+                Set-Item -Path "function:global:$($f.Name)" -Value $f.ScriptBlock
+            }
+        }
+        return
     }
 
     $workDir = Join-Path ([System.IO.Path]::GetTempPath()) ("better-captions-" + [guid]::NewGuid())
@@ -294,14 +359,15 @@ Re-run this installer any time to upgrade.
         $data = Get-DataDir
         New-Item -ItemType Directory -Force -Path $data | Out-Null
         New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+        $gpu = Get-GpuChoice
         Ensure-Uv
         $src = Get-Source $workDir
         New-EngineVenv $data
-        Install-Package $data $src
-        Write-Config $data
+        Install-Package $data $src $gpu
+        Write-Config $data $gpu
         Install-Plugin $data $src
         Ensure-ResolvePython $workDir
-        Show-NextSteps $data
+        Show-NextSteps $data $gpu
     } catch {
         Write-Host "error: $_" -ForegroundColor Red
     } finally {

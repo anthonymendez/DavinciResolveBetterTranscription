@@ -7,6 +7,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from better_captions.engine import gpu
 from better_captions.engine import transcribe as tr
 
 
@@ -36,6 +37,7 @@ def fake_whisper(monkeypatch):
     FakeWhisperModel.instances = []
     FakeWhisperModel.fail_on = set()
     monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=FakeWhisperModel))
+    monkeypatch.setattr(gpu, "setup", lambda: {"dirs": [], "loaded": []})  # never load real CUDA libraries
     return FakeWhisperModel
 
 
