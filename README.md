@@ -140,6 +140,7 @@ because the models download.
 │                                                                                      │
 │  [x] Subtitle tracks: one subtitle track per speaker, named after the speaker        │
 │  [x] Text+ captions: one video track per speaker using the chosen template           │
+│      [ ] Highlight words as they're spoken     Highlight colour: [#FFD400] [Pick…]   │
 │  New tracks are added; existing tracks are never changed.                            │
 │                                                          [ Create tracks ] [ Cancel ]│
 └──────────────────────────────────────────────────────────────────────────────────────┘
@@ -152,6 +153,10 @@ because the models download.
   and pick it here.
 - **Says, e.g.:** a sample line, so you can tell who is who.
 - **Outputs:** tick either output or both.
+- **Highlight words as they're spoken** (Text+ only, off by default): each caption becomes
+  one clip per word, each showing the whole caption in your template with the spoken word
+  in the highlight colour. Your choice and colour are remembered for the next run. See
+  `docs/RESOLVE_INTEGRATION.md` §8 for how it works and its limits.
 
 **Result on the timeline:**
 
@@ -166,5 +171,4 @@ because the models download.
 Each speaker can then be muted, styled, or moved independently.
 
 > Coming soon: fixing speaker mistakes in the review dialog (merge speakers,
-> move a caption to another speaker), and an optional word-by-word highlight for
-> Text+ captions. These are in progress.
+> move a caption to another speaker). This is in progress.

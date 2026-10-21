@@ -6,6 +6,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from better_captions_plugin.word_highlight import DEFAULT_HIGHLIGHT_COLOR, normalize_hex_color
+
+HIGHLIGHT_LABEL = "Highlight words as they're spoken (Text+ captions; one clip per word)"
+HIGHLIGHT_COLOR_LABEL = "Highlight colour:"
+
+
+def checked_highlight_color(text: str) -> "str | None":
+    """The colour typed in the review dialog as ``#RRGGBB``, or None when it isn't one."""
+    try:
+        return normalize_hex_color(text)
+    except ValueError:
+        return None
+
 
 @dataclass
 class SpeakerRow:
@@ -30,6 +43,9 @@ class ReviewRequest:
     editor: object = None
     time_label: object = None  # callable(seconds) -> str for the cue list (e.g. timeline timecode)
     note: str = ""  # shown under the header, e.g. "re-applied 3 earlier speaker fixes"
+    # Word highlighting (Text+ only), as remembered in config.json.
+    highlight_words: bool = False
+    highlight_color: str = DEFAULT_HIGHLIGHT_COLOR
 
 
 def speaker_rows(editor) -> "list[SpeakerRow]":
@@ -43,6 +59,8 @@ class ReviewResult:
     subtitles: bool = True
     textplus: bool = False
     template_index: "dict[str, int]" = field(default_factory=dict)  # speaker id -> index into templates
+    highlight_words: bool = False
+    highlight_color: str = DEFAULT_HIGHLIGHT_COLOR  # "#RRGGBB"
 
 
 class ProgressView:

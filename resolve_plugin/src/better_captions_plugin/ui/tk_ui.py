@@ -5,7 +5,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from better_captions_plugin.ui import Backend, ProgressView, ReviewRequest, ReviewResult, speaker_rows
+from better_captions_plugin.ui import (HIGHLIGHT_COLOR_LABEL, HIGHLIGHT_LABEL, Backend, ProgressView, ReviewRequest, ReviewResult,
+                                       checked_highlight_color, speaker_rows)
 from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
 
 TITLE = "Better Captions"
@@ -145,11 +146,25 @@ class _ReviewDialog:
         textplus_box.grid(row=row_index + 2, column=0, columnspan=4, sticky="w")
         if not request.templates:
             textplus_box.state(["disabled"])
+        highlight_row = ttk.Frame(frame)
+        highlight_row.grid(row=row_index + 3, column=0, columnspan=4, sticky="w", padx=(20, 0))
+        self.highlight_var = tk.BooleanVar(value=bool(request.highlight_words))
+        self.highlight_color_var = tk.StringVar(value=request.highlight_color)
+        self.highlight_widgets = [
+            ttk.Checkbutton(highlight_row, text=HIGHLIGHT_LABEL, variable=self.highlight_var),
+            ttk.Label(highlight_row, text=HIGHLIGHT_COLOR_LABEL),
+            ttk.Entry(highlight_row, textvariable=self.highlight_color_var, width=9),
+            ttk.Button(highlight_row, text="Pick…", command=self._pick_color),
+        ]
+        for column, widget in enumerate(self.highlight_widgets):
+            widget.grid(row=0, column=column, sticky="w", padx=(0 if column == 0 else 6, 0))
+        self.textplus_var.trace_add("write", lambda *_args: self._sync_highlight_state())
+        self._sync_highlight_state()
         ttk.Label(frame, text="New tracks are added; existing tracks are never changed.", foreground="#666").grid(
-            row=row_index + 3, column=0, columnspan=4, sticky="w", pady=(6, 0))
+            row=row_index + 4, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=row_index + 4, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        buttons.grid(row=row_index + 5, column=0, columnspan=4, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="right", padx=(8, 0))
         ttk.Button(buttons, text="Create tracks", command=self._ok).pack(side="right")
         if request.editor is not None:
@@ -196,11 +211,30 @@ class _ReviewDialog:
         except tk.TclError:
             pass
 
+    def _sync_highlight_state(self):
+        """Highlighting only applies to Text+ captions: usable while that output is ticked."""
+        state = ["!disabled"] if self.textplus_var.get() and self.request.templates else ["disabled"]
+        for widget in self.highlight_widgets:
+            widget.state(state)
+
+    def _pick_color(self):
+        from tkinter import colorchooser
+
+        initial = checked_highlight_color(self.highlight_color_var.get()) or self.request.highlight_color
+        _rgb, chosen = colorchooser.askcolor(color=initial, parent=self.window, title="Highlight colour")
+        if chosen:
+            self.highlight_color_var.set(checked_highlight_color(chosen) or chosen)
+
     def _ok(self):
         if not self.subtitles_var.get() and not self.textplus_var.get():
             messagebox.showwarning(TITLE, "Pick at least one output: subtitle tracks and/or Text+ captions.", parent=self.window)
             return
-        result = ReviewResult(subtitles=bool(self.subtitles_var.get()), textplus=bool(self.textplus_var.get()))
+        color = checked_highlight_color(self.highlight_color_var.get())
+        if self.highlight_var.get() and self.textplus_var.get() and color is None:
+            messagebox.showwarning(TITLE, "The highlight colour must look like #FFD400.", parent=self.window)
+            return
+        result = ReviewResult(subtitles=bool(self.subtitles_var.get()), textplus=bool(self.textplus_var.get()),
+                              highlight_words=bool(self.highlight_var.get()), highlight_color=color or self.request.highlight_color)
         for speaker in self.speakers:
             result.names[speaker.id] = self.name_vars[speaker.id].get().strip() or speaker.id
             if self.request.templates:

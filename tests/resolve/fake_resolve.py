@@ -54,9 +54,23 @@ class FakeTool:
         return {"TOOLS_Name": self.name, "TOOLS_RegID": self.id}
 
 
+def _lua_quote(text: str) -> str:
+    return '"%s"' % str(text).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _lua_unquote(body: str) -> str:
+    return re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t", "r": "\r"}.get(m.group(1), m.group(1)), body)
+
+
+_LUA_STRING = r'"((?:[^"\\\n]|\\.)*)"'
+
+
 class FakeComp:
-    def __init__(self, tools=None):
+    def __init__(self, tools=None, name="Composition 1", styled_text_source=None):
         self.tools = list(tools or [])
+        self.name = name
+        self.styled_text_source = styled_text_source  # a template whose StyledText another tool drives
+        self.cls = None  # after an import: {"tool", "text", "array": [(id, first, last, value)]}
 
     def FindToolByID(self, tool_id):
         for tool in self.tools:
@@ -67,6 +81,82 @@ class FakeComp:
     def GetToolList(self, selected=False, tool_id=None):
         return {i + 1: t for i, t in enumerate(self.tools) if tool_id is None or t.id == tool_id}
 
+    def comp_text(self, duration: int) -> str:
+        """What ExportFusionComp writes, shaped like a Resolve 21 Text+ title's comp."""
+        tool = self.FindToolByID("TextPlus")
+        if tool is None:
+            body = "\t\tBackground1 = Background {\n\t\t\tInputs = {\n\t\t\t\tWidth = Input { Value = 1920, },\n\t\t\t},\n\t\t},\n"
+        else:
+            text = tool.GetInput("StyledText") or ""
+            follower = ""
+            if self.styled_text_source:
+                styled = 'StyledText = Input {\n\t\t\t\t\tSourceOp = "%s",\n\t\t\t\t\tSource = "StyledText",\n\t\t\t\t},' % self.styled_text_source
+                follower = ("\t\t%s = StyledTextFollower {\n\t\t\tInputs = {\n\t\t\t\tText = Input { Value = %s, },\n"
+                            "\t\t\t},\n\t\t},\n" % (self.styled_text_source, _lua_quote(text)))
+            else:
+                styled = "StyledText = Input { Value = %s, }," % _lua_quote(text)
+            body = (
+                follower
+                + "\t\t%s = TextPlus {\n" % tool.name
+                + "\t\t\tInputs = {\n"
+                "\t\t\t\tGlobalOut = Input { Value = %d, },\n" % (duration - 1)
+                + "\t\t\t\tWidth = Input { Value = 1920, },\n"
+                "\t\t\t\t%s\n" % styled
+                + "\t\t\t\tFont = Input { Value = \"Open Sans\", },\n"
+                "\t\t\t\tStyle = Input { Value = \"Bold\", },\n"
+                "\t\t\t\tRed1 = Input { Value = 0.95, },\n"
+                "\t\t\t},\n"
+                "\t\t\tViewInfo = OperatorInfo { Pos = { 220, 49.5 } },\n"
+                "\t\t},\n"
+                "\t\tMediaOut1 = Saver {\n"
+                "\t\t\tInputs = {\n"
+                "\t\t\t\tInput = Input {\n"
+                "\t\t\t\t\tSourceOp = \"%s\",\n" % tool.name
+                + "\t\t\t\t\tSource = \"Output\",\n"
+                "\t\t\t\t}\n"
+                "\t\t\t},\n"
+                "\t\t},\n"
+            )
+        return (
+            "Composition {\n"
+            "\tCurrentTime = 0,\n"
+            "\tRenderRange = { 0, %d },\n" % (duration - 1)
+            + "\tCustomData = {\n\t\tTEMPLATE_ID = \"Text+\"\n\t},\n"
+            "\tTools = ordered() {\n%s\t},\n" % body
+            + "\tPrefs = {\n\t\tComp = {\n\t\t\tPaths = {\n\t\t\t\tMap = {\n"
+            "\t\t\t\t\t[\"ResolveCaches:\"] = \"C:\\\\Cache {v2} = TextPlus {\",\n"  # braces inside a string
+            "\t\t\t\t},\n\t\t\t},\n\t\t}\n\t},\n"
+            "}\n"
+        )
+
+
+def parse_imported_comp(text: str) -> "FakeComp | None":
+    """What ImportFusionComp makes of a comp file: None unless it is well formed and its Text+ tool's
+    StyledText comes from a StyledTextCLS tool (the only edit the plugin makes)."""
+    code = re.sub(_LUA_STRING, '""', text)
+    if code.count("{") != code.count("}") or not code.strip().startswith("Composition {"):
+        return None
+    tool = re.search(r"(\w+) = TextPlus \{", text)
+    link = re.search(r'StyledText = Input \{\s*SourceOp = "(\w+)",\s*Source = "StyledText",\s*\}', text)
+    if not tool or not link:
+        return None
+    cls = re.search(r"(?<![\w])%s = StyledTextCLS \{" % link.group(1), text)
+    if not cls:
+        return None
+    block = text[cls.start():]
+    text_value = re.search(r"(?<![\w])Text = Input \{ Value = %s, \}" % _LUA_STRING, block)
+    array = re.search(r"Array = \{(.*?)\n\s*\},", block, re.S)
+    if not text_value or not array:
+        return None
+    entries = [(int(a), int(b), int(c), float(v)) for a, b, c, v in
+               re.findall(r"\{ (\d+), (\d+), (\d+), Value = ([\d.]+) \}", array.group(1))]
+    shown = _lua_unquote(text_value.group(1))
+    comp = FakeComp([FakeTool("TextPlus", tool.group(1))])
+    comp.tools[0].SetInput("StyledText", shown)
+    comp.cls = {"tool": link.group(1), "text": shown, "array": entries}
+    comp.source_text = text
+    return comp
+
 
 class FakeTimelineItem:
     def __init__(self, name: str, start: int, duration: int, comps=None, media_pool_item=None):
@@ -76,6 +166,13 @@ class FakeTimelineItem:
         self.comps = list(comps or [])
         self.media_pool_item = media_pool_item
         self.color = None
+        self.active = 0  # index of the current comp
+        # knobs
+        self.comp_io = True  # False: ExportFusionComp fails (an older Resolve)
+        self.import_fails = False
+        self.import_replaces = False  # True: ImportFusionComp swaps the comp instead of adding one
+        self.exported = []
+        self.loaded = []
 
     def GetName(self):
         return self.name
@@ -95,27 +192,68 @@ class FakeTimelineItem:
     def GetFusionCompByIndex(self, index):
         return self.comps[index - 1] if 1 <= index <= len(self.comps) else None
 
+    def GetFusionCompNameList(self):  # a Lua table through the bridge, as KathaCut's spike logged it
+        names = {i + 1: comp.name for i, comp in enumerate(self.comps)}
+        names["__flags"] = 4194304
+        return names
+
+    def LoadFusionCompByName(self, name):
+        for index, comp in enumerate(self.comps):
+            if comp.name == name:
+                self.active = index
+                self.loaded.append(name)
+                return comp
+        return None
+
+    def ExportFusionComp(self, path, index):
+        if not self.comp_io or not 1 <= index <= len(self.comps):
+            return False
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(self.comps[index - 1].comp_text(self.duration))
+        self.exported.append(path)
+        return True
+
+    def ImportFusionComp(self, path):
+        if self.import_fails or not os.path.isfile(path):
+            return None
+        with open(path, "r", encoding="utf-8") as handle:
+            comp = parse_imported_comp(handle.read())
+        if comp is None:
+            return None
+        if self.import_replaces:
+            comp.name = self.comps[self.active].name
+            self.comps[self.active] = comp
+        else:
+            comp.name = "Composition %d" % (len(self.comps) + 1)
+            self.comps.append(comp)
+        return comp
+
     def SetClipColor(self, color):
         self.color = color
         return True
 
     def text(self):
-        """Test helper: the StyledText of the first Text+ node."""
-        for comp in self.comps:
+        """Test helper: the StyledText of the current comp's Text+ node."""
+        for comp in self.comps[self.active:] + self.comps[:self.active]:
             tool = comp.FindToolByID("TextPlus")
             if tool:
                 return tool.GetInput("StyledText")
         return None
 
+    def highlight(self):
+        """Test helper: the current comp's character styling (``FakeComp.cls``), or None."""
+        return self.comps[self.active].cls if self.comps else None
+
 
 class FakeMediaPoolItem:
     def __init__(self, name: str, kind: str = "Video + Audio", file_path: "str | None" = None,
-                 has_textplus: bool = True, srt_cues=None, placed_duration=None):
+                 has_textplus: bool = True, srt_cues=None, placed_duration=None, styled_text_source=None):
         self.name = name
         self.props = {"Clip Name": name, "Type": kind, "File Path": "" if file_path is None else file_path}
         self.has_textplus = has_textplus
         self.srt_cues = srt_cues
         self.placed_duration = placed_duration  # if set, AppendToTimeline ignores endFrame (template quirk)
+        self.styled_text_source = styled_text_source  # e.g. "Follower1": the template animates its own text
 
     def GetName(self):
         return self.name
@@ -322,7 +460,8 @@ class FakeMediaPool:
         if item.placed_duration is not None:
             duration = item.placed_duration
         record = int(info.get("recordFrame", track.items[-1].GetEnd() if track.items else timeline.start_frame))
-        comps = [FakeComp([FakeTool("TextPlus", "Template")] if item.has_textplus else [FakeTool("Background", "Background1")])]
+        comps = [FakeComp([FakeTool("TextPlus", "Template")] if item.has_textplus else [FakeTool("Background", "Background1")],
+                          styled_text_source=item.styled_text_source)]
         clip = FakeTimelineItem(item.name, record, duration, comps=comps, media_pool_item=item)
         track.items.append(clip)
         track.items.sort(key=lambda c: c.start)
