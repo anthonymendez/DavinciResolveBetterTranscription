@@ -31,6 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-chars", type=int, default=42)
     r.add_argument("--max-lines", type=int, default=2)
     r.add_argument("--max-duration", type=float, default=6.0)
+    r.add_argument("--no-cache", action="store_true", help="re-transcribe even if this audio was processed before")
+
+    c = sub.add_parser("cache", help="manage the transcription cache")
+    c.add_argument("action", choices=["clear"])
     return parser
 
 
@@ -48,12 +52,17 @@ def main(argv: list[str] | None = None) -> int:
             diarization_backend=args.diarization_backend,
             naming_provider=args.naming,
             cue_options=CueOptions(max_chars_per_line=args.max_chars, max_lines=args.max_lines, max_duration=args.max_duration),
+            use_cache=not args.no_cache,
         )
         try:
             run(args.audio, args.out, options)
         except Exception as exc:  # report to the plugin as a structured event
             json_lines_events({"event": "error", "message": f"{type(exc).__name__}: {exc}"})
             return 1
+    elif args.command == "cache":
+        from better_captions.engine import cache
+
+        print(json.dumps({"event": "cache_cleared", "removed": cache.clear()}))
     return 0
 
 
