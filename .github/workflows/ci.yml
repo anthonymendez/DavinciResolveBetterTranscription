@@ -40,6 +40,29 @@ jobs:
       - name: Run tests
         run: uv run pytest -q
 
+  plugin:
+    # The plugin runs on whatever system Python Resolve finds (stdlib only), not the engine's 3.12
+    # venv, so tests/resolve also runs on a bare Python of every version Resolve may use.
+    name: plugin (Python ${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - { os: ubuntu-latest, python: "3.14", experimental: true }
+          - { os: windows-latest, python: "3.12" }
+          - { os: windows-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.12" }
+          - { os: macos-latest, python: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Run plugin tests (no engine dependencies)
+        run: uv run --no-project --python ${{ matrix.python }} --with pytest pytest -q tests/resolve
+
   windows-installer:
     name: install.ps1 end to end (Windows)
     runs-on: windows-latest
