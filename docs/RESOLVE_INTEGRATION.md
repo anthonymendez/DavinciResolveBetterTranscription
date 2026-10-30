@@ -3,7 +3,7 @@
 How the plugin in `resolve_plugin/` talks to DaVinci Resolve, what was verified from
 Blackmagic's scripting README and community sources, and what is still only verifiable
 against a live Resolve. Researched October 2026 against Resolve 19/20 (README mirrors up to
-21.0.4). Blackmagic's own README ships with Resolve as
+21.0.4), with release notes up to 21.1.2 for §9. Blackmagic's own README ships with Resolve as
 `Developer/Scripting/README.txt` (Help > Documentation > Developer); its text is mirrored
 verbatim in [X-Raym's gist][xraym-gist] and summarised at [resolvedevdoc][devdoc].
 
@@ -286,6 +286,44 @@ Cost: one clip per word, and the round trip takes about 0.5 s per clip, mostly t
 ([ADR 0011][kc-adr], "Timing"). A long timeline takes minutes to write, during which Resolve is
 busy.
 
+## 9. Resolve 21.1 and later
+
+**Resolve 21.1 (September 2026) moved Python scripting to Studio.** Its release notes say "We
+have moved the ability to script in Python to the Studio version", and Python 2 support is
+gone; Lua is not named ([CineD][cined-211]). AYON's Resolve addon reacted in 0.6.4 by refusing
+to start on non-Studio 21.1+ ([ayon-resolve 0.6.4][ayon-064]). 21.1 also added about 20
+scripting calls, and 21.1.1 async ones (Quick Export, transcription, scene-cut detection, Smart
+Reframe, subtitle creation) ([Digital Production][dp-2111]); 21.1.2 followed on October 26
+([Newsshooter][ns-2112]). None of these notes document a removal or change of the calls this
+plugin uses (§2–§5, §8).
+
+So: **free edition up to 21.0.x, Studio for 21.1 and later.** What the free 21.1 edition does
+with a Python script from Workspace > Scripts is not documented: the script may not be listed
+or run at all, may get `resolve` = None, or may get an object whose calls return None.
+
+**What the plugin does** (`compat.py`, checked in `app.main` before any UI or project call):
+`compat.detect(resolve)` reads `GetVersion()` (falling back to `GetVersionString()`) and
+`GetProductName()`, each failure leaving that part unknown.
+
+- `resolve` is None: an error saying Python scripting needs Studio since 21.1 (and, for
+  Studio, to start it from Workspace > Scripts). Nothing is rendered or created.
+- Free edition, 21.1 or newer: an error naming the version and saying it needs Studio 21.1+
+  or free 21.0.x. Same: nothing touched, and UIManager is never tried.
+- Free edition, version unknown (the calls return None), and `GetProjectManager()` or
+  `GetCurrentProject()` returns nothing: the same Studio message instead of "open a project
+  first" (`resolve_io.current_project_and_timeline`).
+- Otherwise the run goes ahead; the progress log starts with `Resolve: <product> <version>`,
+  and a version newer than `compat.TESTED_UP_TO` (21.1) adds a "newer than tested" warning to
+  the summary.
+
+When there is no injected backend the errors above are printed to Resolve's Console; a
+tkinter dialog is shown too when `fusion` or `bmd` is present (i.e. inside Resolve's script
+host). The UI choice (§1) uses the same edition check.
+
+Unverified: what free 21.1.x actually gives a Python script (which of the three cases, and
+whether `fusion`/`bmd` still arrive), whether `GetProductName()` still says "Studio" on
+Studio 21.1.x, and whether the plugin's calls behave the same on Studio 21.1.2.
+
 ## Still to verify on a real Resolve (free and Studio)
 
 1. Subtitle placement (§2) and whether `ImportMedia` returns the SRT item.
@@ -301,6 +339,10 @@ busy.
    bridge on 19/20 (KathaCut verified it from Lua on Studio 21), whether `ImportFusionComp`
    adds or replaces the comp on a Text+ title, how `"\n"` counts in CLS ranges on two-line
    cues, and wall-clock time per clip on a long timeline.
+8. Resolve 21.1.x (§9): what the free edition gives a Python script (not listed, `resolve` =
+   None, or calls returning None) and that the plugin's message shows; that Studio 21.1.2
+   reports "Studio" in `GetProductName()` and a parseable `GetVersion()`, and runs the whole
+   flow unchanged.
 
 [xraym-gist]: https://gist.github.com/X-Raym/2f2bf453fc481b9cca624d7ca0e19de8
 [xraym-docs]: https://extremraym.com/cloud/resolve-scripting-doc/
@@ -326,3 +368,7 @@ busy.
 [forum-cls-crash]: https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=131845
 [fusion-scripting]: https://documents.blackmagicdesign.com/UserManuals/Fusion8_Scripting_Guide.pdf
 [mcp-250]: https://github.com/samuelgursky/davinci-resolve-mcp/issues/250
+[ayon-064]: https://github.com/ynput/ayon-resolve/releases/tag/0.6.4
+[cined-211]: https://www.cined.com/davinci-resolve-21-1-released-ai-assistant-integration-via-mcp-individual-hdr-trims-and-python-scripting-moves-to-studio/
+[dp-2111]: https://digitalproduction.com/2026/10/06/davinci-resolve-21-1-1/
+[ns-2112]: https://www.newsshooter.com/2026/10/26/davinci-resolve-21-1-2/

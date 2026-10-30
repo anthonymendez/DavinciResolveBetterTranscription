@@ -12,7 +12,7 @@ import os
 import time
 from dataclasses import dataclass, field, replace
 
-from better_captions_plugin import word_highlight
+from better_captions_plugin import compat, word_highlight
 from better_captions_plugin.planning import TrackPlan
 from better_captions_plugin.timing import TimelineClock
 from better_captions_plugin.word_highlight import HighlightUnsupported
@@ -54,12 +54,25 @@ class TrackResult:
 # Context
 
 
-def current_project_and_timeline(resolve):
+def current_project_and_timeline(resolve, info=None):
     if resolve is None:
         raise ResolveError("no Resolve object: run this from Workspace > Scripts inside DaVinci Resolve")
+    info = info or compat.detect(resolve)
+    # A free Resolve that won't even report its version is most likely 21.1+ handing Python a
+    # dead API object (compat.py): its "no project" means "needs Studio", not "open a project".
+    api_dead = not info.studio and not info.version
     manager = resolve.GetProjectManager()
-    project = manager.GetCurrentProject() if manager else None
+    if not manager:
+        if api_dead:
+            raise ResolveError(compat.NO_RESOLVE_MESSAGE)
+        raise ResolveError("Resolve did not return its project manager; restart Resolve and try again")
+    project = manager.GetCurrentProject()
     if not project:
+        if api_dead:
+            raise ResolveError(
+                "open a project first (if one is open, Resolve is not letting this script see it).\n\n"
+                + compat.NO_RESOLVE_MESSAGE
+            )
         raise ResolveError("open a project first")
     timeline = project.GetCurrentTimeline()
     if not timeline:
@@ -68,10 +81,7 @@ def current_project_and_timeline(resolve):
 
 
 def is_studio(resolve) -> bool:
-    try:
-        return "studio" in str(resolve.GetProductName()).lower()
-    except Exception:
-        return False
+    return compat.detect(resolve).studio
 
 
 def timeline_clock(timeline, project=None) -> TimelineClock:

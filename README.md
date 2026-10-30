@@ -9,6 +9,9 @@ caption tracks using templates from your media pool.
 > coding agents. Its automated tests use fake speech models and a simulated Resolve, so it has
 > **not yet been verified inside a real DaVinci Resolve** or on real recordings. Expect rough edges,
 > try it on a copy of your project first, and please report issues. See [TODO.md](TODO.md).
+>
+> **Resolve 21.1 and later need Resolve Studio:** Blackmagic moved Python scripting out of the
+> free edition in 21.1. The free edition works up to 21.0.x.
 
 ## Install
 
@@ -31,7 +34,12 @@ the engine runs on the CPU. Run `better-captions doctor` (the installer prints
 the full command) to see what the engine detects, and see [docs/GPU.md](docs/GPU.md).
 Re-run the same command to upgrade.
 
-Requirements: Resolve runs the plugin with a system Python it finds by itself,
+Requirements: the free edition of DaVinci Resolve up to 21.0.x, or DaVinci Resolve
+Studio. Resolve 21.1 moved Python scripting to Studio, so on the free edition of 21.1 and
+later the plugin cannot run (it says so if Resolve starts it at all; see
+[docs/RESOLVE_INTEGRATION.md](docs/RESOLVE_INTEGRATION.md) §9).
+
+Resolve runs the plugin with a system Python it finds by itself,
 a 64-bit Python 3.10–3.12 with tkinter. If you already have one where Resolve
 looks, the installer uses it; otherwise:
 
