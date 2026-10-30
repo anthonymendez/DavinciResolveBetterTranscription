@@ -6,6 +6,7 @@ import pytest
 
 from better_captions_plugin.ui import ReviewRequest, ReviewResult, SpeakerRow
 from better_captions_plugin.ui.uimanager_ui import UIManagerBackend
+from tests.resolve.conftest import skip_unless_gui_tests
 from tests.resolve.fake_resolve import make_world
 
 # --- a minimal fake of fusion.UIManager / bmd.UIDispatcher
@@ -432,11 +433,12 @@ def test_choose_backend_falls_back_to_tk_when_uimanager_fails(monkeypatch):
         ui_pkg.choose_backend(None, broken_fusion, FakeBmd(), preference="uimanager")
 
 
-# --- tkinter (needs a display)
+# --- tkinter (needs a display; opt-in, see conftest.py)
 
 
 @pytest.fixture
 def tk_root():
+    skip_unless_gui_tests()
     tk = pytest.importorskip("tkinter")
     try:
         root = tk.Tk()
