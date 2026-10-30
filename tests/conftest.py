@@ -1,9 +1,18 @@
 """Shared fixtures. No test touches the real OS keychain (an in-memory backend is installed for all)
-or a real coding-agent CLI."""
+or a real coding-agent CLI.
 
-import keyring
+tests/resolve also runs on a bare Python without the engine's dependencies (CI checks the plugin on
+every Python Resolve may use); keyring is missing there, so these fixtures do nothing. With
+keyring installed they run in full, so a broken engine import still fails loudly."""
+
 import pytest
-from keyring.backend import KeyringBackend
+
+try:
+    import keyring
+    from keyring.backend import KeyringBackend
+except ImportError:  # bare-Python plugin run: no engine dependencies installed
+    keyring = None
+    KeyringBackend = object
 
 
 class MemoryKeyring(KeyringBackend):
@@ -27,6 +36,8 @@ class MemoryKeyring(KeyringBackend):
 @pytest.fixture(autouse=True)
 def no_agent_clis(monkeypatch):
     """ "auto" naming must never find (and run) a real claude / agy installed on this machine."""
+    if keyring is None:
+        return
     from better_captions.naming import agent_cli
 
     monkeypatch.setattr(agent_cli, "available", lambda cli, options: None)
@@ -34,6 +45,9 @@ def no_agent_clis(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def fake_keyring():
+    if keyring is None:
+        yield None
+        return
     previous = keyring.get_keyring()
     backend = MemoryKeyring()
     keyring.set_keyring(backend)

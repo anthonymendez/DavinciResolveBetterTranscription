@@ -23,7 +23,7 @@ VALUES = [value for value, _label in NAMING_CHOICES]
 
 
 def test_choices_cover_every_engine_provider():
-    from better_captions import naming
+    naming = pytest.importorskip("better_captions.naming", reason="needs the engine (bare-Python plugin run)")
 
     assert sorted(VALUES) == sorted(naming.PROVIDERS)
     assert VALUES[0] == "auto"
