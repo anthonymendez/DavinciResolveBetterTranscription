@@ -2,7 +2,7 @@
 
 Resolve 21.1 (September 2026) moved Python scripting to the Studio edition: on the free
 edition a Python script gets no usable ``resolve`` object, or one whose calls return None
-(see docs/RESOLVE_INTEGRATION.md §9). Lua scripting and Studio are unaffected. This module
+(see docs/RESOLVE_INTEGRATION.md §9). Studio is unaffected. This module
 reads the version and edition so the plugin can say so instead of failing with
 "open a project first".
 """

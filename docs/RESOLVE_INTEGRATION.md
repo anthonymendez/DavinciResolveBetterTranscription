@@ -288,13 +288,13 @@ busy.
 
 ## 9. Resolve 21.1 and later
 
-**Resolve 21.1 (September 2026) moved Python scripting to Studio.** Its release notes say "We
-have moved the ability to script in Python to the Studio version", and Python 2 support is
-gone; Lua is not named ([CineD][cined-211]). AYON's Resolve addon reacted in 0.6.4 by refusing
-to start on non-Studio 21.1+ ([ayon-resolve 0.6.4][ayon-064]). 21.1 also added about 20
-scripting calls, and 21.1.1 async ones (Quick Export, transcription, scene-cut detection, Smart
-Reframe, subtitle creation) ([Digital Production][dp-2111]); 21.1.2 followed on October 26
-([Newsshooter][ns-2112]). None of these notes document a removal or change of the calls this
+**Resolve 21.1 (September 2026) moved Python scripting to Studio.** Blackmagic's statement,
+quoted in AYON's Resolve addon 0.6.4, is "We have moved the ability to script in Python to the
+Studio version"; the addon now refuses to start on non-Studio 21.1+ ([ayon-resolve 0.6.4][ayon-064]).
+Python 2 support is gone and 21.1 added about 20 scripting calls ([CineD][cined-211]); whether
+the free edition keeps Lua is not stated. 21.1.1 added async calls (Quick Export, transcription,
+scene-cut detection, Smart Reframe, subtitle creation) ([Digital Production][dp-2111]); 21.1.2
+followed on October 26 with unspecified "scripting API improvements" ([Newsshooter][ns-2112]). None of these notes document a removal or change of the calls this
 plugin uses (§2–§5, §8).
 
 So: **free edition up to 21.0.x, Studio for 21.1 and later.** What the free 21.1 edition does
