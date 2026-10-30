@@ -4,6 +4,10 @@ Method names, argument shapes and return conventions follow Blackmagic's scripti
 (see docs/RESOLVE_INTEGRATION.md). Knobs on the fakes reproduce the behaviours the plugin
 has to cope with: a subtitle append that ignores recordFrame, a template without a Text+
 node, a render that needs several polls, AppendToTimeline returning fewer items, ...
+
+``PROFILES`` describes the Resolve releases the plugin has to run on (product name, version,
+and which of those knobs each one needs); ``make_world(profile="21.1.2-studio")`` builds a
+world for one of them.
 """
 
 from __future__ import annotations
@@ -604,19 +608,66 @@ class FakeProjectManager:
 
 
 class FakeResolve:
-    def __init__(self, project: FakeProject, product="DaVinci Resolve", version="20.0.0.0023"):
+    def __init__(self, project: FakeProject, product="DaVinci Resolve", version="20.0.0.0023", python_gated=False):
         self.project = project
         self.product = product
         self.version = version
+        # knobs
+        self.python_gated = python_gated  # free 21.1+: the object exists but GetProjectManager() gives None
 
     def GetProjectManager(self):
+        if self.python_gated:
+            return None
         return FakeProjectManager(self.project)
 
     def GetProductName(self):
         return self.product
 
+    def GetVersion(self):
+        """``[major, minor, patch, build, suffix]``, e.g. ``[21, 1, 2, 5, ""]`` for ``"21.1.2.0005"``."""
+        numbers = [int(part) for part in self.version.split(".")[:4]]
+        return numbers + [0] * (4 - len(numbers)) + [""]
+
     def GetVersionString(self):
         return self.version
+
+
+@dataclass(frozen=True)
+class ResolveProfile:
+    """One Resolve release/edition as the plugin sees it (docs/RESOLVE_INTEGRATION.md)."""
+
+    name: str
+    product: str
+    version: str  # what GetVersionString() returns
+    has_mark_in_out_api: bool = True  # Timeline.GetMarkInOut (README v19+; early 19.0 builds may lack it)
+    python_gated: bool = False  # free edition 21.1+: Python scripts get no usable API
+
+    @property
+    def studio(self) -> bool:
+        return "Studio" in self.product
+
+    @property
+    def version_tuple(self) -> tuple:
+        return tuple(int(part) for part in self.version.split("."))
+
+
+_FREE, _STUDIO = "DaVinci Resolve", "DaVinci Resolve Studio"
+
+# 21.0.4's timeline-selection calls and 21.1.1's async APIs are not modelled: the plugin uses neither.
+PROFILES = {
+    profile.name: profile
+    for profile in (
+        ResolveProfile("19.0-free", _FREE, "19.0.0.0069", has_mark_in_out_api=False),
+        ResolveProfile("20.3-free", _FREE, "20.3.0.0023"),
+        ResolveProfile("20.3-studio", _STUDIO, "20.3.0.0023"),
+        ResolveProfile("21.0.4-free", _FREE, "21.0.4.0009"),
+        ResolveProfile("21.0.4-studio", _STUDIO, "21.0.4.0009"),
+        ResolveProfile("21.1.2-studio", _STUDIO, "21.1.2.0005"),
+        ResolveProfile("21.1.2-free", _FREE, "21.1.2.0005", python_gated=True),
+        ResolveProfile("22.0-studio", _STUDIO, "22.0.0.0001"),  # hypothetical, newer than tested
+        ResolveProfile("22.0-free", _FREE, "22.0.0.0001", python_gated=True),  # hypothetical
+    )
+}
 
 
 def make_media_pool(timeline: FakeTimeline) -> FakeMediaPool:
@@ -643,8 +694,20 @@ def make_media_pool(timeline: FakeTimeline) -> FakeMediaPool:
 
 
 def make_world(
-    frame_rate="24", start_timecode="01:00:00:00", drop_frame=False, product="DaVinci Resolve", **timeline_kwargs
+    frame_rate="24",
+    start_timecode="01:00:00:00",
+    drop_frame=False,
+    product=None,
+    profile: str | ResolveProfile | None = None,
+    **timeline_kwargs,
 ):
+    """A Resolve with one project, one timeline (footage on Video 1) and the template bins.
+    ``profile`` (a ``PROFILES`` key or a ``ResolveProfile``) sets the product, version and knobs;
+    explicit ``product`` / timeline knobs still win."""
+    if isinstance(profile, str):
+        profile = PROFILES[profile]
+    if profile is not None:
+        timeline_kwargs.setdefault("has_mark_in_out_api", profile.has_mark_in_out_api)
     timeline = FakeTimeline(
         frame_rate=frame_rate, start_timecode=start_timecode, drop_frame=drop_frame, **timeline_kwargs
     )
@@ -655,7 +718,11 @@ def make_world(
     )
     media_pool = make_media_pool(timeline)
     project = FakeProject(timeline, media_pool)
-    return FakeResolve(project, product=product)
+    if profile is None:
+        return FakeResolve(project, product=product or "DaVinci Resolve")
+    return FakeResolve(
+        project, product=product or profile.product, version=profile.version, python_gated=profile.python_gated
+    )
 
 
 def timecode(timeline: FakeTimeline, frame: int) -> str:

@@ -70,3 +70,6 @@ extra-standard-library = ["tomllib"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["resolve_plugin/src", "."]
+markers = [
+    "resolve_versions: the plugin against each modelled Resolve release/edition (tests/resolve/fake_resolve.PROFILES)",
+]
