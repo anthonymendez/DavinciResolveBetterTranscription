@@ -146,3 +146,18 @@ def test_choose_backend_auto_prefers_cuda_then_alternatives(monkeypatch):
     assert tr.choose_backend("mlx") == "mlx"
     with pytest.raises(ValueError):
         tr.choose_backend("nope")
+
+
+def test_faster_whisper_can_decode_a_wav_with_the_installed_pyav(tmp_path):
+    """The real decode path: PyAV 19 dropped av.open(metadata_errors=), which faster-whisper still passes."""
+    import wave
+
+    audio = pytest.importorskip("faster_whisper.audio")
+    path = tmp_path / "tone.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(48000)
+        handle.writeframes(b"\x00\x01" * 2 * 4800)  # 0.1 s
+    samples = audio.decode_audio(str(path), sampling_rate=16000)
+    assert abs(len(samples) - 1600) < 50

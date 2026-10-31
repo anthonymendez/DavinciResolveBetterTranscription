@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from better_captions import __version__
+
+# Windows without developer mode can't symlink; huggingface_hub then warns on every model load.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 
 def build_parser() -> argparse.ArgumentParser:

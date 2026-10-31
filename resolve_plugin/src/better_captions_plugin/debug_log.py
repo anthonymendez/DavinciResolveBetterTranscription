@@ -357,6 +357,8 @@ def render_diagnostics(project):
         try:
             fn = getattr(project, name)
         except Exception:
+            fn = None
+        if not callable(fn):  # Resolve answers None for calls this build doesn't have
             log.write("%s() is not available" % name)
             continue
         probe("%s()" % name, fn)
