@@ -15,66 +15,81 @@ caption tracks using templates from your media pool.
 
 ## Install
 
-There are two ways to install: straight from GitHub (nothing to download first), or from a
-copy of the project on your computer. Both run the same installer and give the same result.
+**Before you start:** you need DaVinci Resolve Studio, or the free edition up to 21.0.x
+(Resolve 21.1 made Python scripts Studio-only). See [Install details](#install-details) for
+everything the installer does.
 
-### From GitHub
+### Option A: from GitHub
 
-Installs the [latest release](https://github.com/anthonymendez/DavinciResolveBetterTranscription/releases/latest).
+1. Close DaVinci Resolve.
+2. Open a terminal: **PowerShell** on Windows, **Terminal** on macOS or Linux.
+3. Run the command for your OS:
 
-Windows (PowerShell):
+   Windows:
 
-    irm https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install.ps1 | iex
+       irm https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install.ps1 | iex
 
-macOS / Linux:
+   macOS / Linux:
 
-    curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install.sh | bash
+       curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install.sh | bash
 
-### From a local copy
+4. Accept the prompts (Windows may show one admin prompt to install Python).
+5. Start Resolve and open **Workspace > Scripts > Better Captions**.
 
-Use this to install a branch you have checked out, your own changes, or a project you
-downloaded as a zip (**Code > Download ZIP** on GitHub, then extract it). Point
-`BETTER_CAPTIONS_SOURCE` at the project folder (the one with `pyproject.toml`) and run the
-installer from it.
+This installs the [latest release](https://github.com/anthonymendez/DavinciResolveBetterTranscription/releases/latest).
 
-Windows (PowerShell; run it in Windows, not WSL, since Resolve is a Windows app):
+### Option B: from a local copy
 
-    cd D:\path\to\DavinciResolveBetterTranscription
-    $env:BETTER_CAPTIONS_SOURCE = (Get-Location).Path
-    powershell -ExecutionPolicy Bypass -File .\install\install.ps1
+For a clone, a branch with your own changes, or a zip from **Code > Download ZIP**.
 
-macOS / Linux:
+1. Close DaVinci Resolve.
+2. Get the project onto your computer: `git clone` it, or download the zip and extract it.
+3. Open a terminal in the project folder (the one with `pyproject.toml`). On Windows use
+   PowerShell in Windows, not WSL.
+4. Run the command for your OS:
 
-    cd /path/to/DavinciResolveBetterTranscription
-    BETTER_CAPTIONS_SOURCE="$PWD" bash install/install.sh
+   Windows:
 
-The installer copies the plugin from `resolve_plugin/Utility/better_captions_plugin.zip`, not
-from `resolve_plugin/src`. If you changed the plugin's code, rebuild the zip first with
-`uv run python resolve_plugin/build_plugin_zip.py`. After any change, re-run the same command
-to reinstall.
+       $env:BETTER_CAPTIONS_SOURCE = (Get-Location).Path
+       powershell -ExecutionPolicy Bypass -File .\install\install.ps1
 
-### Then
+   macOS / Linux:
 
-In Resolve: **Workspace > Scripts > Better Captions** (restart Resolve first if it was open).
+       BETTER_CAPTIONS_SOURCE="$PWD" bash install/install.sh
 
-The installer sets up [uv](https://docs.astral.sh/uv/) if missing, puts the
-engine in its own Python 3.12 venv in your user data dir, and copies the plugin
-into Resolve's `Scripts/Utility` folder. On Windows and Linux, if it finds an
-NVIDIA GPU it also installs the CUDA runtime (cuBLAS + cuDNN, about 1.5 GB) into
-the engine venv, so the GPU works without a separate CUDA install. Without one,
-the engine runs on the CPU. Run `better-captions doctor` (the installer prints
-the full command) to see what the engine detects, and see [docs/GPU.md](docs/GPU.md).
-Re-run the same command to upgrade.
+5. Start Resolve and open **Workspace > Scripts > Better Captions**.
 
-Requirements: the free edition of DaVinci Resolve up to 21.0.x, or DaVinci Resolve
-Studio. Resolve 21.1 moved Python scripting to Studio, so on the free edition of 21.1 and
-later the plugin cannot run (it says so if Resolve starts it at all; see
+Changed the plugin's code? Run `uv run python resolve_plugin/build_plugin_zip.py` before
+step 4: the installer copies the zip, not `resolve_plugin/src`.
+
+### Upgrade or uninstall
+
+- **Upgrade:** run the same install command again.
+- **Uninstall:** run `uninstall.ps1` / `uninstall.sh` the same way, e.g.
+  `curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/uninstall.sh | bash`
+  or, from a local copy, `powershell -ExecutionPolicy Bypass -File .\install\uninstall.ps1` /
+  `bash install/uninstall.sh`.
+
+### Install details
+
+**What the installer does.** It sets up [uv](https://docs.astral.sh/uv/) if missing, puts the
+engine in its own Python 3.12 venv in your user data dir, and copies the plugin (the launcher
+and `better_captions_plugin.zip`) into Resolve's `Scripts/Utility` folder. On Windows and
+Linux, if it finds an NVIDIA GPU it also installs the CUDA runtime (cuBLAS + cuDNN, about
+1.5 GB) into the engine venv, so the GPU works without a separate CUDA install; without one,
+the engine runs on the CPU. Run `better-captions doctor` (the installer prints the full
+command) to see what the engine detects, and see [docs/GPU.md](docs/GPU.md). The first run
+in Resolve downloads the speech models (several GB for `large-v3-turbo`).
+
+**Resolve edition.** The free edition of Resolve works up to 21.0.x. Resolve 21.1 moved
+Python scripting to Studio, so on the free edition of 21.1 and later the plugin cannot run
+(it says so if Resolve starts it at all; see
 [docs/RESOLVE_INTEGRATION.md](docs/RESOLVE_INTEGRATION.md) §9).
 
-Resolve runs the plugin with a system Python it finds by itself,
-a 64-bit Python 3.10–3.12 with tkinter. (The plugin's own code is tested on 3.10–3.14;
-whether Resolve 21 finds a 3.13 or newer install isn't confirmed yet.) If you already have
-one where Resolve looks, the installer uses it; otherwise:
+**Python for Resolve.** Resolve runs the plugin with a system Python it finds by itself: a
+64-bit Python 3.10–3.12 with tkinter. (The plugin's own code is tested on 3.10–3.14; whether
+Resolve 21 finds a 3.13 or newer install isn't confirmed yet.) If you already have one where
+Resolve looks, the installer uses it; otherwise:
 
 - Windows: installs Python 3.12 from python.org for all users (via winget when
   available). This is the only step that needs admin rights: Windows shows one
@@ -85,24 +100,19 @@ one where Resolve looks, the installer uses it; otherwise:
 - Linux: installs no system packages; it prints the command to run, e.g.
   `sudo apt-get install python3 python3-tk`.
 
-Restart Resolve after Python is installed.
+Restart Resolve after Python is installed, or the script won't show up in the menu.
 
-Options (environment variables):
+**Options** (environment variables, set before running the installer):
 
 - `BETTER_CAPTIONS_REF`: git branch, tag or commit to install. By default the
   installer picks the [latest release](https://github.com/anthonymendez/DavinciResolveBetterTranscription/releases/latest),
   falling back to `main` (with a warning) if there is none or GitHub's API can't
   be reached; set `BETTER_CAPTIONS_REF=main` for the development version
 - `BETTER_CAPTIONS_HOME`: install somewhere other than the default data dir
-- `BETTER_CAPTIONS_SOURCE`: install from a local copy instead of GitHub (see above)
+- `BETTER_CAPTIONS_SOURCE`: install from a local copy instead of GitHub (Option B)
 - `BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON=1`: skip the system Python check/install
 - `BETTER_CAPTIONS_GPU`: `auto` (default) installs the NVIDIA CUDA runtime only when
   an NVIDIA GPU is found, `cuda` always installs it, `none` never does
-
-To uninstall, run `install/uninstall.ps1` or `install/uninstall.sh` the same
-way: from GitHub (e.g. `curl -fsSL .../install/uninstall.sh | bash`), or from a local copy
-(`powershell -ExecutionPolicy Bypass -File .\install\uninstall.ps1` or
-`bash install/uninstall.sh`).
 
 ### API keys for LLM speaker naming
 
