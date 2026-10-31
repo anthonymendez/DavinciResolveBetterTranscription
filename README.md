@@ -40,8 +40,9 @@ later the plugin cannot run (it says so if Resolve starts it at all; see
 [docs/RESOLVE_INTEGRATION.md](docs/RESOLVE_INTEGRATION.md) §9).
 
 Resolve runs the plugin with a system Python it finds by itself,
-a 64-bit Python 3.10–3.12 with tkinter. If you already have one where Resolve
-looks, the installer uses it; otherwise:
+a 64-bit Python 3.10–3.12 with tkinter. (The plugin's own code is tested on 3.10–3.14;
+whether Resolve 21 finds a 3.13 or newer install isn't confirmed yet.) If you already have
+one where Resolve looks, the installer uses it; otherwise:
 
 - Windows: installs Python 3.12 from python.org for all users (via winget when
   available). This is the only step that needs admin rights: Windows shows one

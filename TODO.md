@@ -17,6 +17,3 @@
       and runs Better Captions, whether `resolve` is None or its calls return None, and that the
       "needs Studio" message shows (dialog or Console). On Studio 21.1.2, run the whole flow and
       check the progress log's first line reads `Resolve: DaVinci Resolve Studio 21.1.2`.
-- [ ] **Turn on brindle's pre-merge checks.** Add to `.brindle/config.json`:
-      `"checks": ["uv run pytest -q"]`
-      so every worker branch runs the full suite before it merges.

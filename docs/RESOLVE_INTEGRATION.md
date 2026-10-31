@@ -60,7 +60,9 @@ Per OS, what Resolve looks for:
 | Linux | `python3` on PATH (`/usr/bin/python3`), 64-bit. | distro package `python3-tk` |
 
 Versions: README says ≥ 3.6; community experience is that 3.10–3.12 work on 19/20 and
-3.13 only on recent builds ([wildlion][wildlion], [forum t=221552][forum-tp2srt]).
+3.13 only on recent builds ([wildlion][wildlion], [forum t=221552][forum-tp2srt]). The
+plugin itself is stdlib-only and CI runs its tests on 3.10–3.14 (`plugin` job), so the limit
+is what Resolve detects, not the code.
 After installing Python, Resolve must be restarted to pick the script up. The installers
 already copy `resolve_plugin/Utility/*` (the launcher and the zip).
 
