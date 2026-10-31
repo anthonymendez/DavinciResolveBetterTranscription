@@ -207,6 +207,13 @@ what it found under `naming_clis`. Optional `config.json` settings:
 | `claude_cli_model`, `antigravity_cli_model` | model to ask for (`--model`); claude defaults to `haiku` |
 | `naming_cli_timeout` | seconds before giving up (default 120) |
 
+When the timeline has two or more audio tracks, the plugin asks which ones to
+transcribe. Only those are rendered, and your tracks are switched back as they
+were afterwards. If the timeline audio hasn't changed since the last run, the
+previous render (kept in `<data>/renders`) is reused. Set `"force_rerender": true`
+in `config.json` to always render again. The progress window lists the steps
+left and has a Pause button.
+
 ## How it works
 
 The plugin has two halves. The **Resolve plugin** runs inside Resolve and only
