@@ -31,6 +31,7 @@ from better_captions_plugin import (
     compat,
     debug_log,
     engine_runner,
+    model_picker,
     planning,
     render_cache,
     resolve_io,
@@ -220,6 +221,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
     outcome.work_dir = work_dir or tempfile.mkdtemp(prefix="better-captions-")
     audio_dir = os.path.join(outcome.work_dir, "audio")
     out_dir = os.path.join(outcome.work_dir, "out")
+    choose_model(backend, config, outcome)
     picked = choose_audio_tracks(backend, timeline, timeline_name, config, outcome)
 
     progress = backend.progress("%s – %s" % (TITLE, timeline_name))
@@ -340,6 +342,23 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
         progress.close()
     outcome.kept_work_dir = bool(outcome.subtitle_fallbacks) or bool(config.get("keep_work_dir"))
     backend.message(TITLE, debug_log.with_path(outcome.summary()))
+
+
+def choose_model(backend, config: dict, outcome: Outcome) -> str:
+    """Ask which transcription model to use (the one in config.json is preselected) and remember the
+    choice as config "model", which ``engine_command`` passes to the engine. Cancelling cancels the run."""
+    current = model_picker.current_model(config)
+    chosen = backend.pick_model(model_picker.catalog(current), current)
+    debug_log.note("Model picked: %r (was %r)" % (chosen, current))
+    if chosen is None:
+        raise Cancelled()
+    if chosen != current:  # picking what the engine would use anyway leaves config.json alone
+        try:
+            config_mod.save_settings(config, {"model": chosen})
+        except (OSError, config_mod.ConfigError) as exc:
+            config["model"] = chosen  # still used for this run
+            outcome.warnings.append("Could not save your model choice to the config file: %s" % exc)
+    return chosen
 
 
 def choose_audio_tracks(backend, timeline, timeline_name, config: dict, outcome: Outcome):

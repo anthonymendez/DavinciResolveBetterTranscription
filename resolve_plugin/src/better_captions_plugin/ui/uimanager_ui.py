@@ -164,6 +164,11 @@ class UIManagerBackend(Backend):
 
         return track_picker.pick_audio_tracks_uimanager(None, self.ui, self.disp, tracks, preselected)
 
+    def pick_model(self, models, current: str) -> str | None:
+        from better_captions_plugin import model_picker
+
+        return model_picker.pick_model_uimanager(None, self.ui, self.disp, models, current)
+
     def message(self, title: str, text: str):
         ui, disp = self.ui, self.disp
         window = disp.AddWindow(

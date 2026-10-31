@@ -173,6 +173,11 @@ class Backend:
         """The audio tracks to render (``tracks`` as ``resolve_io.audio_tracks`` gives them); None cancels."""
         return list(preselected)
 
+    def pick_model(self, models, current: str) -> str | None:
+        """The transcription model to use (``models`` as ``model_picker.catalog`` gives them, ``current`` the
+        model preselected); its name, or None to cancel."""
+        return current
+
     def message(self, title: str, text: str):
         raise NotImplementedError
 

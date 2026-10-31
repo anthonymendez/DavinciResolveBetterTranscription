@@ -172,6 +172,11 @@ class TkBackend(Backend):
 
         return track_picker.pick_audio_tracks_tk(self.root, tracks, preselected)
 
+    def pick_model(self, models, current: str) -> str | None:
+        from better_captions_plugin import model_picker
+
+        return model_picker.pick_model_tk(self.root, models, current)
+
     def review(self, request: ReviewRequest) -> ReviewResult | None:
         dialog = _ReviewDialog(self.root, request)
         return dialog.run()
