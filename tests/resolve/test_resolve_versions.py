@@ -120,13 +120,16 @@ def test_render_audio_per_profile(name, marks, tmp_path):
     start, end = marks or (86400, None)
     wav = resolve_io.render_audio(project, project.timeline, str(tmp_path), start, end, sleep=lambda s: None)
     assert os.path.isfile(wav) and wav.endswith(".wav")
-    settings = project.render_settings
+    settings = project.last_job["settings"]
     assert settings["ExportVideo"] is False and settings["ExportAudio"] is True
+    # 21.1+ asks for WAV with AudioFormat; older builds reject that key and rely on the Audio Only preset.
+    assert ("AudioFormat" in settings) is PROFILES[name].audio_render_api
     if marks:
         assert settings["SelectAllFrames"] is False and (settings["MarkIn"], settings["MarkOut"]) == marks
     else:
         assert settings["SelectAllFrames"] is True and "MarkIn" not in settings
-    assert project.render_format == ("Wave", "LinearPCM") and project.render_mode == 0
+    assert project.last_job["format"] == ("wav", "")  # the Audio Only preset's format
+    assert project.render_format == ("mov", "H264") and project.render_mode == 0  # the user's, restored
     assert project.jobs == {} and project.deleted_jobs == ["job-1"]
 
 
@@ -166,7 +169,7 @@ def test_full_flow_textplus_tracks_with_in_out_marks(name, config):
     assert outcome.error is None and backend.errors == [], backend.errors
     # 19.0 builds without GetMarkInOut caption the whole timeline instead of the marked range.
     origin = mark_in if PROFILES[name].has_mark_in_out_api else tl.start_frame
-    settings = resolve.project.render_settings
+    settings = resolve.project.last_job["settings"]
     if PROFILES[name].has_mark_in_out_api:
         assert (settings["MarkIn"], settings["MarkOut"]) == (mark_in, mark_out)
     else:

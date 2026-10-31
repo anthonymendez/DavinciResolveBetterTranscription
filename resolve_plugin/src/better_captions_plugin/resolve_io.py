@@ -7,7 +7,6 @@ and verifies their effect.
 
 from __future__ import annotations
 
-import glob
 import os
 import time
 from dataclasses import dataclass, field, replace
@@ -151,6 +150,13 @@ def existing_track_names(timeline, track_type: str) -> list[str]:
 # Audio render
 
 
+# Stock render preset that sets up an audio-only WAV render. Its name is localised on non-English
+# installs, so any preset with "audio" in its name is tried after it.
+AUDIO_ONLY_PRESET = "Audio Only"
+# What the engine can decode (soundfile); a render that comes out as anything else is reported.
+AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff", ".flac")
+
+
 def render_audio(
     project,
     timeline,
@@ -162,15 +168,14 @@ def render_audio(
     timeout: float = 6 * 3600,
     sleep=time.sleep,
 ) -> str:
-    """Render the timeline's audio (whole, or ``start_frame``..``end_frame``) as a WAV; return its path."""
-    fmt, codec = pick_wav_format(project)
-    previous_mode = None
-    try:
-        previous_mode = project.GetCurrentRenderMode()
-    except Exception:
-        pass
-    if not project.SetCurrentRenderFormatAndCodec(fmt, codec):
-        raise ResolveError("could not select the %s / %s render format" % (fmt, codec))
+    """Render the timeline's audio (whole, or ``start_frame``..``end_frame``) as a WAV; return its path.
+
+    Resolve's Wave format exposes no codecs, so ``SetCurrentRenderFormatAndCodec("wav", ...)`` is
+    rejected on 19.1-21.0 (docs/RESOLVE_INTEGRATION.md §5): the "Audio Only" preset sets up the
+    render, and on 21.1+ the ``AudioFormat`` render setting asks for WAV directly."""
+    previous_mode = _try(project.GetCurrentRenderMode)
+    previous_format = _try(project.GetCurrentRenderFormatAndCodec)
+    how = select_audio_render(project)
     try:
         project.SetCurrentRenderMode(1)  # single clip
     except Exception:
@@ -187,14 +192,17 @@ def render_audio(
     if end_frame is not None:
         settings["MarkIn"] = int(start_frame)
         settings["MarkOut"] = int(end_frame)
-    if not project.SetRenderSettings(settings):
-        raise ResolveError("Resolve rejected the audio render settings")
-    job = project.AddRenderJob()
-    if not job:
-        raise ResolveError("could not add the audio render job")
+    job = None
     try:
+        apply_audio_settings(project, settings, how)
+        job = project.AddRenderJob()
+        if not job:
+            raise ResolveError("could not add the audio render job")
+        # StartRendering sometimes returns False and leaves the job Ready (seen on 21.1): retry once.
         if not project.StartRendering([job]):
-            raise ResolveError("could not start the audio render")
+            sleep(0.5)
+            if not project.StartRendering([job]):
+                raise ResolveError("could not start the audio render")
         deadline = time.time() + timeout
         while project.IsRenderingInProgress():
             if pump:
@@ -217,47 +225,126 @@ def render_audio(
         if state and state not in ("complete", "completed", "done"):
             raise ResolveError("the audio render ended with status %r" % status.get("JobStatus"))
     finally:
-        try:
-            project.DeleteRenderJob(job)
-        except Exception:
-            pass
-        if previous_mode is not None:
+        if job:
             try:
-                project.SetCurrentRenderMode(previous_mode)
+                project.DeleteRenderJob(job)
             except Exception:
                 pass
-    candidates = [p for p in glob.glob(os.path.join(out_dir, "*.wav")) if name in os.path.basename(p)]
-    candidates = candidates or glob.glob(os.path.join(out_dir, "*.wav"))
-    if not candidates:
-        raise ResolveError("the render finished but no WAV appeared in %s" % out_dir)
-    return max(candidates, key=os.path.getmtime)
+        restore_render_state(project, previous_format, previous_mode)
+    return find_rendered_audio(out_dir, name)
 
 
-def pick_wav_format(project) -> tuple[str, str]:
-    formats = project.GetRenderFormats() or {}
-    fmt = None
-    for key, ext in formats.items():
+def select_audio_render(project) -> str:
+    """Put the Deliver page's render on audio-only WAV as far as this Resolve allows. Returns how:
+    "preset" (an audio preset loaded), "format" (a ("wav", codec) pair was accepted) or "settings"
+    (neither; ``apply_audio_settings``'s ``AudioFormat`` has to do it, which needs 21.1+)."""
+    for preset in _audio_presets(project):
+        if _try(lambda preset=preset: project.LoadRenderPreset(preset)):
+            return "preset"
+    ext = _wav_extension(project)
+    for codec in _wav_codecs(project, ext):
+        if _try(lambda codec=codec: project.SetCurrentRenderFormatAndCodec(ext, codec)):
+            return "format"
+    return "settings"
+
+
+def apply_audio_settings(project, settings: dict, how: str):
+    """``SetRenderSettings`` with the WAV/LPCM audio keys, dropping the keys an older Resolve rejects
+    (``AudioFormat`` is 21.1+)."""
+    codec = _audio_codec_token(project)
+    audio = {"AudioCodec": codec, "AudioBitDepth": 16, "AudioSampleRate": 48000}
+    attempts = [dict(settings, AudioFormat="wav", **audio)]
+    if how != "settings":  # without a preset or format, only AudioFormat makes the render a WAV
+        attempts += [dict(settings, **audio), dict(settings)]
+    for attempt in attempts:
+        if project.SetRenderSettings(attempt):
+            return
+    if how == "settings":
+        raise ResolveError(
+            "this Resolve would not set up an audio-only WAV render: the %r preset is missing and the Wave "
+            "format exposes no codec. On the Deliver page, check that the Audio Only preset exists." % AUDIO_ONLY_PRESET
+        )
+    raise ResolveError("Resolve rejected the audio render settings")
+
+
+def restore_render_state(project, previous_format, previous_mode):
+    """Put back the render format/codec and mode the user had. The audio-only state layers onto later
+    renders otherwise (an .mp4 job after an Audio Only render came out audio-only)."""
+    fmt, codec = (
+        (previous_format.get("format"), previous_format.get("codec"))
+        if isinstance(previous_format, dict)
+        else (None, None)
+    )
+    if fmt and codec and _try(lambda: project.SetCurrentRenderFormatAndCodec(fmt, codec)):
+        _try(lambda: project.SetRenderSettings({"ExportVideo": True, "ExportAudio": True}))
+    if previous_mode is not None:
+        _try(lambda: project.SetCurrentRenderMode(previous_mode))
+
+
+def find_rendered_audio(out_dir: str, name: str) -> str:
+    """The rendered file, found by its ``CustomName`` stem with any extension (presets may pick the
+    container; a per-channel render adds suffixes)."""
+    try:
+        files = [os.path.join(out_dir, f) for f in os.listdir(out_dir) if f.startswith(name)]
+    except OSError:
+        files = []
+    audio = [f for f in files if os.path.splitext(f)[1].lower() in AUDIO_EXTENSIONS]
+    if audio:
+        return sorted(audio)[0]
+    if files:
+        raise ResolveError(
+            "Resolve rendered %s, not a WAV; set the Audio Only preset on the Deliver page to Wave / Linear PCM"
+            % ", ".join(os.path.basename(f) for f in sorted(files))
+        )
+    raise ResolveError("the render finished but no audio file appeared in %s" % out_dir)
+
+
+def _try(fn, default=None):
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def _audio_presets(project) -> list:
+    names = [AUDIO_ONLY_PRESET]
+    for entry in _try(project.GetRenderPresetList) or []:
+        if isinstance(entry, dict):  # some builds return preset info tables
+            entry = entry.get("PresetName") or entry.get("Name") or entry.get("name") or ""
+        entry = str(entry)
+        if "audio" in entry.lower() and entry not in names:
+            names.append(entry)
+    return names
+
+
+def _wav_extension(project) -> str:
+    """The Wave format's extension: what the codec calls take (not the "Wave" name)."""
+    for ext in (_try(project.GetRenderFormats) or {}).values():
         if str(ext).lower().lstrip(".") == "wav":
-            fmt = key
+            return str(ext).lstrip(".")
+    return "wav"
+
+
+def _wav_codecs(project, ext) -> list:
+    codecs = {}
+    for getter in ("GetAudioRenderCodecs", "GetRenderCodecs"):  # the first is 21.1+
+        method = getattr(project, getter, None)
+        if method is not None:
+            codecs = _try(lambda method=method: method(ext)) or {}
+        if codecs:
             break
-    if fmt is None:
-        for key in formats:
-            if "wav" in str(key).lower():
-                fmt = key
-                break
-    if fmt is None:
-        raise ResolveError("this Resolve offers no WAV render format (formats: %s)" % ", ".join(map(str, formats)))
-    codecs = project.GetRenderCodecs(fmt) or {}
-    codec = None
+    values = [str(v) for _description, v in sorted(codecs.items(), key=lambda kv: "pcm" not in str(kv).lower())]
+    return values + [v for v in ("lpcm", "LinearPCM") if v not in values]
+
+
+def _audio_codec_token(project) -> str:
+    """The LPCM codec name for the ``AudioCodec`` setting: from 21.1's GetAudioRenderCodecs, else "lpcm"."""
+    method = getattr(project, "GetAudioRenderCodecs", None)
+    codecs = (_try(lambda: method("wav")) if method is not None else None) or {}
     for description, value in codecs.items():
         if "pcm" in str(description).lower() or "pcm" in str(value).lower():
-            codec = value
-            break
-    if codec is None and codecs:
-        codec = next(iter(codecs.values()))
-    if codec is None:
-        raise ResolveError("no audio codec available for the %s render format" % fmt)
-    return fmt, codec
+            return str(value)
+    return "lpcm"
 
 
 # ---------------------------------------------------------------------------

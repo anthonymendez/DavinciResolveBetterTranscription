@@ -152,15 +152,40 @@ comp.FindToolByID("TextPlus").SetInput("StyledText", text)   # fallback: comp.Ge
 
 ## 5. Rendering the audio
 
-`project.GetRenderFormats()` → the format whose extension is `wav`; `GetRenderCodecs(fmt)`
-→ the codec whose description/name contains "pcm"; `SetCurrentRenderFormatAndCodec`,
-`SetCurrentRenderMode(1)` (single clip), `SetRenderSettings({"TargetDir", "CustomName",
-"ExportVideo": False, "ExportAudio": True, "SelectAllFrames" or "MarkIn"/"MarkOut"})`,
-`AddRenderJob()`, `StartRendering([job])`, poll `IsRenderingInProgress()` while pumping the
-UI, check `GetRenderJobStatus(job)["JobStatus"]`, `DeleteRenderJob(job)`, restore the render
-mode. All documented in the README ([X-Raym gist][xraym-gist]). Side effect: the Deliver
-page's current render settings are changed (format/codec/paths); render presets are not.
-The WAV goes to a temp dir that is deleted unless the subtitle fallback needs the SRTs.
+**What doesn't work.** `GetRenderFormats()` returns `{name: extension}` (`"Wave": "wav"`), and
+`GetRenderCodecs` / `SetCurrentRenderFormatAndCodec` take the *extension*: the 21.1 stub names
+the parameter `renderFormatFileExtension`, and `GetRenderCodecs("QuickTime")` returns `{}` where
+`"mov"` returns the codecs ([mcp #59][mcp-59]). Even with `"wav"`, Wave exposes no codecs and
+every `("wav", codec)` pair is rejected, measured on Studio 19.1.3.7, 21.0.3.7 and 21.0.4.5
+([mcp api-limitations][mcp-limits], [resolve-mcp #32][rmcp-32]). The plugin's first version
+passed `"Wave"`, and a real Resolve stopped it with "no audio codec available for the Wave
+render format".
+
+**What the plugin does** (`resolve_io.render_audio`), the sequence AutoSubs and
+davinci-resolve-mcp use ([AutoSubs core][autosubs-core], [mcp live 21.1 test][mcp-live]):
+
+1. Remember `GetCurrentRenderFormatAndCodec()` and `GetCurrentRenderMode()`.
+2. `LoadRenderPreset("Audio Only")`, else any preset from `GetRenderPresetList()` with "audio" in
+   its name (the stock name is localised). Failing that, `SetCurrentRenderFormatAndCodec("wav",
+   codec)` with the codecs from `GetAudioRenderCodecs("wav")` (21.1+) or `GetRenderCodecs("wav")`,
+   then `"lpcm"` / `"LinearPCM"`.
+3. `SetCurrentRenderMode(1)`, then `SetRenderSettings` with `TargetDir`, `CustomName`,
+   `ExportVideo: False`, `ExportAudio: True`, `SelectAllFrames` or `MarkIn`/`MarkOut`, plus
+   `AudioFormat: "wav"` (21.1+), `AudioCodec: "lpcm"`, `AudioBitDepth: 16`, `AudioSampleRate:
+   48000`. If that returns False, it is retried without `AudioFormat`, then without the audio
+   keys. With no preset and no accepted format, only `AudioFormat` can make the render a WAV,
+   so then a refusal is reported (check that the Audio Only preset exists).
+4. `AddRenderJob()`, `StartRendering([job])` (retried once: on 21.1 it sometimes returns False
+   and leaves the job Ready, [mcp #207][mcp-207]), poll `IsRenderingInProgress()` while pumping
+   the UI, check `GetRenderJobStatus(job)["JobStatus"]`, `DeleteRenderJob(job)`.
+5. Restore the format/codec (with `ExportVideo: True`) and the render mode: settings layer
+   onto the current state, so a later video render would otherwise come out audio-only.
+6. Find the output by its `CustomName` stem with any extension. `.wav`/`.aif(f)`/`.flac` are
+   used; anything else (for example an Audio Only preset left on MXF) is reported by name.
+
+Side effect: the Deliver page's current preset state is changed (paths, audio settings);
+saved render presets are not. The WAV goes to a temp dir that is deleted unless the subtitle
+fallback needs the SRTs.
 
 ## 6. Engine subprocess
 
@@ -332,7 +357,8 @@ Studio 21.1.x, and whether the plugin's calls behave the same on Studio 21.1.2.
 2. Placed Text+ clip durations (§3 quirk) and that `FindToolByID("TextPlus")` finds the
    node in user templates (nested macros may need `GetToolList`).
 3. `GetMarkInOut()` shape on 19.0 (older builds may lack it; handled).
-4. The exact format/codec names for WAV on each OS (`Wave` / `Linear PCM` expected).
+4. The audio render (§5) on 21.1.2: that the Audio Only preset loads and `AudioFormat: "wav"` is
+   accepted, the output is one `.wav`, and the user's render format is restored afterwards.
 5. tkinter dialogs appearing in front of Resolve's window (topmost is requested).
 6. The UIManager "Fix speakers" window (§7): `ui.Tree` selection (`SelectionMode`
    `"ExtendedSelection"`, `SelectedItems()` returning a 1-based table), `ItemClicked`'s
@@ -374,3 +400,9 @@ Studio 21.1.x, and whether the plugin's calls behave the same on Studio 21.1.2.
 [cined-211]: https://www.cined.com/davinci-resolve-21-1-released-ai-assistant-integration-via-mcp-individual-hdr-trims-and-python-scripting-moves-to-studio/
 [dp-2111]: https://digitalproduction.com/2026/10/06/davinci-resolve-21-1-1/
 [ns-2112]: https://www.newsshooter.com/2026/10/26/davinci-resolve-21-1-2/
+[mcp-59]: https://github.com/samuelgursky/davinci-resolve-mcp/issues/59
+[mcp-limits]: https://github.com/samuelgursky/davinci-resolve-mcp/blob/main/docs/reference/api-limitations.md
+[mcp-live]: https://github.com/samuelgursky/davinci-resolve-mcp/blob/main/tests/live_resolve211_normalization.py
+[mcp-207]: https://github.com/samuelgursky/davinci-resolve-mcp/issues/207
+[rmcp-32]: https://github.com/danielbaldwin47/resolve-mcp/issues/32
+[autosubs-core]: https://github.com/tmoroney/auto-subs/blob/main/AutoSubs-App/src-tauri/resources/modules/autosubs_core.lua

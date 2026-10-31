@@ -85,68 +85,114 @@ def test_render_range_uses_in_out_marks_when_set():
 # -- render
 
 
-def test_render_audio_writes_wav_with_audio_only_settings(tmp_path):
-    resolve = make_world()
-    project = resolve.project
+def _render(project, tmp_path, start=86400, end=None, **kwargs):
+    kwargs.setdefault("sleep", lambda s: None)
+    return resolve_io.render_audio(project, project.timeline, str(tmp_path / "audio"), start, end, **kwargs)
+
+
+def test_render_audio_uses_the_audio_only_preset_and_restores_the_render(tmp_path):
+    """Real Resolve: Wave has no codecs, so the preset sets the render up (not SetCurrentRenderFormatAndCodec)."""
+    project = make_world().project
     pumps = []
-    wav = resolve_io.render_audio(
-        project,
-        project.timeline,
-        str(tmp_path / "audio"),
-        86400,
-        None,
-        pump=lambda: pumps.append(1),
-        sleep=lambda s: None,
-    )
-    assert os.path.isfile(wav) and wav.endswith(".wav")
-    assert pumps
-    settings = project.jobs or {}
-    assert not settings  # job deleted afterwards
-    assert project.deleted_jobs == ["job-1"]
-    assert project.render_settings["ExportVideo"] is False
-    assert project.render_settings["ExportAudio"] is True
-    assert project.render_settings["SelectAllFrames"] is True
-    assert "MarkIn" not in project.render_settings
-    assert project.render_format == ("Wave", "LinearPCM")
-    assert project.render_mode == 0  # restored
+    wav = _render(project, tmp_path, pump=lambda: pumps.append(1))
+    assert os.path.isfile(wav) and wav.endswith(".wav") and pumps
+    job = project.last_job
+    assert job["format"] == ("wav", "")  # what the Audio Only preset selects
+    settings = job["settings"]
+    assert settings["ExportVideo"] is False and settings["ExportAudio"] is True
+    assert settings["SelectAllFrames"] is True and "MarkIn" not in settings
+    assert settings["AudioCodec"] == "lpcm" and "AudioFormat" not in settings  # pre-21.1 rejects AudioFormat
+    assert any("AudioFormat" in call for call in project.settings_calls)  # ... but it was tried first
+    assert project.jobs == {} and project.deleted_jobs == ["job-1"]
+    # The user's render is put back: format/codec, video export, mode.
+    assert project.render_format == ("mov", "H264")
+    assert project.render_settings["ExportVideo"] is True and project.render_mode == 0
+
+
+def test_render_audio_on_21_1_asks_for_wav_directly(tmp_path):
+    project = make_world().project
+    project.audio_render_api = True
+    project.presets = []  # even without the preset
+    wav = _render(project, tmp_path)
+    assert wav.endswith(".wav")
+    settings = project.last_job["settings"]
+    assert settings["AudioFormat"] == "wav" and settings["AudioCodec"] == "lpcm"
 
 
 def test_render_audio_with_range_sets_marks(tmp_path):
     project = make_world().project
-    resolve_io.render_audio(project, project.timeline, str(tmp_path), 86500, 86700, sleep=lambda s: None)
-    assert project.render_settings["SelectAllFrames"] is False
-    assert (project.render_settings["MarkIn"], project.render_settings["MarkOut"]) == (86500, 86700)
+    _render(project, tmp_path, 86500, 86700)
+    settings = project.last_job["settings"]
+    assert settings["SelectAllFrames"] is False
+    assert (settings["MarkIn"], settings["MarkOut"]) == (86500, 86700)
+
+
+def test_render_audio_finds_a_localised_audio_preset(tmp_path):
+    project = make_world().project
+    project.presets = ["H.264 Master", "Solo audio"]
+    assert _render(project, tmp_path).endswith(".wav")
+    assert project.last_job["format"] == ("wav", "")
+
+
+def test_render_audio_without_any_way_to_get_a_wav_says_so(tmp_path):
+    project = make_world().project
+    project.presets = ["H.264 Master"]  # no audio preset, no 21.1 audio API, Wave takes no codec
+    with pytest.raises(ResolveError, match="Audio Only"):
+        _render(project, tmp_path)
+    assert project.jobs == {} and project.render_format == ("mov", "H264")
+
+
+def test_render_audio_reports_a_non_wav_render(tmp_path):
+    project = make_world().project
+    original = project.LoadRenderPreset
+
+    def load_preset_as_mxf(name):
+        ok = original(name)
+        project.render_format = ("mxf", "")  # e.g. a preset left on MXF OP-Atom
+        return ok
+
+    project.formats["MXF OP-Atom"] = "mxf"
+    project.LoadRenderPreset = load_preset_as_mxf
+    with pytest.raises(ResolveError, match=r"\.mxf, not a WAV"):
+        _render(project, tmp_path)
+
+
+def test_render_audio_retries_a_start_that_did_not_take(tmp_path):
+    project = make_world().project
+    project.start_failures = 1
+    assert _render(project, tmp_path).endswith(".wav")
+    project = make_world().project
+    project.start_failures = 2
+    with pytest.raises(ResolveError, match="could not start"):
+        _render(project, tmp_path)
+    assert project.deleted_jobs == ["job-1"]
 
 
 def test_render_audio_failures(tmp_path):
     project = make_world().project
     project.fail_render = True
     with pytest.raises(ResolveError, match="Failed"):
-        resolve_io.render_audio(project, project.timeline, str(tmp_path), 0, None, sleep=lambda s: None)
-    project = make_world().project
-    project.formats = {"QuickTime": "mov"}
-    with pytest.raises(ResolveError, match="WAV"):
-        resolve_io.render_audio(project, project.timeline, str(tmp_path), 0, None, sleep=lambda s: None)
+        _render(project, tmp_path)
+    assert project.render_format == ("mov", "H264")
 
 
 def test_render_audio_cancel(tmp_path):
     project = make_world().project
     project.polls_until_done = 50
     with pytest.raises(ResolveError, match="cancelled"):
-        resolve_io.render_audio(
-            project, project.timeline, str(tmp_path), 0, None, should_cancel=lambda: True, sleep=lambda s: None
-        )
+        _render(project, tmp_path, should_cancel=lambda: True)
     assert project.deleted_jobs == ["job-1"]
 
 
-def test_pick_wav_format_matches_by_extension_then_name():
+def test_wav_codecs_use_the_extension_and_prefer_pcm():
     project = make_world().project
-    project.formats = {"WAVE AUDIO": ".WAV", "MP4": "mp4"}
-    project.codecs = {"WAVE AUDIO": {"AAC": "aac", "Linear PCM 16": "lpcm16", "24-bit": "lpcm24"}}
-    assert resolve_io.pick_wav_format(project) == ("WAVE AUDIO", "lpcm16")
-    project.formats = {"Wav thing": "weird"}
-    project.codecs = {"Wav thing": {"Only": "x"}}
-    assert resolve_io.pick_wav_format(project) == ("Wav thing", "x")
+    project.formats = {"WAVE AUDIO": ".WAV"}
+    project.codecs = {"WAV": {"AAC": "aac", "Linear PCM 16": "lpcm16"}}
+    ext = resolve_io._wav_extension(project)
+    assert ext == "WAV"
+    assert resolve_io._wav_codecs(project, ext)[:2] == ["lpcm16", "aac"]
+    project.codecs = {}
+    assert resolve_io._wav_codecs(project, "wav") == ["lpcm", "LinearPCM"]
 
 
 # -- media pool

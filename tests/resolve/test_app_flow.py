@@ -47,10 +47,8 @@ def test_full_flow_subtitle_tracks_with_renamed_speakers(config):
     assert any("not json: model loaded" in line for line in view.lines)
     assert view.progress[-1] == 100
     # The engine was invoked per the contract with the rendered WAV and the user's settings.
-    assert (
-        resolve.project.render_settings["ExportAudio"] is True
-        and resolve.project.render_settings["ExportVideo"] is False
-    )
+    rendered = resolve.project.last_job["settings"]
+    assert rendered["ExportAudio"] is True and rendered["ExportVideo"] is False
     engine_line = next(line for line in view.lines if line.startswith("Engine: "))
     assert "--model fake-model --naming heuristic" in engine_line and ".wav --out" in engine_line
     # The review dialog got the engine's name guess, cue counts, samples and the templates from all bins.
@@ -87,7 +85,7 @@ def test_full_flow_textplus_tracks_on_drop_frame_timeline_with_in_out_range(conf
     outcome = _run(resolve, backend, config)
 
     assert outcome.error is None, backend.errors
-    assert (resolve.project.render_settings["MarkIn"], resolve.project.render_settings["MarkOut"]) == (
+    assert (resolve.project.last_job["settings"]["MarkIn"], resolve.project.last_job["settings"]["MarkOut"]) == (
         mark_in,
         mark_out,
     )

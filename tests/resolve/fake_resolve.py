@@ -503,11 +503,19 @@ class FakeProject:
         self.name = name
         self.timeline = timeline
         self.media_pool = media_pool or FakeMediaPool(timeline)
+        # As measured on real Resolve (docs/RESOLVE_INTEGRATION.md §5): formats map name -> extension,
+        # the codec calls take the extension, and Wave exposes no codecs, so no ("wav", codec) is accepted.
         self.formats = {"QuickTime": "mov", "MP4": "mp4", "Wave": "wav"}
-        self.codecs = {"Wave": {"Linear PCM": "LinearPCM"}, "QuickTime": {"H.264": "H264"}, "MP4": {"H.264": "H264"}}
-        self.render_format = ("QuickTime", "H264")
+        self.codecs = {"mov": {"H.264": "H264", "Apple ProRes 422": "ProRes422"}, "mp4": {"H.264": "H264"}}
+        self.presets = ["Audio Only", "H.264 Master", "YouTube - 1080p"]  # stock presets ("Audio Only" is localised)
+        # 21.1+: GetAudioRenderFormats / GetAudioRenderCodecs and the "AudioFormat" render setting.
+        self.audio_render_api = False
+        self.render_format = ("mov", "H264")
         self.render_mode = 0
         self.render_settings = {}
+        self.settings_calls = []  # every SetRenderSettings dict, accepted or not
+        self.start_failures = 0  # StartRendering returns False this many times first (seen on 21.1)
+        self.last_job = None  # the most recent job as added, kept after DeleteRenderJob
         self.jobs = {}
         self.polls_until_done = 2
         self._rendering = 0
@@ -531,14 +539,38 @@ class FakeProject:
     def GetRenderFormats(self):
         return dict(self.formats)
 
-    def GetRenderCodecs(self, fmt):
-        return dict(self.codecs.get(fmt, {}))
+    def GetRenderCodecs(self, ext):
+        return dict(self.codecs.get(ext, {}))
 
-    def SetCurrentRenderFormatAndCodec(self, fmt, codec):
-        if fmt not in self.formats or codec not in self.codecs.get(fmt, {}).values():
+    def SetCurrentRenderFormatAndCodec(self, ext, codec):
+        if ext not in self.formats.values() or codec not in self.codecs.get(ext, {}).values():
             return False
-        self.render_format = (fmt, codec)
+        self.render_format = (ext, codec)
         return True
+
+    def GetCurrentRenderFormatAndCodec(self):
+        return {"format": self.render_format[0], "codec": self.render_format[1]}
+
+    def GetRenderPresetList(self):
+        return list(self.presets)
+
+    def LoadRenderPreset(self, name):
+        if name not in self.presets:
+            return False
+        if "audio" in name.lower():
+            self.render_format = ("wav", "")
+            self.render_settings.update({"ExportVideo": False, "ExportAudio": True})
+        else:
+            self.render_format = ("mp4", "H264")
+            self.render_settings.update({"ExportVideo": True, "ExportAudio": True})
+        return True
+
+    def __getattr__(self, name):
+        if name in ("GetAudioRenderFormats", "GetAudioRenderCodecs") and self.audio_render_api:
+            if name == "GetAudioRenderFormats":
+                return lambda: {"Wave": "wav", "QuickTime": "mov"}
+            return lambda ext: {"Linear PCM": "lpcm"} if ext == "wav" else {"AAC": "aac"}
+        raise AttributeError(name)
 
     def GetCurrentRenderMode(self):
         return self.render_mode
@@ -548,15 +580,22 @@ class FakeProject:
         return True
 
     def SetRenderSettings(self, settings):
-        self.render_settings = dict(settings)
+        self.settings_calls.append(dict(settings))
+        if "AudioFormat" in settings and not self.audio_render_api:
+            return False  # a key this build doesn't know
+        self.render_settings.update(settings)  # layered on the current state, like Resolve
         return True
 
     def AddRenderJob(self):
         job_id = "job-%d" % (len(self.jobs) + 1)
         self.jobs[job_id] = {"settings": dict(self.render_settings), "format": self.render_format, "status": "Ready"}
+        self.last_job = self.jobs[job_id]
         return job_id
 
     def StartRendering(self, job_ids=None, is_interactive=False):
+        if self.start_failures > 0:
+            self.start_failures -= 1
+            return False
         self._rendering = self.polls_until_done
         self._active = list(job_ids or self.jobs)
         for job_id in self._active:
@@ -580,7 +619,8 @@ class FakeProject:
             settings = job["settings"]
             target = settings["TargetDir"]
             os.makedirs(target, exist_ok=True)
-            ext = self.formats[job["format"][0]]
+            ext = settings.get("AudioFormat") if not settings.get("ExportVideo") else None
+            ext = ext or job["format"][0]
             name = "%s.%s" % (settings.get("CustomName", "render"), ext)
             with open(os.path.join(target, name), "wb") as handle:
                 handle.write(b"RIFF....WAVEfake")
@@ -641,6 +681,11 @@ class ResolveProfile:
     version: str  # what GetVersionString() returns
     has_mark_in_out_api: bool = True  # Timeline.GetMarkInOut (README v19+; early 19.0 builds may lack it)
     python_gated: bool = False  # free edition 21.1+: Python scripts get no usable API
+
+    @property
+    def audio_render_api(self) -> bool:
+        """21.1 added GetAudioRenderFormats/Codecs and the "AudioFormat" render setting."""
+        return self.version_tuple[:2] >= (21, 1)
 
     @property
     def studio(self) -> bool:
@@ -718,6 +763,8 @@ def make_world(
     )
     media_pool = make_media_pool(timeline)
     project = FakeProject(timeline, media_pool)
+    if profile is not None:
+        project.audio_render_api = profile.audio_render_api
     if profile is None:
         return FakeResolve(project, product=product or "DaVinci Resolve")
     return FakeResolve(
