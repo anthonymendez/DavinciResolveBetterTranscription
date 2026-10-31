@@ -1,6 +1,7 @@
 """Fusion UIManager backend (Resolve Studio; UIManager is Studio-only since 19.1).
 
-UIManager has no progress-bar widget, so progress is a label plus a log box; the event loop
+UIManager has no progress-bar widget, so the bar is a Label of block characters (plain text, so it
+renders the same in every Resolve version) above the percentage label and a log box; the event loop
 is pumped with ``UIDispatcher.StepLoop()`` while the engine runs.
 """
 
@@ -20,6 +21,7 @@ from better_captions_plugin.ui import (
     ReviewResult,
     checked_highlight_color,
     naming_index,
+    review_scroll,
     speaker_rows,
 )
 from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
@@ -29,6 +31,20 @@ WINDOW_ID_PROGRESS = "BetterCaptionsProgress"
 WINDOW_ID_REVIEW = "BetterCaptionsReview"
 WINDOW_ID_EDITOR = "BetterCaptionsSpeakers"
 WINDOW_ID_MESSAGE = "BetterCaptionsMessage"
+
+
+BAR_WIDTH = 40
+BAR_FILLED = "█"
+BAR_EMPTY = "░"
+
+
+def progress_bar_text(pct, width: int = BAR_WIDTH) -> str:
+    """A block-character bar for ``pct`` (0-100, clamped); an empty bar for None or an unparseable value."""
+    try:
+        filled = int(round(width * max(0.0, min(100.0, float(pct))) / 100.0))
+    except (TypeError, ValueError):
+        filled = 0
+    return BAR_FILLED * filled + BAR_EMPTY * (width - filled)
 
 
 class UIManagerProgress(ProgressView):
@@ -47,6 +63,7 @@ class UIManagerProgress(ProgressView):
                     [
                         ui.Label({"ID": "Status", "Text": self._status_text, "Weight": 0}),
                         ui.Label({"ID": "Steps", "Text": "", "Weight": 0}),
+                        ui.Label({"ID": "Bar", "Text": progress_bar_text(None), "Weight": 0}),
                         ui.Label({"ID": "Percent", "Text": "", "Weight": 0}),
                         ui.TextEdit({"ID": "Log", "ReadOnly": True, "Weight": 1}),
                         ui.HGroup(
@@ -102,7 +119,11 @@ class UIManagerProgress(ProgressView):
         self.pump()
 
     def set_progress(self, pct):
-        self.items["Percent"].Text = "" if pct is None else "%d%%" % int(float(pct))
+        self.items["Percent"].Text = "" if pct is None else "%d%%" % int(max(0.0, min(100.0, float(pct))))
+        try:
+            self.items["Bar"].Text = progress_bar_text(pct)
+        except Exception:
+            pass  # the bar is decoration: the percentage text still shows the progress
         self.pump()
 
     def log(self, line: str):
@@ -183,17 +204,35 @@ class UIManagerBackend(Backend):
         }
         color = request.highlight_color
         naming = naming_index(request.naming_provider)
+        # UIManager has no scroll container, so more than VISIBLE_ROWS speakers are shown a page at a time
+        # (the window is rebuilt per page, like for "Fix speakers…"); edits are kept across pages in `names`.
+        names: dict[str, str] = {}
+        page = 0
         while True:
-            action, items = self._review_once(request, speakers, template_choice, checked, color, naming)
+            page = review_scroll.clamp_page(page, len(speakers))
+            start, stop = review_scroll.page_bounds(page, len(speakers))
+            action, items = self._review_once(request, speakers, template_choice, checked, color, naming, names, page)
+            if action in ("fix", "prev", "next", "ok"):
+                # Edits on the page just shown: the other pages' edits are already in names/template_choice.
+                for speaker in speakers[start:stop]:
+                    names[speaker.id] = str(items["Name_" + speaker.id].Text)
+                    if request.templates:
+                        template_choice[speaker.id] = int(items["Template_" + speaker.id].CurrentIndex)
+            if action in ("prev", "next"):
+                checked = {key: bool(items[key].Checked) for key in checked}
+                color = str(items["HighlightColor"].Text)
+                naming = self._naming_choice(items)
+                page += -1 if action == "prev" else 1
+                continue
             if action == "fix":
-                request.editor.record_names({s.id: str(items["Name_" + s.id].Text) for s in speakers})
-                if request.templates:
-                    template_choice = {s.id: int(items["Template_" + s.id].CurrentIndex) for s in speakers}
+                request.editor.record_names({s.id: names.get(s.id, s.name) for s in speakers})
                 checked = {key: bool(items[key].Checked) for key in checked}
                 color = str(items["HighlightColor"].Text)
                 naming = self._naming_choice(items)
                 self.edit_speakers(EditorController(request.editor, request.time_label))
                 speakers = speaker_rows(request.editor)
+                names.clear()  # the editor now holds the typed names; rows come back from it
+                page = 0
                 continue
             if action != "ok":
                 return None
@@ -204,10 +243,12 @@ class UIManagerBackend(Backend):
                 highlight_color=checked_highlight_color(str(items["HighlightColor"].Text)) or request.highlight_color,
                 naming_provider=NAMING_CHOICES[self._naming_choice(items)][0],
             )
-            for speaker in speakers:
-                result.names[speaker.id] = str(items["Name_" + speaker.id].Text).strip() or speaker.id
+            for index, speaker in enumerate(speakers):
+                result.names[speaker.id] = names.get(speaker.id, speaker.name).strip() or speaker.id
                 if request.templates:
-                    result.template_index[speaker.id] = int(items["Template_" + speaker.id].CurrentIndex)
+                    result.template_index[speaker.id] = template_choice.get(
+                        speaker.id, min(index, len(request.templates) - 1)
+                    )
             return result
 
     @staticmethod
@@ -215,18 +256,31 @@ class UIManagerBackend(Backend):
         index = int(items["Naming"].CurrentIndex)
         return index if 0 <= index < len(NAMING_CHOICES) else 0
 
-    def _review_once(self, request: ReviewRequest, speakers, template_choice, checked, color, naming=0):
-        """Show the review window until OK, Cancel or "Fix speakers…"; returns (action, items)."""
+    def _review_once(
+        self, request: ReviewRequest, speakers, template_choice, checked, color, naming=0, names=None, page=0
+    ):
+        """Show one page of the review window until OK, Cancel, "Fix speakers…" or Prev/Next.
+
+        Returns (action, items); action is ok, cancel, fix, prev or next, and ``items`` holds the widgets of
+        the speakers on this page only.
+        """
         ui, disp = self.ui, self.disp
+        names = names or {}
         template_labels = list(request.templates)
+        total = len(speakers)
+        start, stop = review_scroll.page_bounds(page, total)
+        pages = review_scroll.page_count(total)
+        shown = speakers[start:stop]
         rows = []
-        for speaker in speakers:
+        for speaker in shown:
             rows.append(
                 ui.HGroup(
                     {"Spacing": 8, "Weight": 0},
                     [
                         ui.Label({"Text": "%s (%d cues)" % (speaker.id, speaker.cue_count), "Weight": 0.25}),
-                        ui.LineEdit({"ID": "Name_" + speaker.id, "Text": speaker.name, "Weight": 0.3}),
+                        ui.LineEdit(
+                            {"ID": "Name_" + speaker.id, "Text": names.get(speaker.id, speaker.name), "Weight": 0.3}
+                        ),
                         ui.ComboBox({"ID": "Template_" + speaker.id, "Weight": 0.45}),
                     ],
                 )
@@ -247,11 +301,23 @@ class UIManagerBackend(Backend):
         ]
         if request.editor is not None:
             buttons.insert(0, ui.Button({"ID": "FixSpeakers", "Text": "Fix speakers…", "Weight": 0}))
+        pager = []
+        if pages > 1:
+            pager = [
+                ui.HGroup(
+                    {"Spacing": 8, "Weight": 0},
+                    [
+                        ui.Button({"ID": "PrevPage", "Text": "◀ Prev", "Enabled": page > 0, "Weight": 0}),
+                        ui.Label({"Text": review_scroll.page_label(page, total), "Weight": 1}),
+                        ui.Button({"ID": "NextPage", "Text": "Next ▶", "Enabled": page < pages - 1, "Weight": 0}),
+                    ],
+                )
+            ]
         window = disp.AddWindow(
             {
                 "ID": WINDOW_ID_REVIEW,
                 "WindowTitle": "%s – review speakers" % TITLE,
-                "Geometry": [200, 200, 760, 240 + 48 * len(speakers)],
+                "Geometry": [200, 200, 760, 240 + 48 * len(shown) + (40 if pager else 0)],
             },
             [
                 ui.VGroup(
@@ -267,6 +333,7 @@ class UIManagerBackend(Backend):
                             ],
                         ),
                         *rows,
+                        *pager,
                         ui.CheckBox(
                             {
                                 "ID": "Subtitles",
@@ -324,7 +391,7 @@ class UIManagerBackend(Backend):
             ],
         )
         items = window.GetItems()
-        for index, speaker in enumerate(speakers):
+        for index, speaker in enumerate(shown, start=start):
             box = items["Template_" + speaker.id]
             for label in template_labels or ["(no Text+ templates in the media pool)"]:
                 box.AddItem(label)
@@ -355,6 +422,8 @@ class UIManagerBackend(Backend):
         window.On.Ok.Clicked = on_ok
         window.On.Cancel.Clicked = lambda _event=None: finish("cancel")
         window.On.FixSpeakers.Clicked = lambda _event=None: finish("fix")
+        window.On.PrevPage.Clicked = lambda _event=None: finish("prev")
+        window.On.NextPage.Clicked = lambda _event=None: finish("next")
         window.On[WINDOW_ID_REVIEW].Close = lambda _event=None: finish("cancel")
         window.Show()
         disp.RunLoop()

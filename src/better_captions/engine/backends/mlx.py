@@ -6,7 +6,7 @@ import importlib.util
 import platform
 import sys
 
-from better_captions.engine.transcribe import ProgressFn
+from better_captions.engine.transcribe import ProgressFn, ThrottledProgress
 from better_captions.schema import Word
 
 # Our model names -> mlx-community Hugging Face repos; anything else is passed through as a repo id or local path.
@@ -51,6 +51,7 @@ def transcribe(
     duration = len(audio) / SAMPLE_RATE
     result = mlx_whisper.transcribe(audio, path_or_hf_repo=model_repo(model), language=language, word_timestamps=True)
     # mlx-whisper has no progress callback (only a tqdm bar), so progress advances per returned segment.
+    report = ThrottledProgress(progress)
     words: list[Word] = []
     for seg in result.get("segments") or []:
         for w in seg.get("words") or []:
@@ -59,8 +60,8 @@ def transcribe(
                 words.append(
                     Word(text=text, start=float(w["start"]), end=float(w["end"]), probability=float(w["probability"]))
                 )
-        if progress and duration > 0:
-            progress(min(float(seg["end"]) / duration, 1.0))
+        if duration > 0:
+            report(float(seg["end"]) / duration)
     return result.get("language") or language or "", duration, words
 
 
