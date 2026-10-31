@@ -169,6 +169,10 @@ class Backend:
         """Return None when the user cancels."""
         raise NotImplementedError
 
+    def pick_audio_tracks(self, tracks, preselected) -> list[int] | None:
+        """The audio tracks to render (``tracks`` as ``resolve_io.audio_tracks`` gives them); None cancels."""
+        return list(preselected)
+
     def message(self, title: str, text: str):
         raise NotImplementedError
 

@@ -47,7 +47,11 @@ def test_step_labels_cover_render_engine_stages_load_review_and_tracks():
     engine = [engine_runner.stage_label(stage) for stage in engine_runner.STAGES]
     assert app.STEP_LABELS[app.STEP_ENGINE : app.STEP_LOAD] == engine
     assert app.STEP_LABELS[app.STEP_LOAD :] == ["Load transcript", "Review speakers", "Create tracks"]
-    assert (app.STEP_RENDER, app.STEP_REVIEW, app.STEP_TRACKS) == (0, len(app.STEP_LABELS) - 2, len(app.STEP_LABELS) - 1)
+    assert (
+        0,
+        len(app.STEP_LABELS) - 2,
+        len(app.STEP_LABELS) - 1,
+    ) == (app.STEP_RENDER, app.STEP_REVIEW, app.STEP_TRACKS)
 
 
 def test_uimanager_progress_lists_steps_with_markers():
@@ -83,7 +87,9 @@ def test_flow_advances_the_steps_through_a_run(config):
     assert view.closed
     # The marker lines the user sees at the end of that window: everything before the review done.
     lines = view.step_lines()
-    assert lines[0].startswith(STEP_MARKERS[STEP_DONE]) and lines[app.STEP_REVIEW].startswith(STEP_MARKERS[STEP_CURRENT])
+    assert lines[0].startswith(STEP_MARKERS[STEP_DONE]) and lines[app.STEP_REVIEW].startswith(
+        STEP_MARKERS[STEP_CURRENT]
+    )
     assert lines[app.STEP_TRACKS].startswith(STEP_MARKERS[STEP_PENDING])
 
     # Second window while the tracks are made, finishing with every step done.

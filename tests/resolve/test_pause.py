@@ -142,9 +142,7 @@ def test_flow_holds_the_engine_and_every_step_while_paused(config):
         pause_when=lambda view: view.step_index == DIARIZE,
         resume_when=lambda view: view.paused_pumps >= 8,
     )
-    outcome = app.main(
-        resolve=make_world(), backend=backend, config=config, sleep=lambda s: None, popen=recorder
-    )
+    outcome = app.main(resolve=make_world(), backend=backend, config=config, sleep=lambda s: None, popen=recorder)
     assert outcome.error is None and not outcome.cancelled, backend.errors
     view = backend.progress_views[0]
     assert view.resumes == 1
@@ -173,9 +171,7 @@ def test_cancel_while_the_engine_is_paused_stops_it(config):
         pause_when=lambda view: view.step_index == DIARIZE,
         cancel_when=lambda view: view.paused_pumps >= 4,
     )
-    outcome = app.main(
-        resolve=make_world(), backend=backend, config=config, sleep=lambda s: None, popen=recorder
-    )
+    outcome = app.main(resolve=make_world(), backend=backend, config=config, sleep=lambda s: None, popen=recorder)
     assert outcome.cancelled and outcome.error is None and outcome.created == []
     assert backend.requests == [] and backend.errors == []
     process = recorder.processes[0]

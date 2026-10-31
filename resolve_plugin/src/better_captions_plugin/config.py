@@ -9,11 +9,13 @@ import sys
 APP_DIR_NAME = "BetterCaptions"
 CONFIG_FILE = "config.json"
 EDITS_DIR = "edits"
+RENDERS_DIR = "renders"
 
 # Review-dialog choices remembered between runs (save_settings).
 HIGHLIGHT_WORDS = "highlight_words"  # bool, off by default
 HIGHLIGHT_COLOR = "highlight_color"  # "#RRGGBB"
 NAMING_PROVIDER = "naming_provider"  # engine --naming for the next run (ui.NAMING_CHOICES)
+FORCE_RERENDER = "force_rerender"  # bool: always render, never reuse a cached render
 AUDIO_TRACKS = "audio_tracks"  # {timeline name: [audio track indices]} chosen for the last run
 
 # config.json key -> engine CLI flag. Values are passed through as strings.
@@ -61,6 +63,12 @@ def edits_dir(config: dict) -> str | None:
     """``<data>/edits``: speaker fixes kept per rendered audio, so a re-run can re-apply them."""
     path = config.get("_path")
     return os.path.join(os.path.dirname(str(path)), EDITS_DIR) if path else None
+
+
+def renders_dir(config: dict) -> str | None:
+    """``<data>/renders``: the last few timeline audio renders, reused while the timeline is unchanged."""
+    path = config.get("_path")
+    return os.path.join(os.path.dirname(str(path)), RENDERS_DIR) if path else None
 
 
 def load_config(path=None, environ=None) -> dict:

@@ -42,10 +42,10 @@ class FakeProgress(ProgressView):
         self._maybe_pause()
 
     def _maybe_pause(self):
-        if not (self._cancelled or self._paused or self._pause_pressed) and self._pause_when is not None:
-            if self._pause_when(self):
-                self._pause_pressed = True
-                self._paused = True
+        idle = not (self._cancelled or self._paused or self._pause_pressed)
+        if idle and self._pause_when is not None and self._pause_when(self):
+            self._pause_pressed = True
+            self._paused = True
 
     def pump(self):
         self.pumps += 1
@@ -78,9 +78,20 @@ class FakeProgress(ProgressView):
 class FakeBackend(Backend):
     name = "fake"
 
-    def __init__(self, answer=None, cancel_after=None, cancel_when=None, pause_when=None, resume_when=None):
-        """``answer``: ReviewResult, None (cancel) or a callable(ReviewRequest) -> ReviewResult|None."""
+    def __init__(
+        self,
+        answer=None,
+        cancel_after=None,
+        cancel_when=None,
+        pause_when=None,
+        resume_when=None,
+        tracks_answer="default",
+    ):
+        """``answer``: ReviewResult, None (cancel) or a callable(ReviewRequest) -> ReviewResult|None.
+        ``tracks_answer``: the audio track pick — "default" (the preselection), None (cancel) or a list."""
         self._answer = answer
+        self._tracks_answer = tracks_answer
+        self.track_requests = []
         self.cancel_after = cancel_after
         self.cancel_when = cancel_when
         self.pause_when = pause_when
@@ -101,6 +112,12 @@ class FakeBackend(Backend):
         )
         self.progress_views.append(view)
         return view
+
+    def pick_audio_tracks(self, tracks, preselected):
+        self.track_requests.append((list(tracks), list(preselected)))
+        if self._tracks_answer == "default":
+            return list(preselected)
+        return self._tracks_answer
 
     def review(self, request: ReviewRequest):
         self.requests.append(request)

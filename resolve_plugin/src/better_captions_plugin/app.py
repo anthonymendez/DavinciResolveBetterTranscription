@@ -32,8 +32,10 @@ from better_captions_plugin import (
     debug_log,
     engine_runner,
     planning,
+    render_cache,
     resolve_io,
     speaker_edits,
+    track_picker,
     word_highlight,
 )
 from better_captions_plugin import config as config_mod
@@ -218,6 +220,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
     outcome.work_dir = work_dir or tempfile.mkdtemp(prefix="better-captions-")
     audio_dir = os.path.join(outcome.work_dir, "audio")
     out_dir = os.path.join(outcome.work_dir, "out")
+    picked = choose_audio_tracks(backend, timeline, timeline_name, config, outcome)
 
     progress = backend.progress("%s – %s" % (TITLE, timeline_name))
     try:
@@ -231,12 +234,14 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
             render_kwargs["sleep"] = sleep
         debug_log.render_diagnostics(project)
         try:
-            wav = resolve_io.render_audio(project, timeline, audio_dir, range_start, range_end, **render_kwargs)
+            with resolve_io.tracks_enabled(timeline, picked):
+                wav = render_or_reuse(
+                    project, timeline, audio_dir, range_start, range_end, clock, config, progress, render_kwargs
+                )
         except resolve_io.ResolveError as exc:
             if progress.cancelled:
                 raise Cancelled() from exc
             raise exc
-        progress.log("Rendered audio: %s" % wav)
 
         argv = config_mod.engine_command(config, wav, out_dir)
         if debug_log.current() is not None:
@@ -335,6 +340,43 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
         progress.close()
     outcome.kept_work_dir = bool(outcome.subtitle_fallbacks) or bool(config.get("keep_work_dir"))
     backend.message(TITLE, debug_log.with_path(outcome.summary()))
+
+
+def choose_audio_tracks(backend, timeline, timeline_name, config: dict, outcome: Outcome):
+    """Ask which audio tracks to render (only when there is a choice); None renders the timeline as it is."""
+    tracks = resolve_io.audio_tracks(timeline)
+    if len(tracks) < 2 or not resolve_io.track_enable_supported(timeline):
+        return None
+    picked = backend.pick_audio_tracks(tracks, track_picker.default_selection(config, timeline_name, tracks))
+    debug_log.note("Audio tracks picked: %r of %r" % (picked, tracks))
+    if picked is None:
+        raise Cancelled()
+    if not config_mod.remember_audio_tracks(config, timeline_name, picked):
+        outcome.warnings.append("Could not save your audio track choice to the config file.")
+    return picked
+
+
+def render_or_reuse(project, timeline, audio_dir, range_start, range_end, clock, config: dict, progress, render_kwargs):
+    """The timeline's audio: the cached render when nothing that affects it changed, else a fresh render."""
+    cache_dir = config_mod.renders_dir(config)
+    try:
+        fp = render_cache.fingerprint(timeline, range_start, range_end, clock)
+    except Exception as exc:  # an unexpected API shape only costs the cache, never the render
+        progress.log("Could not fingerprint the timeline audio: %s" % exc)
+        fp = None
+    if cache_dir and fp and not config.get(config_mod.FORCE_RERENDER):
+        cached = render_cache.lookup(cache_dir, fp)
+        if cached:
+            progress.log("Reusing previous audio render (timeline unchanged): %s" % cached)
+            return cached
+    wav = resolve_io.render_audio(project, timeline, audio_dir, range_start, range_end, **render_kwargs)
+    progress.log("Rendered audio: %s" % wav)
+    if cache_dir and fp:
+        try:
+            render_cache.store(cache_dir, fp, wav)
+        except OSError as exc:
+            progress.log("Could not cache the audio render: %s" % exc)
+    return wav
 
 
 def reapply_saved_edits(editor, paths, audio_sha) -> str:
