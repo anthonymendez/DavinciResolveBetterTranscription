@@ -170,7 +170,9 @@ davinci-resolve-mcp use ([AutoSubs core][autosubs-core], [mcp live 21.1 test][mc
    codec)` with the codecs from `GetAudioRenderCodecs("wav")` (21.1+) or `GetRenderCodecs("wav")`,
    then `"lpcm"` / `"LinearPCM"`.
 3. `SetCurrentRenderMode(1)`, then `SetRenderSettings` with `TargetDir`, `CustomName`,
-   `ExportVideo: False`, `ExportAudio: True`, `SelectAllFrames` or `MarkIn`/`MarkOut`, plus
+   `ExportVideo: False`, `ExportAudio: True`, `MarkIn`/`MarkOut` (the in/out range, or the whole
+   timeline from `GetStartFrame()` to `GetEndFrame() - 1`; `SelectAllFrames` only when those can't be
+   read, because after a MarkIn/MarkOut job a `SelectAllFrames` job may fail to start), plus
    `AudioFormat: "wav"` (21.1+), `AudioCodec: "lpcm"`, `AudioBitDepth: 16`, `AudioSampleRate:
    48000`. If that returns False, it is retried without `AudioFormat`, then without the audio
    keys. With no preset and no accepted format, only `AudioFormat` can make the render a WAV,

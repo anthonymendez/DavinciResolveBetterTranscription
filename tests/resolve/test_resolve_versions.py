@@ -127,7 +127,8 @@ def test_render_audio_per_profile(name, marks, tmp_path):
     if marks:
         assert settings["SelectAllFrames"] is False and (settings["MarkIn"], settings["MarkOut"]) == marks
     else:
-        assert settings["SelectAllFrames"] is True and "MarkIn" not in settings
+        tl = project.timeline
+        assert (settings["MarkIn"], settings["MarkOut"]) == (tl.GetStartFrame(), tl.GetEndFrame() - 1)
     assert project.last_job["format"] == ("wav", "")  # the Audio Only preset's format
     assert project.render_format == ("mov", "H264") and project.render_mode == 0  # the user's, restored
     assert project.jobs == {} and project.deleted_jobs == ["job-1"]
@@ -173,7 +174,7 @@ def test_full_flow_textplus_tracks_with_in_out_marks(name, config):
     if PROFILES[name].has_mark_in_out_api:
         assert (settings["MarkIn"], settings["MarkOut"]) == (mark_in, mark_out)
     else:
-        assert settings["SelectAllFrames"] is True and "MarkIn" not in settings
+        assert (settings["MarkIn"], settings["MarkOut"]) == (tl.GetStartFrame(), tl.GetEndFrame() - 1)
     assert [t.name for t in tl.tracks["video"]] == ["Video 1", "Maria", "SPEAKER_01"]
     assert tl.GetTrackCount("subtitle") == 0
     maria = tl.track("video", "Maria").items

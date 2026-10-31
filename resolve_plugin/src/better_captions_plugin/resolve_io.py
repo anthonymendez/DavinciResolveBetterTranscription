@@ -247,6 +247,8 @@ def render_audio(
         pass
     os.makedirs(out_dir, exist_ok=True)
     name = "better-captions-%d" % int(time.time())
+    if end_frame is None:
+        start_frame, end_frame = whole_timeline_range(timeline, start_frame)
     settings = {
         "TargetDir": out_dir,
         "CustomName": name,
@@ -267,7 +269,10 @@ def render_audio(
         if not project.StartRendering([job]):
             sleep(0.5)
             if not project.StartRendering([job]):
-                raise ResolveError("could not start the audio render")
+                status = _try(lambda: project.GetRenderJobStatus(job)) or {}
+                raise ResolveError(
+                    "could not start the audio render (job status: %s)" % (status.get("JobStatus") or "unknown")
+                )
         deadline = time.time() + timeout
         while project.IsRenderingInProgress():
             if pump:
@@ -297,6 +302,21 @@ def render_audio(
                 pass
         restore_render_state(project, previous_format, previous_mode)
     return find_rendered_audio(out_dir, name)
+
+
+def whole_timeline_range(timeline, start_frame: int) -> tuple[int, int | None]:
+    """The whole timeline as an explicit ``(MarkIn, MarkOut)``, or ``(start_frame, None)`` when Resolve
+    won't say. ``SelectAllFrames`` alone isn't enough: after a render job with MarkIn/MarkOut, a later
+    ``SelectAllFrames`` job can keep the stale range and ``StartRendering`` returns False (seen on 21.x)."""
+    start = _try(timeline.GetStartFrame)
+    end = _try(timeline.GetEndFrame)  # one past the last frame
+    try:
+        start, end = int(start), int(end)
+    except (TypeError, ValueError):
+        return start_frame, None
+    if end <= start:
+        return start_frame, None
+    return start, end - 1
 
 
 def select_audio_render(project) -> str:

@@ -100,7 +100,9 @@ def test_render_audio_uses_the_audio_only_preset_and_restores_the_render(tmp_pat
     assert job["format"] == ("wav", "")  # what the Audio Only preset selects
     settings = job["settings"]
     assert settings["ExportVideo"] is False and settings["ExportAudio"] is True
-    assert settings["SelectAllFrames"] is True and "MarkIn" not in settings
+    timeline = project.timeline
+    assert settings["SelectAllFrames"] is False  # an explicit range: a stale one can block SelectAllFrames
+    assert (settings["MarkIn"], settings["MarkOut"]) == (timeline.GetStartFrame(), timeline.GetEndFrame() - 1)
     assert settings["AudioCodec"] == "lpcm" and "AudioFormat" not in settings  # pre-21.1 rejects AudioFormat
     assert any("AudioFormat" in call for call in project.settings_calls)  # ... but it was tried first
     assert project.jobs == {} and project.deleted_jobs == ["job-1"]
@@ -358,3 +360,21 @@ def test_create_subtitle_track_missing_srt_or_import_failure(tmp_path):
             mp, tl, _plan("M", [ClipPlacement(0, 24, "x", 0, 1)], srt_path=srt, mode="subtitles"), 0
         )
     assert tl.GetTrackCount("subtitle") == 0
+
+
+def test_whole_timeline_range_falls_back_to_select_all_frames():
+    class Blind:
+        def GetStartFrame(self):
+            raise RuntimeError("no API")
+
+        def GetEndFrame(self):
+            return None
+
+    assert resolve_io.whole_timeline_range(Blind(), 86400) == (86400, None)
+
+
+def test_whole_timeline_render_starts_despite_a_stale_mark_range(tmp_path):
+    project = make_world().project
+    project.stale_range_blocks_select_all = True
+    wav = resolve_io.render_audio(project, project.timeline, str(tmp_path), 86400, None, sleep=lambda s: None)
+    assert os.path.isfile(wav)

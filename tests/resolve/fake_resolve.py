@@ -541,6 +541,7 @@ class FakeProject:
         self.render_settings = {}
         self.settings_calls = []  # every SetRenderSettings dict, accepted or not
         self.start_failures = 0  # StartRendering returns False this many times first (seen on 21.1)
+        self.stale_range_blocks_select_all = False
         self.last_job = None  # the most recent job as added, kept after DeleteRenderJob
         self.jobs = {}
         self.polls_until_done = 2
@@ -621,6 +622,11 @@ class FakeProject:
     def StartRendering(self, job_ids=None, is_interactive=False):
         if self.start_failures > 0:
             self.start_failures -= 1
+            return False
+        # Real 21.x: after a MarkIn/MarkOut job, a SelectAllFrames-only job won't start.
+        if self.stale_range_blocks_select_all and any(
+            self.jobs[j]["settings"].get("SelectAllFrames") for j in (job_ids or self.jobs)
+        ):
             return False
         self._rendering = self.polls_until_done
         self._active = list(job_ids or self.jobs)

@@ -109,3 +109,10 @@ def test_changed_track_selection_or_force_renders_again(config, monkeypatch):
     config["force_rerender"] = True
     _run(resolve, FakeBackend(accept_all(subtitles=True, textplus=False), tracks_answer=[1]), config)
     assert len(calls) == 3
+
+
+def test_unchanged_track_choice_is_not_a_warning(config):
+    resolve = _two_track_world()
+    for _ in range(2):
+        outcome = _run(resolve, FakeBackend(accept_all(subtitles=True, textplus=False), tracks_answer=[1]), config)
+        assert outcome.error is None and outcome.warnings == []

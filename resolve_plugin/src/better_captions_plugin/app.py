@@ -370,8 +370,10 @@ def choose_audio_tracks(backend, timeline, timeline_name, config: dict, outcome:
     debug_log.note("Audio tracks picked: %r of %r" % (picked, tracks))
     if picked is None:
         raise Cancelled()
-    if not config_mod.remember_audio_tracks(config, timeline_name, picked):
-        outcome.warnings.append("Could not save your audio track choice to the config file.")
+    try:
+        config_mod.remember_audio_tracks(config, timeline_name, picked)  # False just means "unchanged"
+    except (OSError, config_mod.ConfigError) as exc:
+        outcome.warnings.append("Could not save your audio track choice to the config file: %s" % exc)
     return picked
 
 
