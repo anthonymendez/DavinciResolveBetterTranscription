@@ -3,7 +3,9 @@ from __future__ import annotations
 import math
 import os
 import shutil
+import sys
 import tarfile
+import time
 from collections.abc import Callable, Hashable
 from pathlib import Path, PurePosixPath
 
@@ -37,8 +39,13 @@ def diarize(
     max_speakers: int | None = None,
     backend: str = "sherpa",
     progress: ProgressFn | None = None,
+    log: LogFn | None = None,
 ) -> list[SpeakerTurn]:
-    """Return speaker turns sorted by start, labelled SPEAKER_00, SPEAKER_01, ... in order of first appearance."""
+    """Return speaker turns sorted by start, labelled SPEAKER_00, SPEAKER_01, ... in order of first appearance.
+
+    Status lines (started, models loading, progress, speakers found, finished) go to `log`; by default
+    that is stderr, which the Resolve plugin shows in its log window (also without --verbose).
+    """
     if min_speakers is not None and max_speakers is not None and min_speakers > max_speakers:
         raise ValueError(f"min_speakers ({min_speakers}) > max_speakers ({max_speakers})")
     if num_speakers is not None:
@@ -48,14 +55,19 @@ def diarize(
     elif min_speakers is not None and min_speakers == max_speakers:
         num_speakers = min_speakers
 
-    progress = _monotonic(progress)
-    if backend == "sherpa":
-        raw = _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress)
-    elif backend == "pyannote":
-        raw = _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress)
-    else:
+    if backend not in ("sherpa", "pyannote"):
         raise ValueError(f"unknown diarization backend {backend!r}; expected 'sherpa' or 'pyannote'")
-    return relabel(raw)
+
+    status = _Status(log or _stderr_log)
+    status.started(backend)
+    progress = _monotonic(progress, status)
+    if backend == "sherpa":
+        raw = _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress, status)
+    else:
+        raw = _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress, status)
+    turns = relabel(raw)
+    status.finished(len({t.speaker for t in turns}))
+    return turns
 
 
 def relabel(raw: list[tuple[float, float, Hashable]]) -> list[SpeakerTurn]:
@@ -78,18 +90,89 @@ def _clamp(n: int, lo: int | None, hi: int | None) -> int:
     return n
 
 
-def _monotonic(progress: ProgressFn | None) -> ProgressFn:
+def _monotonic(progress: ProgressFn | None, status: _Status | None = None) -> ProgressFn:
     """Wrap progress so it never goes backwards (e.g. when clustering is re-run)."""
     last = 0.0
 
     def report(frac: float) -> None:
         nonlocal last
         frac = min(max(frac, last), 1.0)
-        if progress and frac > last:
-            progress(frac)
+        if frac > last:
+            if progress:
+                progress(frac)
+            if status:
+                status.progress(frac)
         last = frac
 
     return report
+
+
+# --- status reporting --------------------------------------------------------
+
+LogFn = Callable[[str], None]
+
+# Progress is logged each time it crosses another multiple of this share of the audio.
+PROGRESS_LOG_STEP = 0.1
+
+
+def _stderr_log(message: str) -> None:
+    """The engine's stderr is what the plugin's runner turns into `log` events (and so its log window)."""
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except (OSError, ValueError):  # stderr closed or detached: status lines are never worth failing a run
+        pass
+
+
+def format_clock(seconds: float) -> str:
+    """12:05 / 1:02:03: a position in the audio."""
+    s = int(round(max(seconds, 0.0)))
+    h, rest = divmod(s, 3600)
+    m, s = divmod(rest, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    m, s = divmod(int(round(seconds)), 60)
+    return f"{m}m {s:02d}s"
+
+
+class _Status:
+    """Throttled status lines for one diarization run."""
+
+    def __init__(self, log: LogFn):
+        self._log = log
+        self._t0 = time.monotonic()
+        self._duration: float | None = None  # seconds of audio, once loaded
+        self._bucket = 0
+
+    def started(self, backend: str) -> None:
+        self._log(f"Detecting speakers: started ({backend} backend)")
+
+    def loading_models(self) -> None:
+        self._log("Detecting speakers: loading models")
+
+    def audio_loaded(self, seconds: float) -> None:
+        self._duration = seconds
+        self._log(f"Detecting speakers: analysing {format_clock(seconds)} of audio")
+
+    def progress(self, frac: float) -> None:
+        bucket = int(frac / PROGRESS_LOG_STEP + 1e-9)
+        if bucket <= self._bucket:
+            return
+        self._bucket = bucket
+        text = f"Detecting speakers: {int(frac * 100 + 1e-9)}%"
+        if self._duration:
+            text += f" ({format_clock(frac * self._duration)} of {format_clock(self._duration)})"
+        self._log(text)
+
+    def retrying(self, speakers: int) -> None:
+        self._log(f"Detecting speakers: re-clustering for {speakers} speaker{'s' if speakers != 1 else ''}")
+
+    def finished(self, speakers: int) -> None:
+        self._log(f"Detecting speakers: found {speakers} speaker{'s' if speakers != 1 else ''}")
+        self._log(f"Detecting speakers: finished in {format_elapsed(time.monotonic() - self._t0)}")
 
 
 # --- audio -------------------------------------------------------------------
@@ -179,9 +262,10 @@ def _extract_member(archive: Path, name: str, dest: Path) -> None:
         os.replace(tmp, dest)
 
 
-def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress):
+def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress, status):
     import sherpa_onnx
 
+    status.loading_models()
     segmentation, embedding = sherpa_models()
     threads = max(1, min(os.cpu_count() or 1, 8))
 
@@ -204,6 +288,7 @@ def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progre
 
     sd = build(num_speakers)
     audio = load_audio(audio_path, sd.sample_rate)
+    status.audio_loaded(len(audio) / sd.sample_rate)
 
     def run(sd) -> list[tuple[float, float, int]]:
         def callback(done: int, total: int) -> int:
@@ -218,6 +303,7 @@ def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progre
         found = len({speaker for _, _, speaker in raw})
         wanted = _clamp(found, min_speakers, max_speakers)
         if raw and wanted != found:  # threshold clustering landed outside [min, max]: force the count
+            status.retrying(wanted)
             raw = run(build(wanted))
     return raw
 
@@ -225,7 +311,7 @@ def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progre
 # --- pyannote backend (optional) ---------------------------------------------
 
 
-def _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress):
+def _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress, status):
     try:
         import torch
         from pyannote.audio import Pipeline
@@ -236,6 +322,7 @@ def _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, prog
         raise RuntimeError(
             f"the pyannote backend needs a Hugging Face token in HF_TOKEN (with {PYANNOTE_PIPELINE} terms accepted)"
         )
+    status.loading_models()
     try:
         pipeline = Pipeline.from_pretrained(PYANNOTE_PIPELINE, token=token)
     except TypeError:  # pyannote.audio < 4
@@ -250,6 +337,7 @@ def _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, prog
     else:
         counts = {k: v for k, v in (("min_speakers", min_speakers), ("max_speakers", max_speakers)) if v is not None}
     audio = load_audio(audio_path, SAMPLE_RATE)
+    status.audio_loaded(len(audio) / SAMPLE_RATE)
     waveform = {"waveform": torch.from_numpy(audio).unsqueeze(0), "sample_rate": SAMPLE_RATE}
     output = pipeline(waveform, hook=_pyannote_hook(progress), **counts)
     annotation = getattr(output, "speaker_diarization", output)  # pyannote.audio 4 wraps the Annotation
