@@ -304,6 +304,7 @@ class FakeFolder:
 class FakeTrack:
     name: str
     items: list[FakeTimelineItem] = field(default_factory=list)
+    enabled: bool = True
 
 
 class FakeTimeline:
@@ -315,6 +316,7 @@ class FakeTimeline:
         drop_frame=False,
         mark_in_out=None,
         has_mark_in_out_api=True,
+        has_track_enable_api=True,
     ):
         self.name = name
         self.settings = {"timelineFrameRate": frame_rate, "timelineDropFrameTimecode": "1" if drop_frame else "0"}
@@ -326,7 +328,10 @@ class FakeTimeline:
         self.tracks = {"video": [FakeTrack("Video 1")], "audio": [FakeTrack("Audio 1")], "subtitle": []}
         self.mark_in_out = mark_in_out
         self.has_mark_in_out_api = has_mark_in_out_api
+        self.has_track_enable_api = has_track_enable_api  # False: GetIsTrackEnabled/SetTrackEnable don't exist
         # knobs
+        self.refuse_track_enable = ()  # (track_type, index) pairs SetTrackEnable returns False for
+        self.track_enable_calls = []  # every accepted or refused SetTrackEnable(track_type, index, enabled)
         self.refuse_add_track = False
         self.subtitle_append_ignores_record_frame = False
         self.deleted_tracks = []
@@ -392,6 +397,27 @@ class FakeTimeline:
         if not 1 <= index <= len(self.tracks[track_type]):
             return []
         return list(self.tracks[track_type][index - 1].items)
+
+    def __getattr__(self, name):
+        if name in ("GetIsTrackEnabled", "SetTrackEnable") and self.has_track_enable_api:
+            return getattr(self, "_" + name)
+        raise AttributeError(name)
+
+    def _GetIsTrackEnabled(self, track_type, index):
+        if not 1 <= index <= len(self.tracks[track_type]):
+            return False
+        return self.tracks[track_type][index - 1].enabled
+
+    def _SetTrackEnable(self, track_type, index, enabled):
+        self.track_enable_calls.append((track_type, index, bool(enabled)))
+        if (track_type, index) in self.refuse_track_enable or not 1 <= index <= len(self.tracks[track_type]):
+            return False
+        self.tracks[track_type][index - 1].enabled = bool(enabled)
+        return True
+
+    def enabled_audio(self) -> list[int]:
+        """Test helper: the 1-based indices of the enabled audio tracks."""
+        return [i for i, track in enumerate(self.tracks["audio"], start=1) if track.enabled]
 
     def track(self, track_type, name) -> FakeTrack | None:
         return next((t for t in self.tracks[track_type] if t.name == name), None)
