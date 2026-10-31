@@ -15,6 +15,13 @@ caption tracks using templates from your media pool.
 
 ## Install
 
+There are two ways to install: straight from GitHub (nothing to download first), or from a
+copy of the project on your computer. Both run the same installer and give the same result.
+
+### From GitHub
+
+Installs the [latest release](https://github.com/anthonymendez/DavinciResolveBetterTranscription/releases/latest).
+
 Windows (PowerShell):
 
     irm https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install.ps1 | iex
@@ -23,7 +30,32 @@ macOS / Linux:
 
     curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install.sh | bash
 
-Then in Resolve: **Workspace > Scripts > Better Captions**.
+### From a local copy
+
+Use this to install a branch you have checked out, your own changes, or a project you
+downloaded as a zip (**Code > Download ZIP** on GitHub, then extract it). Point
+`BETTER_CAPTIONS_SOURCE` at the project folder (the one with `pyproject.toml`) and run the
+installer from it.
+
+Windows (PowerShell; run it in Windows, not WSL, since Resolve is a Windows app):
+
+    cd D:\path\to\DavinciResolveBetterTranscription
+    $env:BETTER_CAPTIONS_SOURCE = (Get-Location).Path
+    powershell -ExecutionPolicy Bypass -File .\install\install.ps1
+
+macOS / Linux:
+
+    cd /path/to/DavinciResolveBetterTranscription
+    BETTER_CAPTIONS_SOURCE="$PWD" bash install/install.sh
+
+The installer copies the plugin from `resolve_plugin/Utility/better_captions_plugin.zip`, not
+from `resolve_plugin/src`. If you changed the plugin's code, rebuild the zip first with
+`uv run python resolve_plugin/build_plugin_zip.py`. After any change, re-run the same command
+to reinstall.
+
+### Then
+
+In Resolve: **Workspace > Scripts > Better Captions** (restart Resolve first if it was open).
 
 The installer sets up [uv](https://docs.astral.sh/uv/) if missing, puts the
 engine in its own Python 3.12 venv in your user data dir, and copies the plugin
@@ -62,13 +94,15 @@ Options (environment variables):
   falling back to `main` (with a warning) if there is none or GitHub's API can't
   be reached; set `BETTER_CAPTIONS_REF=main` for the development version
 - `BETTER_CAPTIONS_HOME`: install somewhere other than the default data dir
-- `BETTER_CAPTIONS_SOURCE`: install from a local checkout instead of GitHub
+- `BETTER_CAPTIONS_SOURCE`: install from a local copy instead of GitHub (see above)
 - `BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON=1`: skip the system Python check/install
 - `BETTER_CAPTIONS_GPU`: `auto` (default) installs the NVIDIA CUDA runtime only when
   an NVIDIA GPU is found, `cuda` always installs it, `none` never does
 
 To uninstall, run `install/uninstall.ps1` or `install/uninstall.sh` the same
-way (e.g. `curl -fsSL .../install/uninstall.sh | bash`).
+way: from GitHub (e.g. `curl -fsSL .../install/uninstall.sh | bash`), or from a local copy
+(`powershell -ExecutionPolicy Bypass -File .\install\uninstall.ps1` or
+`bash install/uninstall.sh`).
 
 ### API keys for LLM speaker naming
 
