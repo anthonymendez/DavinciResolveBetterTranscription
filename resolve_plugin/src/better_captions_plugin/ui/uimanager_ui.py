@@ -11,6 +11,9 @@ from better_captions_plugin.ui import (
     HIGHLIGHT_LABEL,
     NAMING_CHOICES,
     NAMING_LABEL,
+    PAUSE_LABEL,
+    PAUSED_PREFIX,
+    RESUME_LABEL,
     Backend,
     ProgressView,
     ReviewRequest,
@@ -33,18 +36,26 @@ class UIManagerProgress(ProgressView):
         self.ui = ui
         self.disp = dispatcher
         self._cancelled = False
+        self._paused = False
+        self._status_text = "Starting…"
         self._lines: list[str] = []
         self.window = dispatcher.AddWindow(
-            {"ID": WINDOW_ID_PROGRESS, "WindowTitle": title, "Geometry": [200, 200, 560, 320]},
+            {"ID": WINDOW_ID_PROGRESS, "WindowTitle": title, "Geometry": [200, 200, 560, 380]},
             [
                 ui.VGroup(
                     {"Spacing": 6},
                     [
-                        ui.Label({"ID": "Status", "Text": "Starting…", "Weight": 0}),
+                        ui.Label({"ID": "Status", "Text": self._status_text, "Weight": 0}),
+                        ui.Label({"ID": "Steps", "Text": "", "Weight": 0}),
                         ui.Label({"ID": "Percent", "Text": "", "Weight": 0}),
                         ui.TextEdit({"ID": "Log", "ReadOnly": True, "Weight": 1}),
                         ui.HGroup(
-                            {"Weight": 0}, [ui.HGap(0, 1), ui.Button({"ID": "Cancel", "Text": "Cancel", "Weight": 0})]
+                            {"Weight": 0},
+                            [
+                                ui.HGap(0, 1),
+                                ui.Button({"ID": "Pause", "Text": PAUSE_LABEL, "Weight": 0}),
+                                ui.Button({"ID": "Cancel", "Text": "Cancel", "Weight": 0}),
+                            ],
                         ),
                     ],
                 )
@@ -53,19 +64,41 @@ class UIManagerProgress(ProgressView):
         self.items = self.window.GetItems()
         self.window.On[WINDOW_ID_PROGRESS].Close = self._on_cancel
         self.window.On.Cancel.Clicked = self._on_cancel
+        self.window.On.Pause.Clicked = self._on_pause
         self.window.Show()
         self.pump()
 
     def _on_cancel(self, _event=None):
         self._cancelled = True
-        self.items["Status"].Text = "Cancelling…"
+        self._paused = False  # a paused engine has to run again to be stopped
+        self._status_text = "Cancelling…"
+        self._show_status()
+
+    def _on_pause(self, _event=None):
+        if self._cancelled:
+            return
+        self._paused = not self._paused
+        self.items["Pause"].Text = RESUME_LABEL if self._paused else PAUSE_LABEL
+        self._show_status()
+
+    def _show_status(self):
+        self.items["Status"].Text = (PAUSED_PREFIX if self._paused else "") + self._status_text
+
+    def _show_steps(self):
+        self.items["Steps"].Text = "\n".join(self.step_lines())
+        self.pump()
 
     @property
     def cancelled(self) -> bool:
         return self._cancelled
 
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
     def set_status(self, text: str):
-        self.items["Status"].Text = str(text)
+        self._status_text = str(text)
+        self._show_status()
         self.pump()
 
     def set_progress(self, pct):

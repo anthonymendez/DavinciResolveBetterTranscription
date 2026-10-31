@@ -10,6 +10,12 @@ from better_captions_plugin.ui import (
     HIGHLIGHT_LABEL,
     NAMING_CHOICES,
     NAMING_LABEL,
+    PAUSE_LABEL,
+    PAUSED_PREFIX,
+    RESUME_LABEL,
+    STEP_CURRENT,
+    STEP_DONE,
+    STEP_PENDING,
     Backend,
     ProgressView,
     ReviewRequest,
@@ -17,43 +23,84 @@ from better_captions_plugin.ui import (
     checked_highlight_color,
     naming_index,
     speaker_rows,
+    step_line,
+    step_states,
 )
 from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
 
 TITLE = "Better Captions"
+_STEP_COLORS = {STEP_DONE: "#2e7d32", STEP_CURRENT: "#0b57d0", STEP_PENDING: "#888888"}
 
 
 class TkProgress(ProgressView):
     def __init__(self, root: tk.Tk, title: str):
         self._root = root
         self._cancelled = False
+        self._paused = False
+        self._status_text = "Starting…"
+        self._step_labels: list[ttk.Label] = []
         self.window = tk.Toplevel(root)
         self.window.title(title)
         self.window.resizable(True, False)
         self.window.protocol("WM_DELETE_WINDOW", self._cancel)
         frame = ttk.Frame(self.window, padding=12)
         frame.pack(fill="both", expand=True)
-        self._status = tk.StringVar(value="Starting…")
+        self._status = tk.StringVar(value=self._status_text)
         ttk.Label(frame, textvariable=self._status, width=60).pack(anchor="w")
+        self._steps_frame = ttk.Frame(frame)
+        self._steps_frame.pack(fill="x", pady=(6, 0))
         self._bar = ttk.Progressbar(frame, length=440, mode="determinate", maximum=100)
         self._bar.pack(fill="x", pady=(6, 6))
         self._log = tk.Text(frame, height=8, width=70, state="disabled", wrap="word")
         self._log.pack(fill="both", expand=True)
-        ttk.Button(frame, text="Cancel", command=self._cancel).pack(anchor="e", pady=(8, 0))
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor="e", pady=(8, 0))
+        self._pause_button = ttk.Button(buttons, text=PAUSE_LABEL, command=self._toggle_pause)
+        self._pause_button.pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="left")
         self.window.update_idletasks()
         _center(self.window)
         self.pump()
 
     def _cancel(self):
         self._cancelled = True
-        self._status.set("Cancelling…")
+        self._paused = False  # a paused engine has to run again to be stopped
+        self._status_text = "Cancelling…"
+        self._show_status()
+
+    def _toggle_pause(self):
+        if self._cancelled:
+            return
+        self._paused = not self._paused
+        self._pause_button.configure(text=RESUME_LABEL if self._paused else PAUSE_LABEL)
+        self._show_status()
+
+    def _show_status(self):
+        self._status.set((PAUSED_PREFIX if self._paused else "") + self._status_text)
+
+    def _show_steps(self):
+        if len(self._step_labels) != len(self.step_labels):
+            for label in self._step_labels:
+                label.destroy()
+            self._step_labels = [ttk.Label(self._steps_frame) for _ in self.step_labels]
+            for label in self._step_labels:
+                label.pack(anchor="w")
+        states = step_states(len(self.step_labels), self.step_index)
+        for widget, text, state in zip(self._step_labels, self.step_labels, states):
+            widget.configure(text=step_line(text, state), foreground=_STEP_COLORS[state])
+        self.pump()
 
     @property
     def cancelled(self) -> bool:
         return self._cancelled
 
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
     def set_status(self, text: str):
-        self._status.set(text)
+        self._status_text = text
+        self._show_status()
         self.pump()
 
     def set_progress(self, pct):

@@ -13,6 +13,10 @@
    (``word_highlight``); the toggle and colour, and the speaker-naming provider picked for the
    next run, are remembered in config.json
 7. summary; the temp dir is kept only when the user still needs the SRT files
+
+The progress window lists these steps (``STEP_LABELS``) with done / current / pending markers. Its
+Pause button holds the flow before the next step (``hold_while_paused``) and suspends the engine
+process; Cancel still works while paused.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 import traceback
 
 from better_captions_plugin import (
@@ -46,9 +51,43 @@ from better_captions_plugin.ui import (
 
 TITLE = "Better Captions"
 
+# The steps shown in the progress window, in order; the engine's stages sit between rendering and loading.
+STEP_RENDER = 0
+STEP_ENGINE = 1  # the first engine stage
+STEP_LOAD = STEP_ENGINE + len(engine_runner.STAGES)
+STEP_REVIEW = STEP_LOAD + 1
+STEP_TRACKS = STEP_REVIEW + 1
+STEP_LABELS = (
+    ["Render audio"]
+    + [engine_runner.stage_label(stage) for stage in engine_runner.STAGES]
+    + ["Load transcript", "Review speakers", "Create tracks"]
+)
+PAUSE_POLL = 0.05  # seconds between repaints while the flow is held
+
 
 class Cancelled(Exception):
     pass
+
+
+def hold_while_paused(progress, sleep=None):
+    """Wait (repainting the window) while the user has the flow paused, before it moves on to its next step.
+    Cancelling ends the wait and the run."""
+    if not progress.paused:
+        return
+    progress.log("Paused. Press Resume to continue.")
+    sleep = sleep or time.sleep
+    while progress.paused and not progress.cancelled:
+        progress.pump()
+        sleep(PAUSE_POLL)
+    if progress.cancelled:
+        raise Cancelled()
+    progress.log("Resumed.")
+
+
+def start_step(progress, step: int, sleep=None):
+    """Move the progress window on to ``step``, once a pause (if any) is over."""
+    hold_while_paused(progress, sleep)
+    progress.set_step(step)
 
 
 class Outcome:
@@ -183,6 +222,8 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
     progress = backend.progress("%s – %s" % (TITLE, timeline_name))
     try:
         progress.log("Resolve: " + info.label)
+        progress.set_steps(STEP_LABELS)
+        progress.set_step(STEP_RENDER)
         progress.set_status("Rendering timeline audio…")
         progress.set_progress(None)
         render_kwargs = {"pump": progress.pump, "should_cancel": lambda: progress.cancelled}
@@ -200,14 +241,21 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
         argv = config_mod.engine_command(config, wav, out_dir)
         if debug_log.current() is not None:
             argv.append("--verbose")  # the engine's debug logging, on stderr
+        start_step(progress, STEP_ENGINE, sleep)
         progress.set_status("Starting the engine…")
         progress.set_progress(0)
         progress.log("Engine: " + " ".join(argv))
+        engine_step = STEP_ENGINE
 
         def on_event(event):
+            nonlocal engine_step
             kind = event.get("event")
             if kind == "progress":
-                progress.set_status("%s…" % engine_runner.stage_label(event.get("stage")))
+                stage = event.get("stage")
+                if stage in engine_runner.STAGES and STEP_ENGINE + engine_runner.STAGES.index(stage) > engine_step:
+                    engine_step = STEP_ENGINE + engine_runner.STAGES.index(stage)
+                    progress.set_step(engine_step)
+                progress.set_status("%s…" % engine_runner.stage_label(stage))
                 progress.set_progress(event.get("pct"))
             elif kind == "log":
                 progress.log(event.get("line", ""))
@@ -221,6 +269,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
                 argv,
                 on_event=on_event,
                 should_cancel=lambda: progress.cancelled,
+                should_pause=lambda: progress.paused,
                 pump=progress.pump,
                 env=env,
                 popen=popen,
@@ -228,33 +277,36 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
             )
         except engine_runner.EngineCancelled as exc:
             raise Cancelled() from exc
+        start_step(progress, STEP_LOAD, sleep)
         progress.set_status("Loading transcript…")
         progress.set_progress(100)
+
+        transcript_path = done.get("transcript") or os.path.join(out_dir, "transcript.json")
+        raw_transcript = transcript_mod.load_dict(transcript_path)
+        transcript = transcript_mod.from_dict(raw_transcript)
+        srt_paths = {str(k): str(v) for k, v in (done.get("srt") or {}).items()}
+        for speaker_id in transcript.speaker_ids_with_cues():
+            srt_paths.setdefault(speaker_id, os.path.join(out_dir, speaker_id + ".srt"))
+        if not transcript.cues:
+            raise resolve_io.ResolveError("the engine found no speech in the rendered audio (%s)" % transcript_path)
+
+        # Speaker fixes: re-apply those saved for this audio, let the user add more, save them all.
+        editor = speaker_edits.SpeakerEditor(raw_transcript)
+        audio_sha = speaker_edits.audio_fingerprint(wav)
+        edits_paths = [os.path.join(os.path.dirname(transcript_path), speaker_edits.EDITS_FILE)]
+        store = config_mod.edits_dir(config)
+        if store and audio_sha:
+            edits_paths.append(os.path.join(store, audio_sha + ".json"))
+        note = reapply_saved_edits(editor, edits_paths, audio_sha)
+
+        templates = resolve_io.find_text_templates(media_pool)
+        request = build_review_request(
+            transcript, templates, timeline_name, clock, range_start, range_end, config, editor=editor, note=note
+        )
+        start_step(progress, STEP_REVIEW, sleep)  # the review dialog is its own window
     finally:
         progress.close()
 
-    transcript_path = done.get("transcript") or os.path.join(out_dir, "transcript.json")
-    raw_transcript = transcript_mod.load_dict(transcript_path)
-    transcript = transcript_mod.from_dict(raw_transcript)
-    srt_paths = {str(k): str(v) for k, v in (done.get("srt") or {}).items()}
-    for speaker_id in transcript.speaker_ids_with_cues():
-        srt_paths.setdefault(speaker_id, os.path.join(out_dir, speaker_id + ".srt"))
-    if not transcript.cues:
-        raise resolve_io.ResolveError("the engine found no speech in the rendered audio (%s)" % transcript_path)
-
-    # Speaker fixes: re-apply those saved for this audio, let the user add more, save them all.
-    editor = speaker_edits.SpeakerEditor(raw_transcript)
-    audio_sha = speaker_edits.audio_fingerprint(wav)
-    edits_paths = [os.path.join(os.path.dirname(transcript_path), speaker_edits.EDITS_FILE)]
-    store = config_mod.edits_dir(config)
-    if store and audio_sha:
-        edits_paths.append(os.path.join(store, audio_sha + ".json"))
-    note = reapply_saved_edits(editor, edits_paths, audio_sha)
-
-    templates = resolve_io.find_text_templates(media_pool)
-    request = build_review_request(
-        transcript, templates, timeline_name, clock, range_start, range_end, config, editor=editor, note=note
-    )
     review = backend.review(request)
     debug_log.note("Review result: %r" % (review,))
     if review is None:
@@ -269,7 +321,18 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
     if editor.relabelled:  # the engine's per-speaker SRTs no longer match
         srt_paths = transcript_mod.write_speaker_srts(transcript, os.path.join(out_dir, "edited"))
 
-    create_tracks(media_pool, timeline, transcript, review, templates, clock, range_start, srt_paths, outcome)
+    progress = backend.progress("%s – %s" % (TITLE, timeline_name))
+    try:
+        progress.set_steps(STEP_LABELS)
+        progress.set_step(STEP_TRACKS)
+        progress.set_status("Creating tracks…")
+        progress.set_progress(None)
+        create_tracks(media_pool, timeline, transcript, review, templates, clock, range_start, srt_paths, outcome)
+        progress.set_step(len(STEP_LABELS))
+        progress.set_status("Done")
+        progress.set_progress(100)
+    finally:
+        progress.close()
     outcome.kept_work_dir = bool(outcome.subtitle_fallbacks) or bool(config.get("keep_work_dir"))
     backend.message(TITLE, debug_log.with_path(outcome.summary()))
 

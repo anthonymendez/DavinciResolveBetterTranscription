@@ -87,8 +87,57 @@ class ReviewResult:
     naming_provider: str | None = None  # a NAMING_CHOICES value; None leaves config.json's as is
 
 
+STEP_DONE = "done"
+STEP_CURRENT = "current"
+STEP_PENDING = "pending"
+STEP_MARKERS = {STEP_DONE: "✔", STEP_CURRENT: "▶", STEP_PENDING: "○"}
+PAUSE_LABEL = "Pause"
+RESUME_LABEL = "Resume"
+PAUSED_PREFIX = "Paused – "
+
+
+def step_states(count: int, current: int | None) -> list[str]:
+    """Marker state per step: those before ``current`` are done, ``current`` is current, the rest pending.
+    ``current`` None leaves every step pending; at or past ``count`` every step is done."""
+    if current is None:
+        return [STEP_PENDING] * count
+    return [STEP_DONE if i < current else STEP_CURRENT if i == current else STEP_PENDING for i in range(count)]
+
+
+def step_line(label: str, state: str) -> str:
+    return "%s  %s" % (STEP_MARKERS[state], label)
+
+
 class ProgressView:
-    """A modal-ish progress window. ``pump()`` must be cheap and safe to call often."""
+    """A modal-ish progress window. ``pump()`` must be cheap and safe to call often.
+
+    ``set_steps`` / ``set_step`` show the whole list of steps with done / current / pending markers;
+    the Pause button flips ``paused`` (the flow checks it, the window doesn't stop anything itself)."""
+
+    step_labels: tuple = ()
+    step_index: int | None = None
+
+    def set_steps(self, labels):
+        """Show these step labels, all pending."""
+        self.step_labels = tuple(str(label) for label in labels)
+        self.step_index = None
+        self._show_steps()
+
+    def set_step(self, index: int):
+        """Step ``index`` is now running; the ones before it are done. ``len(steps)`` marks every step done."""
+        self.step_index = index
+        self._show_steps()
+
+    def step_lines(self) -> list[str]:
+        states = step_states(len(self.step_labels), self.step_index)
+        return [step_line(label, state) for label, state in zip(self.step_labels, states)]
+
+    def _show_steps(self):
+        """Redraw the step list; backends override this."""
+
+    @property
+    def paused(self) -> bool:
+        return False
 
     def set_status(self, text: str):
         raise NotImplementedError

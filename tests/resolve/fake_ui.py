@@ -6,15 +6,25 @@ from better_captions_plugin.ui import Backend, ProgressView, ReviewRequest, Revi
 
 
 class FakeProgress(ProgressView):
-    def __init__(self, title, cancel_after=None, cancel_when=None):
+    """``pause_when(view)`` presses Pause once, the first time it is true during a pump;
+    ``resume_when(view)`` presses Resume when it is true during a pump while paused."""
+
+    def __init__(self, title, cancel_after=None, cancel_when=None, pause_when=None, resume_when=None):
         self.title = title
         self.statuses = []
         self.progress = []
         self.lines = []
         self.pumps = 0
         self.closed = False
+        self.step_log = []  # (step index, was paused) per set_step
+        self.paused_pumps = 0
+        self.resumes = 0
         self._cancel_after = cancel_after
         self._cancel_when = cancel_when
+        self._pause_when = pause_when
+        self._resume_when = resume_when
+        self._pause_pressed = False
+        self._paused = False
         self._cancelled = False
 
     def set_status(self, text):
@@ -26,16 +36,40 @@ class FakeProgress(ProgressView):
     def log(self, line):
         self.lines.append(line)
 
+    def set_step(self, index):
+        self.step_log.append((index, self._paused))
+        super().set_step(index)
+        self._maybe_pause()
+
+    def _maybe_pause(self):
+        if not (self._cancelled or self._paused or self._pause_pressed) and self._pause_when is not None:
+            if self._pause_when(self):
+                self._pause_pressed = True
+                self._paused = True
+
     def pump(self):
         self.pumps += 1
         if self._cancel_when is not None and self._cancel_when(self):
             self._cancelled = True
         if self._cancel_after is not None and self.pumps >= self._cancel_after:
             self._cancelled = True
+        if self._cancelled:
+            self._paused = False
+        elif self._paused:
+            self.paused_pumps += 1
+            if self._resume_when is not None and self._resume_when(self):
+                self._paused = False
+                self.resumes += 1
+        else:
+            self._maybe_pause()
 
     @property
     def cancelled(self):
         return self._cancelled
+
+    @property
+    def paused(self):
+        return self._paused
 
     def close(self):
         self.closed = True
@@ -44,11 +78,13 @@ class FakeProgress(ProgressView):
 class FakeBackend(Backend):
     name = "fake"
 
-    def __init__(self, answer=None, cancel_after=None, cancel_when=None):
+    def __init__(self, answer=None, cancel_after=None, cancel_when=None, pause_when=None, resume_when=None):
         """``answer``: ReviewResult, None (cancel) or a callable(ReviewRequest) -> ReviewResult|None."""
         self._answer = answer
         self.cancel_after = cancel_after
         self.cancel_when = cancel_when
+        self.pause_when = pause_when
+        self.resume_when = resume_when
         self.progress_views = []
         self.requests = []
         self.messages = []
@@ -56,7 +92,13 @@ class FakeBackend(Backend):
         self.closed = False
 
     def progress(self, title):
-        view = FakeProgress(title, cancel_after=self.cancel_after, cancel_when=self.cancel_when)
+        view = FakeProgress(
+            title,
+            cancel_after=self.cancel_after,
+            cancel_when=self.cancel_when,
+            pause_when=self.pause_when,
+            resume_when=self.resume_when,
+        )
         self.progress_views.append(view)
         return view
 
