@@ -61,11 +61,14 @@ def _reader(stream, sink: queue.Queue):
         sink.put(("eof", None))
 
 
-def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, poll_interval=0.05, popen=None) -> dict:
+def run_engine(
+    argv, on_event=None, should_cancel=None, pump=None, env=None, poll_interval=0.05, popen=None, trace=None
+) -> dict:
     """Run ``argv`` to completion; return the ``done`` event.
 
     ``on_event(event)`` is called for every parsed event; ``pump()`` is called between
     polls so a UI can repaint; ``should_cancel()`` returning True terminates the engine.
+    ``trace(kind, text)``, if given, sees every raw stdout/stderr line and the exit code (debug log).
     Raises ``EngineError`` with the engine's message (or its stderr tail) on failure.
     """
     on_event = on_event or (lambda event: None)
@@ -112,12 +115,16 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
                 pump()
             if should_cancel and should_cancel():
                 _terminate(process)
+                if trace:
+                    trace("cancelled", "terminated by the user")
                 raise EngineCancelled("cancelled")
         if kind is None:
             continue
         if kind == "eof":
             open_streams -= 1
             continue
+        if trace:
+            trace("stdout" if kind == "line" else kind, payload.rstrip("\r\n"))
         if kind == "stderr":
             on_event({"event": "log", "line": payload})
             continue
@@ -128,6 +135,8 @@ def run_engine(argv, on_event=None, should_cancel=None, pump=None, env=None, pol
         elif event["event"] == "error":
             error = event
     returncode = process.wait()
+    if trace:
+        trace("exit", "code %s" % returncode)
     if error is not None:
         raise EngineError(str(error.get("message") or "engine failed"))
     if done is None or returncode != 0:

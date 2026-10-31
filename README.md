@@ -113,6 +113,40 @@ Restart Resolve after Python is installed, or the script won't show up in the me
 - `BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON=1`: skip the system Python check/install
 - `BETTER_CAPTIONS_GPU`: `auto` (default) installs the NVIDIA CUDA runtime only when
   an NVIDIA GPU is found, `cuda` always installs it, `none` never does
+- `BETTER_CAPTIONS_DEBUG=1`: turn on the plugin's debug log (see [Debug logs](#debug-logs))
+
+### Debug logs
+
+If something goes wrong in Resolve, reinstall with debug logging on, reproduce the problem and
+send the log. Close Resolve first, then run one of these:
+
+- Windows, from GitHub:
+
+      irm https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install-debug.ps1 | iex
+
+- macOS / Linux, from GitHub:
+
+      curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install-debug.sh | bash
+
+- Or set the variable before the normal installer, e.g. in PowerShell
+  `$env:BETTER_CAPTIONS_DEBUG = '1'` and then the Option A command (the variable stays set
+  in that window), or `BETTER_CAPTIONS_DEBUG=1 bash install/install.sh` on macOS / Linux.
+- From a local copy (in the project folder, as in Option B):
+
+      $env:BETTER_CAPTIONS_SOURCE = (Get-Location).Path
+      powershell -ExecutionPolicy Bypass -File .\install\install-debug.ps1
+
+  or `BETTER_CAPTIONS_SOURCE="$PWD" bash install/install-debug.sh` on macOS / Linux.
+
+Each run of Better Captions then writes a log to the `logs` folder of the data dir:
+`%LOCALAPPDATA%\BetterCaptions\logs` on Windows, `~/Library/Application Support/BetterCaptions/logs`
+on macOS, `~/.local/share/BetterCaptions/logs` on Linux (the newest 20 are kept). The summary
+and error dialogs end with the log's path. Send the newest `better-captions-*.log` along with
+what you did. It records every call the plugin makes to Resolve's API, what Resolve offers for
+rendering, and the engine's full output.
+
+The log can contain file paths and transcript text; API keys and other secrets are redacted.
+To turn debug logging off, reinstall normally (the plain install command).
 
 ### API keys for LLM speaker naming
 

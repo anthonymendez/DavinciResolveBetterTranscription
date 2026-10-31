@@ -17,6 +17,8 @@
 #   BETTER_CAPTIONS_GPU        auto (default): install the NVIDIA CUDA runtime when an NVIDIA GPU is
 #                              found; cuda: always install it; none: never (see docs/GPU.md)
 #   BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON  =1: don't check/install the Python Resolve runs the plugin with
+#   BETTER_CAPTIONS_DEBUG      =1: turn on the plugin's debug log (config.json "debug": true; install-debug.ps1
+#                              sets it); a reinstall without it turns the log off again
 #   BETTER_CAPTIONS_RESOLVE_PYTHONS     semicolon-separated Pythons to check instead of Resolve's locations (tests)
 #   BETTER_CAPTIONS_LIB        =1: only define the functions (in the caller's session), don't install (tests)
 #
@@ -202,7 +204,7 @@
     }
 
     # Writes config.json, keeping any user settings already in it.
-    function Write-Config([string]$Data, [string]$Gpu) {
+    function Write-Config([string]$Data, [string]$Gpu, [bool]$DebugLog) {
         $py = Get-VenvPython $Data
         $path = Join-Path $Data 'config.json'
         $version = & $py -c "import importlib.metadata as m; print(m.version('better-captions'))"
@@ -219,6 +221,7 @@
         $config['engine'] = @($py, '-m', 'better_captions.cli')
         $config['version'] = "$version".Trim()
         $config['gpu'] = $Gpu
+        $config['debug'] = $DebugLog
         $json = $config | ConvertTo-Json -Depth 10
         # UTF-8 without BOM, so Python's json module reads it.
         [System.IO.File]::WriteAllText($path, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
@@ -359,7 +362,7 @@
         return "$version".Trim()
     }
 
-    function Show-NextSteps([string]$Data, [string]$Gpu, [string]$Version, [string]$Origin) {
+    function Show-NextSteps([string]$Data, [string]$Gpu, [string]$Version, [string]$Origin, [bool]$DebugLog) {
         if ($Gpu -eq 'cuda') {
             $gpuNote = "The NVIDIA GPU runtime (CUDA) is installed; the engine uses your GPU`n" +
                 "automatically and falls back to the CPU if it can't."
@@ -382,6 +385,16 @@ $gpuNote
 Check what the engine detects: & "$py" -m better_captions.cli doctor
 Re-run this installer any time to upgrade.
 "@
+        if ($DebugLog) {
+            Write-Host @"
+
+Debug logging is ON. Each run of Better Captions in Resolve writes a log to
+  $Data\logs\better-captions-YYYYMMDD-HHMMSS.log
+(the newest 20 are kept; the summary and error dialogs show the file's path).
+Send the newest log when reporting a problem. It can contain file paths and
+transcript text; API keys are redacted. To turn it off, re-run the normal installer.
+"@
+        }
     }
 
     # Tests: make the functions above callable from the caller's session instead of installing.
@@ -400,6 +413,7 @@ Re-run this installer any time to upgrade.
         New-Item -ItemType Directory -Force -Path $data | Out-Null
         New-Item -ItemType Directory -Force -Path $workDir | Out-Null
         $gpu = Get-GpuChoice
+        $debugLog = $env:BETTER_CAPTIONS_DEBUG -eq '1'
         Ensure-Uv
         if ($env:BETTER_CAPTIONS_SOURCE) {
             $ref = ''
@@ -411,10 +425,10 @@ Re-run this installer any time to upgrade.
         $src = Get-Source $workDir $ref
         New-EngineVenv $data
         Install-Package $data $src $gpu
-        Write-Config $data $gpu
+        Write-Config $data $gpu $debugLog
         Install-Plugin $data $src
         Ensure-ResolvePython $workDir
-        Show-NextSteps $data $gpu (Get-InstalledVersion $data) $origin
+        Show-NextSteps $data $gpu (Get-InstalledVersion $data) $origin $debugLog
     } catch {
         Write-Host "error: $_" -ForegroundColor Red
     } finally {

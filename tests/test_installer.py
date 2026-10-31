@@ -17,8 +17,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 INSTALL = REPO / "install"
-SH_SCRIPTS = ["install.sh", "uninstall.sh"]
-PS_SCRIPTS = ["install.ps1", "uninstall.ps1"]
+SH_SCRIPTS = ["install.sh", "install-debug.sh", "uninstall.sh"]
+PS_SCRIPTS = ["install.ps1", "install-debug.ps1", "uninstall.ps1"]
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="bash installers")
 
@@ -152,7 +152,8 @@ def test_install_upgrade_uninstall(sandbox: dict[str, str], source: Path) -> Non
     data, utility = _layout(sandbox)
 
     first = _run("install.sh", sandbox)
-    _assert_installed(sandbox, source)
+    assert _assert_installed(sandbox, source)["debug"] is False
+    assert "Debug logging is ON" not in first.stdout
     assert "Workspace > Scripts" in first.stdout
     assert f"Better Captions 0.1.0 is installed (from {source})" in first.stdout
     assert "Skipping the system Python check" in first.stdout
@@ -204,6 +205,35 @@ def test_gpu_override_recorded(sandbox: dict[str, str], source: Path, gpu: str) 
     assert doctor.returncode == 0, doctor.stderr
     report = json.loads(doctor.stdout)
     assert report["backend"] == "faster-whisper" and "nvidia_gpus" in report
+
+
+def test_debug_install_then_normal_reinstall(sandbox: dict[str, str], source: Path) -> None:
+    """install-debug.sh turns the plugin's debug log on (forwarding BETTER_CAPTIONS_SOURCE); a normal
+    reinstall turns it off again and keeps the user's settings either way."""
+    data, _ = _layout(sandbox)
+    debug = _run("install-debug.sh", sandbox)
+    config = _assert_installed(sandbox, source)
+    assert config["debug"] is True
+    assert f"(from {source})" in debug.stdout
+    assert "Debug logging is ON" in debug.stdout and str(data / "logs" / "better-captions-") in debug.stdout
+
+    config["naming_provider"] = "anthropic"
+    (data / "config.json").write_text(json.dumps(config))
+    normal = _run("install.sh", sandbox)
+    config = _assert_installed(sandbox, source)
+    assert config["debug"] is False and config["naming_provider"] == "anthropic"
+    assert "Debug logging is ON" not in normal.stdout
+
+    # The variable alone does the same as the wrapper.
+    sandbox["BETTER_CAPTIONS_DEBUG"] = "1"
+    _run("install.sh", sandbox)
+    assert _assert_installed(sandbox, source)["debug"] is True
+
+    # Uninstall removes the plugin's logs too.
+    (data / "logs").mkdir()
+    (data / "logs" / "better-captions-20260101-000000.log").write_text("log")
+    _run("uninstall.sh", sandbox)
+    assert not data.exists()
 
 
 def test_home_override(sandbox: dict[str, str], source: Path, tmp_path: Path) -> None:
