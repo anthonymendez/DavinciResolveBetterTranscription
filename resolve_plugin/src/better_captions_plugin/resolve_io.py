@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 
 from better_captions_plugin import compat, word_highlight
@@ -144,6 +145,70 @@ def existing_track_names(timeline, track_type: str) -> list[str]:
         except Exception:
             names.append("")
     return names
+
+
+# ---------------------------------------------------------------------------
+# Audio track selection
+
+
+def track_enable_supported(timeline) -> bool:
+    """Whether this Resolve has the track enable calls (``GetIsTrackEnabled``/``SetTrackEnable``, README
+    v16+); without them every audio track takes part in the render and nothing can be chosen."""
+    return callable(getattr(timeline, "GetIsTrackEnabled", None)) and callable(
+        getattr(timeline, "SetTrackEnable", None)
+    )
+
+
+def audio_tracks(timeline) -> list[tuple[int, str, bool]]:
+    """``(index, name, enabled)`` for each audio track, 1-based as the API counts them. Empty when the
+    count can't be read; ``enabled`` is True for every track on a Resolve without the enable calls."""
+    try:
+        count = int(timeline.GetTrackCount("audio"))
+    except Exception:
+        return []
+    supported = track_enable_supported(timeline)
+    tracks = []
+    for index in range(1, count + 1):
+        name = _try(lambda index=index: str(timeline.GetTrackName("audio", index))) or ""
+        enabled = True
+        if supported:
+            enabled = bool(_try(lambda index=index: timeline.GetIsTrackEnabled("audio", index), True))
+        tracks.append((index, name or "Audio %d" % index, enabled))
+    return tracks
+
+
+@contextmanager
+def tracks_enabled(timeline, selected_indices):
+    """Inside the block only the audio tracks in ``selected_indices`` are enabled (so only they reach the
+    audio render); on the way out, success, error or cancel, every track is put back as it was.
+
+    ``None`` leaves the timeline alone, as does a Resolve without the enable calls. Raises ResolveError
+    for an empty selection (a silent render), an index the timeline doesn't have, or a track Resolve
+    won't switch; tracks already switched are restored first."""
+    if selected_indices is None or not track_enable_supported(timeline):
+        yield
+        return
+    wanted = {int(i) for i in selected_indices}
+    tracks = audio_tracks(timeline)
+    original = {index: enabled for index, _name, enabled in tracks}
+    if not wanted:
+        raise ResolveError("pick at least one audio track to transcribe")
+    unknown = sorted(wanted - set(original))
+    if unknown:
+        raise ResolveError("this timeline has no audio track %s" % ", ".join(str(i) for i in unknown))
+    changed = []
+    try:
+        for index, was_enabled in original.items():
+            should = index in wanted
+            if should == was_enabled:
+                continue
+            changed.append(index)  # before the call: a call that raised may still have switched it
+            if not timeline.SetTrackEnable("audio", index, should):
+                raise ResolveError("Resolve would not %s audio track %d" % ("enable" if should else "disable", index))
+        yield
+    finally:
+        for index in changed:
+            _try(lambda index=index: timeline.SetTrackEnable("audio", index, original[index]))
 
 
 # ---------------------------------------------------------------------------

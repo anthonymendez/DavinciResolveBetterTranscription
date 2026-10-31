@@ -14,6 +14,7 @@ EDITS_DIR = "edits"
 HIGHLIGHT_WORDS = "highlight_words"  # bool, off by default
 HIGHLIGHT_COLOR = "highlight_color"  # "#RRGGBB"
 NAMING_PROVIDER = "naming_provider"  # engine --naming for the next run (ui.NAMING_CHOICES)
+AUDIO_TRACKS = "audio_tracks"  # {timeline name: [audio track indices]} chosen for the last run
 
 # config.json key -> engine CLI flag. Values are passed through as strings.
 ENGINE_FLAGS = (
@@ -107,6 +108,24 @@ def save_settings(config: dict, updates: dict) -> bool:
         handle.write("\n")
     os.replace(tmp, path)
     return True
+
+
+def remembered_audio_tracks(config: dict, timeline_name: str) -> list[int] | None:
+    """The audio track indices picked last time for this timeline, or None when there are none."""
+    remembered = config.get(AUDIO_TRACKS)
+    chosen = remembered.get(timeline_name) if isinstance(remembered, dict) else None
+    if not isinstance(chosen, (list, tuple)):
+        return None
+    indices = sorted({int(i) for i in chosen if isinstance(i, int) and not isinstance(i, bool) and i >= 1})
+    return indices or None
+
+
+def remember_audio_tracks(config: dict, timeline_name: str, indices) -> bool:
+    """Save the audio track choice for this timeline (other timelines' choices are kept); see ``save_settings``."""
+    existing = config.get(AUDIO_TRACKS)
+    remembered = dict(existing) if isinstance(existing, dict) else {}
+    remembered[timeline_name] = sorted({int(i) for i in indices})
+    return save_settings(config, {AUDIO_TRACKS: remembered})
 
 
 def engine_command(config: dict, audio_path: str, out_dir: str) -> list[str]:
