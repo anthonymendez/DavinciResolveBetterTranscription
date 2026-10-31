@@ -87,10 +87,14 @@ def test_model_mapping(fake_mlx, model, repo):
     assert fake_mlx.calls[0][1]["path_or_hf_repo"] == repo
 
 
-def test_progress_from_segment_end_over_duration(fake_mlx):
+def test_progress_from_segment_end_over_duration(fake_mlx, monkeypatch):
+    from better_captions.engine import transcribe as tr
+
+    monkeypatch.setattr(tr, "PROGRESS_MIN_INTERVAL", 0.0)  # no throttling here
+    monkeypatch.setattr(tr, "PROGRESS_MIN_STEP", 0.0)
     seen = []
     mlx.transcribe("in.wav", progress=seen.append)
-    assert seen == [0.2, 0.5, 1.0, 1.0]  # segments ending past the duration are clamped
+    assert seen == [0.2, 0.5, 1.0]  # segments ending past the duration are clamped; repeats dropped
 
 
 def test_language_detected_when_not_given(fake_mlx):

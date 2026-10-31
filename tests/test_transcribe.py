@@ -71,9 +71,11 @@ def test_transcribe_words_language_duration(fake_whisper, monkeypatch):
 
 def test_progress_from_segment_end_over_duration(fake_whisper, monkeypatch):
     monkeypatch.setattr(tr, "_cuda_available", lambda: False)
+    monkeypatch.setattr(tr, "PROGRESS_MIN_INTERVAL", 0.0)  # no throttling here: see test_transcribe_progress.py
+    monkeypatch.setattr(tr, "PROGRESS_MIN_STEP", 0.0)
     seen = []
     tr.transcribe("in.wav", progress=seen.append)
-    assert seen == [0.2, 0.5, 1.0]  # last segment ends past the duration: clamped
+    assert seen == [0.0, 0.2, 0.5, 1.0]  # starts at 0; last segment ends past the duration: clamped
 
 
 @pytest.mark.parametrize(

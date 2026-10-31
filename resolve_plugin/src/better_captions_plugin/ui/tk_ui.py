@@ -22,6 +22,7 @@ from better_captions_plugin.ui import (
     ReviewResult,
     checked_highlight_color,
     naming_index,
+    review_scroll,
     speaker_rows,
     step_line,
     step_states,
@@ -50,7 +51,10 @@ class TkProgress(ProgressView):
         self._steps_frame = ttk.Frame(frame)
         self._steps_frame.pack(fill="x", pady=(6, 0))
         self._bar = ttk.Progressbar(frame, length=440, mode="determinate", maximum=100)
-        self._bar.pack(fill="x", pady=(6, 6))
+        self._bar.pack(fill="x", pady=(6, 0))
+        self._indeterminate = False
+        self._percent = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self._percent).pack(anchor="e", pady=(0, 6))
         self._log = tk.Text(frame, height=8, width=70, state="disabled", wrap="word")
         self._log.pack(fill="both", expand=True)
         buttons = ttk.Frame(frame)
@@ -105,10 +109,19 @@ class TkProgress(ProgressView):
 
     def set_progress(self, pct):
         if pct is None:
-            self._bar.configure(mode="indeterminate")
+            if not self._indeterminate:
+                self._indeterminate = True
+                self._bar.configure(mode="indeterminate")
+                self._bar.start(60)  # the sweep only moves while started
+            self._percent.set("")
         else:
-            self._bar.configure(mode="determinate")
-            self._bar["value"] = max(0.0, min(100.0, float(pct)))
+            if self._indeterminate:
+                self._indeterminate = False
+                self._bar.stop()
+                self._bar.configure(mode="determinate")
+            value = max(0.0, min(100.0, float(pct)))
+            self._bar["value"] = value
+            self._percent.set("%d%%" % int(value))
         self.pump()
 
     def log(self, line: str):
@@ -191,8 +204,19 @@ class _ReviewDialog:
                 row=1, column=0, columnspan=4, sticky="w", pady=(0, 8)
             )
 
-        self.table = ttk.Frame(frame)
-        self.table.grid(row=2, column=0, columnspan=4, sticky="we")
+        # The speaker rows live in a canvas no taller than VISIBLE_ROWS rows (scrollbar + mouse wheel),
+        # so the options and the OK/Cancel buttons stay on screen however many speakers there are.
+        table_area = ttk.Frame(frame)
+        table_area.grid(row=2, column=0, columnspan=4, sticky="we")
+        self._canvas = tk.Canvas(table_area, highlightthickness=0, borderwidth=0)
+        self._scrollbar = ttk.Scrollbar(table_area, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._scrollbar.set)
+        self._canvas.pack(side="left", fill="both", expand=True)
+        self.table = ttk.Frame(self._canvas)
+        self._canvas.create_window((0, 0), window=self.table, anchor="nw")
+        self._scrolls = False
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.window.bind(sequence, self._on_wheel, add="+")
         self.name_vars = {}
         self.template_boxes = {}
         self._build_rows({})
@@ -279,6 +303,30 @@ class _ReviewDialog:
             ttk.Label(self.table, text=_shorten(speaker.sample, 48), foreground="#666").grid(
                 row=row_index, column=3, sticky="w"
             )
+        self._fit_table()
+
+    def _fit_table(self):
+        """Size the rows canvas to at most VISIBLE_ROWS rows (plus the header); show the scrollbar if it overflows."""
+        self.table.update_idletasks()
+        width, height = self.table.winfo_reqwidth(), self.table.winfo_reqheight()
+        lines = len(self.speakers) + 1  # the header row counts
+        row_height = max(1, height // lines)
+        shown = review_scroll.bounded_height(lines, row_height, review_scroll.VISIBLE_ROWS + 1)
+        self._canvas.configure(
+            width=width, height=shown, scrollregion=(0, 0, width, height), yscrollincrement=row_height
+        )
+        self._canvas.yview_moveto(0)
+        scrolls = height > shown
+        if scrolls and not self._scrolls:
+            self._scrollbar.pack(side="right", fill="y")
+        elif self._scrolls and not scrolls:
+            self._scrollbar.pack_forget()
+        self._scrolls = scrolls
+
+    def _on_wheel(self, event):
+        units = review_scroll.wheel_units(event)
+        if units and self._scrolls:
+            self._canvas.yview_scroll(units, "units")
 
     def _fix_speakers(self):
         """Open the speaker editor; names typed so far go in as renames, the rows are rebuilt after."""
