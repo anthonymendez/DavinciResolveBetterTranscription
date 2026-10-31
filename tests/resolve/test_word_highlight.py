@@ -26,6 +26,7 @@ from better_captions_plugin.word_highlight import (
     cue_words,
     highlight_steps,
 )
+from tests.resolve.conftest import skip_unless_gui_tests
 from tests.resolve.fake_engine import TRANSCRIPT, with_words
 from tests.resolve.fake_resolve import (
     FakeComp,
@@ -638,6 +639,7 @@ def test_uimanager_review_starts_from_the_remembered_choice_and_keeps_it_across_
 
 @pytest.fixture
 def tk_root():
+    skip_unless_gui_tests()
     tk = pytest.importorskip("tkinter")
     try:
         root = tk.Tk()

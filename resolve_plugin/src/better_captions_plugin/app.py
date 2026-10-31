@@ -22,8 +22,8 @@ import shutil
 import tempfile
 import traceback
 
+from better_captions_plugin import compat, engine_runner, planning, resolve_io, speaker_edits, word_highlight
 from better_captions_plugin import config as config_mod
-from better_captions_plugin import engine_runner, planning, resolve_io, speaker_edits, word_highlight
 from better_captions_plugin import transcript as transcript_mod
 from better_captions_plugin.ui import (
     NAMING_CHOICES,
@@ -109,10 +109,20 @@ def main(
     try:
         if config is None:
             config = config_mod.load_config(environ=environ)
+        # Free Resolve 21.1+ gives Python scripts no usable API (compat.py): say so before any
+        # UI is set up (UIManager is Studio-only anyway) and before touching the project.
+        info = compat.detect(resolve)
+        if resolve is None or info.python_gated:
+            outcome.error = compat.NO_RESOLVE_MESSAGE if resolve is None else compat.gated_message(info)
+            if backend is None and (fusion is not None or bmd is not None):
+                backend = _message_backend()  # inside Resolve's script host: a dialog, not just the Console
+            _print_or_show(backend, outcome.error)
+            return outcome
+        outcome.warnings.extend(compat.warnings_for(info))
         if backend is None:
-            backend = choose_backend(resolve, fusion, bmd, preference=str(config.get("ui", "auto")))
+            backend = choose_backend(resolve, fusion, bmd, preference=str(config.get("ui", "auto")), studio=info.studio)
         try:
-            run(resolve, backend, config, outcome, work_dir=work_dir, popen=popen, sleep=sleep)
+            run(resolve, backend, config, outcome, work_dir=work_dir, popen=popen, sleep=sleep, info=info)
         except Cancelled:
             outcome.cancelled = True
         except (
@@ -136,8 +146,9 @@ def main(
     return outcome
 
 
-def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None, popen=None, sleep=None):
-    project, timeline = resolve_io.current_project_and_timeline(resolve)
+def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None, popen=None, sleep=None, info=None):
+    info = info or compat.detect(resolve)
+    project, timeline = resolve_io.current_project_and_timeline(resolve, info=info)
     media_pool = project.GetMediaPool()
     clock = resolve_io.timeline_clock(timeline, project)
     range_start, range_end = resolve_io.render_range(timeline, clock)
@@ -149,6 +160,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
 
     progress = backend.progress("%s – %s" % (TITLE, timeline_name))
     try:
+        progress.log("Resolve: " + info.label)
         progress.set_status("Rendering timeline audio…")
         progress.set_progress(None)
         render_kwargs = {"pump": progress.pump, "should_cancel": lambda: progress.cancelled}
@@ -396,6 +408,14 @@ def _safe(fn, default):
         return str(value) if value else default
     except Exception:
         return default
+
+
+def _message_backend():
+    """A tkinter backend just to show an error when Resolve gave no usable API; None if tkinter can't start."""
+    try:
+        return choose_backend(preference="tk", studio=False)
+    except Exception:
+        return None
 
 
 def _print_or_show(backend, text):

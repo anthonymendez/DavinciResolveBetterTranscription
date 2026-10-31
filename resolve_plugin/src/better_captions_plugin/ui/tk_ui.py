@@ -232,7 +232,8 @@ class _ReviewDialog:
         """Open the speaker editor; names typed so far go in as renames, the rows are rebuilt after."""
         editor = self.request.editor
         editor.record_names({sid: var.get() for sid, var in self.name_vars.items()})
-        template_choice = {sid: int(box.current()) for sid, box in self.template_boxes.items()}
+        choices = {sid: _current(box) for sid, box in self.template_boxes.items()}
+        template_choice = {sid: index for sid, index in choices.items() if index >= 0}
         _SpeakerEditorDialog(self.window, EditorController(editor, self.request.time_label)).run()
         self.speakers = speaker_rows(editor)
         self._build_rows(template_choice)
@@ -270,12 +271,12 @@ class _ReviewDialog:
             textplus=bool(self.textplus_var.get()),
             highlight_words=bool(self.highlight_var.get()),
             highlight_color=color or self.request.highlight_color,
-            naming_provider=NAMING_CHOICES[max(0, int(self.naming_box.current()))][0],
+            naming_provider=NAMING_CHOICES[max(0, _current(self.naming_box))][0],
         )
         for speaker in self.speakers:
             result.names[speaker.id] = self.name_vars[speaker.id].get().strip() or speaker.id
             if self.request.templates:
-                result.template_index[speaker.id] = int(self.template_boxes[speaker.id].current())
+                result.template_index[speaker.id] = _current(self.template_boxes[speaker.id])
         self.result = result
         self.window.destroy()
 
@@ -384,7 +385,7 @@ class _SpeakerEditorDialog:
 
     def _choice(self, box) -> str | None:
         ids = self._choice_ids.get(str(box), [])
-        index = box.current()
+        index = _current(box)
         return ids[index] if 0 <= index < len(ids) else None
 
     def _set_choices(self, box, choices, keep=None):
@@ -448,6 +449,15 @@ class _SpeakerEditorDialog:
         self.window.grab_set()
         self.window.focus_force()
         self.window.wait_window()
+
+
+def _current(box) -> int:
+    """``box.current()``, or -1 when nothing is chosen. Tk 9 answers "" there instead of Tk 8.6's -1,
+    and tkinter before Python 3.12 passes that "" to getint, which raises TclError."""
+    try:
+        return int(box.current())
+    except (tk.TclError, ValueError):
+        return -1
 
 
 def _center(window):

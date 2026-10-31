@@ -1,0 +1,3 @@
+{
+  "checks": ["env -u DISPLAY -u WAYLAND_DISPLAY uv run pytest -q"]
+}

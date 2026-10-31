@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from better_captions_plugin import compat
 from better_captions_plugin.word_highlight import DEFAULT_HIGHLIGHT_COLOR, normalize_hex_color
 
 HIGHLIGHT_LABEL = "Highlight words as they're spoken (Text+ captions; one clip per word)"
@@ -135,12 +136,7 @@ def choose_backend(
     """``preference``: "auto" (UIManager on Studio, tkinter otherwise), "uimanager" or "tk"."""
     preference = (preference or "auto").lower()
     if studio is None:
-        studio = False
-        if resolve is not None:
-            try:
-                studio = "studio" in str(resolve.GetProductName()).lower()
-            except Exception:
-                studio = False
+        studio = compat.detect(resolve).studio
     if preference in ("uimanager", "fusion") or (preference == "auto" and studio and fusion is not None):
         try:
             from better_captions_plugin.ui.uimanager_ui import UIManagerBackend

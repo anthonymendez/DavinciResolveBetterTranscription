@@ -6,6 +6,7 @@ import pytest
 
 from better_captions_plugin.ui import ReviewRequest, ReviewResult, SpeakerRow
 from better_captions_plugin.ui.uimanager_ui import UIManagerBackend
+from tests.resolve.conftest import skip_unless_gui_tests
 from tests.resolve.fake_resolve import make_world
 
 # --- a minimal fake of fusion.UIManager / bmd.UIDispatcher
@@ -432,11 +433,12 @@ def test_choose_backend_falls_back_to_tk_when_uimanager_fails(monkeypatch):
         ui_pkg.choose_backend(None, broken_fusion, FakeBmd(), preference="uimanager")
 
 
-# --- tkinter (needs a display)
+# --- tkinter (needs a display; opt-in, see conftest.py)
 
 
 @pytest.fixture
 def tk_root():
+    skip_unless_gui_tests()
     tk = pytest.importorskip("tkinter")
     try:
         root = tk.Tk()
@@ -518,3 +520,23 @@ def test_tk_fix_speakers_edits_and_rebuilds_the_review(tk_root, monkeypatch):
         template_index={"SPEAKER_00": 1},
         naming_provider="auto",
     )
+
+
+@pytest.mark.parametrize("answer, expected", [("", -1), ("-1", -1), ("2", 2)])
+def test_tk_combobox_index_survives_tk9_empty_answer(answer, expected):
+    """Tk 9 answers "" for "nothing chosen" (Tk 8.6: -1); tkinter < 3.12 raised TclError on it.
+    Runs ttk's real Combobox.current against a stub interpreter, so no window is needed."""
+    tkinter = pytest.importorskip("tkinter")
+    from tkinter import ttk
+
+    from better_captions_plugin.ui import tk_ui
+
+    class Interp:
+        def call(self, *args):
+            return answer
+
+        getint = staticmethod(tkinter.Tcl().getint)
+
+    box = ttk.Combobox.__new__(ttk.Combobox)
+    box.tk, box._w = Interp(), ".box"
+    assert tk_ui._current(box) == expected

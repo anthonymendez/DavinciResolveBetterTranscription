@@ -13,6 +13,7 @@ from better_captions_plugin.timing import TimelineClock
 from better_captions_plugin.transcript import from_dict
 from better_captions_plugin.ui import NAMING_CHOICES, ReviewRequest, ReviewResult, SpeakerRow, naming_index
 from better_captions_plugin.ui.uimanager_ui import UIManagerBackend
+from tests.resolve.conftest import skip_unless_gui_tests
 from tests.resolve.fake_engine import TRANSCRIPT
 from tests.resolve.fake_resolve import make_world
 from tests.resolve.fake_ui import FakeBackend, accept_all
@@ -23,7 +24,7 @@ VALUES = [value for value, _label in NAMING_CHOICES]
 
 
 def test_choices_cover_every_engine_provider():
-    from better_captions import naming
+    naming = pytest.importorskip("better_captions.naming", reason="needs the engine (bare-Python plugin run)")
 
     assert sorted(VALUES) == sorted(naming.PROVIDERS)
     assert VALUES[0] == "auto"
@@ -121,6 +122,7 @@ def test_uimanager_naming_choice_survives_fix_speakers():
 
 @pytest.fixture
 def tk_root():
+    skip_unless_gui_tests()
     tk = pytest.importorskip("tkinter")
     try:
         root = tk.Tk()
