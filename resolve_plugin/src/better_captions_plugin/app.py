@@ -22,7 +22,15 @@ import shutil
 import tempfile
 import traceback
 
-from better_captions_plugin import compat, engine_runner, planning, resolve_io, speaker_edits, word_highlight
+from better_captions_plugin import (
+    compat,
+    debug_log,
+    engine_runner,
+    planning,
+    resolve_io,
+    speaker_edits,
+    word_highlight,
+)
 from better_captions_plugin import config as config_mod
 from better_captions_plugin import transcript as transcript_mod
 from better_captions_plugin.ui import (
@@ -109,18 +117,24 @@ def main(
     try:
         if config is None:
             config = config_mod.load_config(environ=environ)
+        # Debug log (config "debug" or BETTER_CAPTIONS_DEBUG=1): trace every Resolve API call.
+        debug = debug_log.start(config, environ)
+        if debug is not None:
+            resolve = debug.wrap(resolve)
         # Free Resolve 21.1+ gives Python scripts no usable API (compat.py): say so before any
         # UI is set up (UIManager is Studio-only anyway) and before touching the project.
         info = compat.detect(resolve)
+        debug_log.note("Resolve: %s (studio: %s, version: %r)" % (info.label, info.studio, info.version))
         if resolve is None or info.python_gated:
             outcome.error = compat.NO_RESOLVE_MESSAGE if resolve is None else compat.gated_message(info)
             if backend is None and (fusion is not None or bmd is not None):
                 backend = _message_backend()  # inside Resolve's script host: a dialog, not just the Console
-            _print_or_show(backend, outcome.error)
+            _print_or_show(backend, debug_log.with_path(outcome.error))
             return outcome
         outcome.warnings.extend(compat.warnings_for(info))
         if backend is None:
             backend = choose_backend(resolve, fusion, bmd, preference=str(config.get("ui", "auto")), studio=info.studio)
+        debug_log.note("UI backend: %s" % type(backend).__name__)
         try:
             run(resolve, backend, config, outcome, work_dir=work_dir, popen=popen, sleep=sleep, info=info)
         except Cancelled:
@@ -132,17 +146,25 @@ def main(
             transcript_mod.TranscriptError,
         ) as exc:
             outcome.error = str(exc)
-            backend.error(TITLE, str(exc))
+            debug_log.exception("Error:")
+            backend.error(TITLE, debug_log.with_path(str(exc)))
         except Exception as exc:  # anything else: show it with a traceback rather than dying silently
             outcome.error = "%s: %s" % (type(exc).__name__, exc)
-            backend.error(TITLE, "Unexpected error: %s\n\n%s" % (exc, traceback.format_exc()))
+            debug_log.exception("Unexpected error:")
+            backend.error(TITLE, debug_log.with_path("Unexpected error: %s\n\n%s" % (exc, traceback.format_exc())))
     except config_mod.ConfigError as exc:
         outcome.error = str(exc)
-        _print_or_show(backend, str(exc))
+        debug_log.start(config or {}, environ)  # BETTER_CAPTIONS_DEBUG=1 still logs a missing config
+        debug_log.exception("Config error:")
+        _print_or_show(backend, debug_log.with_path(str(exc)))
+    except BaseException:
+        debug_log.exception("Fatal error:")
+        raise
     finally:
         _cleanup(outcome)
         if owns_backend and backend is not None:
             backend.close()
+        debug_log.finish(outcome)
     return outcome
 
 
@@ -166,6 +188,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
         render_kwargs = {"pump": progress.pump, "should_cancel": lambda: progress.cancelled}
         if sleep is not None:
             render_kwargs["sleep"] = sleep
+        debug_log.render_diagnostics(project)
         try:
             wav = resolve_io.render_audio(project, timeline, audio_dir, range_start, range_end, **render_kwargs)
         except resolve_io.ResolveError as exc:
@@ -175,6 +198,8 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
         progress.log("Rendered audio: %s" % wav)
 
         argv = config_mod.engine_command(config, wav, out_dir)
+        if debug_log.current() is not None:
+            argv.append("--verbose")  # the engine's debug logging, on stderr
         progress.set_status("Starting the engine…")
         progress.set_progress(0)
         progress.log("Engine: " + " ".join(argv))
@@ -189,14 +214,17 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
             elif kind == "error":
                 progress.log("Error: %s" % event.get("message"))
 
+        env = config_mod.engine_environment()
+        debug_log.engine_start(argv, env)
         try:
             done = engine_runner.run_engine(
                 argv,
                 on_event=on_event,
                 should_cancel=lambda: progress.cancelled,
                 pump=progress.pump,
-                env=config_mod.engine_environment(),
+                env=env,
                 popen=popen,
+                trace=debug_log.engine_trace(),
             )
         except engine_runner.EngineCancelled as exc:
             raise Cancelled() from exc
@@ -228,6 +256,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
         transcript, templates, timeline_name, clock, range_start, range_end, config, editor=editor, note=note
     )
     review = backend.review(request)
+    debug_log.note("Review result: %r" % (review,))
     if review is None:
         raise Cancelled()
     if not review.subtitles and not review.textplus:
@@ -242,7 +271,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
 
     create_tracks(media_pool, timeline, transcript, review, templates, clock, range_start, srt_paths, outcome)
     outcome.kept_work_dir = bool(outcome.subtitle_fallbacks) or bool(config.get("keep_work_dir"))
-    backend.message(TITLE, outcome.summary())
+    backend.message(TITLE, debug_log.with_path(outcome.summary()))
 
 
 def reapply_saved_edits(editor, paths, audio_sha) -> str:

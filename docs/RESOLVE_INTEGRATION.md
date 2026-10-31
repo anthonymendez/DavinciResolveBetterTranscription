@@ -169,6 +169,14 @@ and parsed line by line (`engine_runner.py`); `PYTHONPATH`/`PYTHONHOME` from Res
 script host are stripped from the child's environment so the engine venv is clean; on
 Windows `CREATE_NO_WINDOW` avoids a console flashing up. Cancel terminates the process.
 
+With debug logging on (README, "Debug logs") the plugin adds `--verbose` (engine loggers at DEBUG
+and tracebacks on stderr, which the plugin already reads) and records the command, the
+environment changes, every raw stdout/stderr line and the exit code in the run's log. The same
+log traces every Resolve API call (`debug_log.Tracer`, a transparent proxy around `resolve` and
+every object it returns) and, just before rendering, what `GetRenderFormats()` /
+`GetRenderCodecs()` (by format name and by extension), `GetRenderPresetList()`,
+`GetCurrentRenderFormatAndCodec()`, `GetCurrentRenderMode()` and `GetRenderSettings()` return.
+
 ## 7. Fixing speakers before tracks are written
 
 Diarization mistakes (one person split into two speakers, a line given to the wrong

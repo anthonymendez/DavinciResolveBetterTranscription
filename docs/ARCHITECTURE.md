@@ -49,6 +49,10 @@ Two halves, joined by a subprocess + JSON contract:
   (`secrets.py`, service `better-captions`) or env; plain-text `anthropic_api_key` / `openai_api_key`
   here are legacy, still read with a warning, and moved out by `better-captions key migrate`.
   `"gpu"` records whether the installer added the NVIDIA CUDA runtime (the `cuda` extra); see `docs/GPU.md`.
+  `"debug"` is true after `install-debug.ps1` / `install-debug.sh` (or `BETTER_CAPTIONS_DEBUG=1`) and false
+  after a normal install; while it is true (or `BETTER_CAPTIONS_DEBUG=1` is set in Resolve's environment)
+  each run writes `<data>/logs/better-captions-YYYYMMDD-HHMMSS.log` (`debug_log.py`; newest 20 kept) and
+  passes `--verbose` to the engine.
 - Everything under `resolve_plugin/Utility/` is copied into Resolve's `Fusion/Scripts/Utility/` folder:
   - Windows `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility`
   - macOS `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility`

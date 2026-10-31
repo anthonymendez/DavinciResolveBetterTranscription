@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/uninstall.sh | bash
 #
-# Removes the engine venv, config.json and the Resolve plugin files the
+# Removes the engine venv, config.json, the debug logs and the Resolve plugin files the
 # installer copied. Leaves uv installed. Honours BETTER_CAPTIONS_HOME.
 
 set -euo pipefail
@@ -61,6 +61,9 @@ main() {
     # Only remove what the installer created: BETTER_CAPTIONS_HOME may point
     # at a directory that holds other things.
     rm -rf "${data:?}/venv" "$data/config.json" "$data/config.json.tmp" "$manifest"
+    # The plugin's debug logs (install-debug.sh).
+    rm -f "$data/logs"/better-captions-*.log
+    rmdir "$data/logs" 2>/dev/null || true
     rmdir "$data" 2>/dev/null || say "Left $data in place (it still contains other files)"
     say "Better Captions has been uninstalled."
 }

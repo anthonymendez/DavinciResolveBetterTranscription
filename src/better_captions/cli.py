@@ -30,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-lines", type=int, default=2)
     r.add_argument("--max-duration", type=float, default=6.0)
     r.add_argument("--no-cache", action="store_true", help="re-transcribe even if this audio was processed before")
+    r.add_argument(
+        "--verbose", action="store_true", help="debug logging and tracebacks on stderr (the plugin's debug mode)"
+    )
 
     c = sub.add_parser("cache", help="manage the transcription cache")
     c.add_argument("action", choices=["clear"])
@@ -133,6 +136,17 @@ def doctor() -> dict:
     return report
 
 
+def enable_verbose_logging() -> None:
+    """`run --verbose`: the engine's own loggers at DEBUG, everything else at INFO, all on stderr
+    (stdout carries the JSON-line events)."""
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(name)s: %(message)s", force=True
+    )
+    logging.getLogger("better_captions").setLevel(logging.DEBUG)
+
+
 def run(audio: str, out: str, options) -> None:
     # The pipeline (numpy and friends) is imported on use so `doctor` still runs when those are broken.
     from better_captions.pipeline import run as pipeline_run
@@ -145,6 +159,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         print(json.dumps(doctor(), indent=2))
     elif args.command == "run":
+        if args.verbose:
+            enable_verbose_logging()
         from better_captions.cues import CueOptions
         from better_captions.pipeline import RunOptions, json_lines_events
 
@@ -166,6 +182,10 @@ def main(argv: list[str] | None = None) -> int:
         try:
             run(args.audio, args.out, options)
         except Exception as exc:  # report to the plugin as a structured event
+            if args.verbose:
+                import traceback
+
+                traceback.print_exc(file=sys.stderr)
             json_lines_events({"event": "error", "message": f"{type(exc).__name__}: {exc}"})
             return 1
     elif args.command == "key":
