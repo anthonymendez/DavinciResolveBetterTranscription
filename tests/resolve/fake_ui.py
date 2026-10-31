@@ -86,11 +86,15 @@ class FakeBackend(Backend):
         pause_when=None,
         resume_when=None,
         tracks_answer="default",
+        model_answer="default",
     ):
         """``answer``: ReviewResult, None (cancel) or a callable(ReviewRequest) -> ReviewResult|None.
-        ``tracks_answer``: the audio track pick — "default" (the preselection), None (cancel) or a list."""
+        ``tracks_answer``: the audio track pick — "default" (the preselection), None (cancel) or a list.
+        ``model_answer``: the model pick — "default" (the preselected model), None (cancel) or a model name."""
         self._answer = answer
         self._tracks_answer = tracks_answer
+        self._model_answer = model_answer
+        self.model_requests = []  # (models, current) per pick_model
         self.track_requests = []
         self.cancel_after = cancel_after
         self.cancel_when = cancel_when
@@ -118,6 +122,12 @@ class FakeBackend(Backend):
         if self._tracks_answer == "default":
             return list(preselected)
         return self._tracks_answer
+
+    def pick_model(self, models, current):
+        self.model_requests.append((list(models), current))
+        if self._model_answer == "default":
+            return current
+        return self._model_answer
 
     def review(self, request: ReviewRequest):
         self.requests.append(request)
