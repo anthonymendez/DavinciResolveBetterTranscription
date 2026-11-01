@@ -9,11 +9,21 @@ import sys
 APP_DIR_NAME = "BetterCaptions"
 CONFIG_FILE = "config.json"
 EDITS_DIR = "edits"
+RENDERS_DIR = "renders"
 
 # Review-dialog choices remembered between runs (save_settings).
 HIGHLIGHT_WORDS = "highlight_words"  # bool, off by default
 HIGHLIGHT_COLOR = "highlight_color"  # "#RRGGBB"
 NAMING_PROVIDER = "naming_provider"  # engine --naming for the next run (ui.NAMING_CHOICES)
+FORCE_RERENDER = "force_rerender"  # bool: always render, never reuse a cached render
+AUDIO_TRACKS = "audio_tracks"  # {timeline name: [audio track indices]} chosen for the last run
+# {timeline name: {"<audio track index>": {"role": "person"|"group"|"none", "name": speaker name}}} (track_picker)
+TRACK_ROLES = "track_roles"
+# before track roles: {timeline name: {"<audio track index>": speaker name}}; read as person tracks, and a
+# timeline's entry moves to TRACK_ROLES when its tracks are next picked
+TRACK_SPEAKERS = "track_speakers"
+TRACK_ROLE_NAMES = ("person", "group", "none")
+VOICE_LIBRARY = "voice_library"  # false: neither name speakers by voice nor save confirmed voices
 
 # config.json key -> engine CLI flag. Values are passed through as strings.
 ENGINE_FLAGS = (
@@ -60,6 +70,12 @@ def edits_dir(config: dict) -> str | None:
     """``<data>/edits``: speaker fixes kept per rendered audio, so a re-run can re-apply them."""
     path = config.get("_path")
     return os.path.join(os.path.dirname(str(path)), EDITS_DIR) if path else None
+
+
+def renders_dir(config: dict) -> str | None:
+    """``<data>/renders``: the last few timeline audio renders, reused while the timeline is unchanged."""
+    path = config.get("_path")
+    return os.path.join(os.path.dirname(str(path)), RENDERS_DIR) if path else None
 
 
 def load_config(path=None, environ=None) -> dict:
@@ -109,8 +125,102 @@ def save_settings(config: dict, updates: dict) -> bool:
     return True
 
 
-def engine_command(config: dict, audio_path: str, out_dir: str) -> list[str]:
-    """``config["engine"] + ["run", audio, "--out", out_dir, <flags from user settings>]``."""
+def remembered_audio_tracks(config: dict, timeline_name: str) -> list[int] | None:
+    """The audio track indices picked last time for this timeline, or None when there are none."""
+    remembered = config.get(AUDIO_TRACKS)
+    chosen = remembered.get(timeline_name) if isinstance(remembered, dict) else None
+    if not isinstance(chosen, (list, tuple)):
+        return None
+    indices = sorted({int(i) for i in chosen if isinstance(i, int) and not isinstance(i, bool) and i >= 1})
+    return indices or None
+
+
+def _track_entries(config: dict, key: str, timeline_name: str) -> dict[int, object] | None:
+    """``config[key][timeline_name]`` as {track index >= 1: value}; None when this timeline has no entry."""
+    remembered = config.get(key)
+    entries = remembered.get(timeline_name) if isinstance(remembered, dict) else None
+    if not isinstance(entries, dict):
+        return None
+    out = {}
+    for key_, value in entries.items():
+        try:
+            index = int(key_)
+        except (TypeError, ValueError):
+            continue
+        if index >= 1:
+            out[index] = value
+    return out
+
+
+def _legacy_track_speakers(config: dict, timeline_name: str) -> dict[int, str]:
+    named = _track_entries(config, TRACK_SPEAKERS, timeline_name) or {}
+    return {i: name.strip() for i, name in named.items() if isinstance(name, str) and name.strip()}
+
+
+def remembered_track_speakers(config: dict, timeline_name: str) -> dict[int, str]:
+    """{audio track index: speaker name} given last time for this timeline; {} when there are none."""
+    entries = _track_entries(config, TRACK_ROLES, timeline_name)
+    if entries is None:
+        return _legacy_track_speakers(config, timeline_name)
+    out = {}
+    for index, entry in entries.items():
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if isinstance(name, str) and name.strip():
+            out[index] = name.strip()
+    return out
+
+
+def remembered_track_roles(config: dict, timeline_name: str) -> dict[int, str]:
+    """{audio track index: role} chosen last time for this timeline (a track named in the older
+    ``track_speakers`` is one person); {} when there are none."""
+    entries = _track_entries(config, TRACK_ROLES, timeline_name)
+    if entries is None:
+        return {index: "person" for index in _legacy_track_speakers(config, timeline_name)}
+    out = {}
+    for index, entry in entries.items():
+        role = entry.get("role") if isinstance(entry, dict) else None
+        if role in TRACK_ROLE_NAMES:
+            out[index] = role
+    return out
+
+
+def remember_audio_tracks(config: dict, timeline_name: str, indices, speakers=None, roles=None) -> bool:
+    """Save the audio track choice for this timeline (other timelines' choices are kept), and with
+    ``speakers`` ({track index: name}) or ``roles`` ({track index: role}) who talks on the chosen tracks;
+    that moves the timeline out of the older ``track_speakers``. See ``save_settings``."""
+    chosen = sorted({int(i) for i in indices})
+    existing = config.get(AUDIO_TRACKS)
+    remembered = dict(existing) if isinstance(existing, dict) else {}
+    remembered[timeline_name] = chosen
+    updates = {AUDIO_TRACKS: remembered}
+    if speakers is not None or roles is not None:
+        names = {int(i): str(n or "").strip() for i, n in (speakers or {}).items()}
+        kinds = {int(i): r for i, r in (roles or {}).items() if r in TRACK_ROLE_NAMES}
+        entries = {}
+        for index in chosen:
+            entry = {}
+            if index in kinds:
+                entry["role"] = kinds[index]
+            if names.get(index):
+                entry["name"] = names[index]
+            if entry:
+                entries[str(index)] = entry
+        existing = config.get(TRACK_ROLES)
+        by_timeline = dict(existing) if isinstance(existing, dict) else {}
+        if entries:
+            by_timeline[timeline_name] = entries
+        else:
+            by_timeline.pop(timeline_name, None)
+        if by_timeline or TRACK_ROLES in config:
+            updates[TRACK_ROLES] = by_timeline
+        legacy = config.get(TRACK_SPEAKERS)
+        if isinstance(legacy, dict) and timeline_name in legacy:
+            updates[TRACK_SPEAKERS] = {k: v for k, v in legacy.items() if k != timeline_name}
+    return save_settings(config, updates)
+
+
+def _engine(config: dict) -> list[str]:
+    """``config["engine"]``, the command that starts the engine's CLI; ConfigError when it is unusable."""
     engine = config.get("engine")
     if not isinstance(engine, (list, tuple)) or not engine or not all(isinstance(x, str) for x in engine):
         raise ConfigError(
@@ -119,15 +229,48 @@ def engine_command(config: dict, audio_path: str, out_dir: str) -> list[str]:
         )
     if not os.path.exists(engine[0]):
         raise ConfigError("the engine Python %s no longer exists. Re-run the installer." % engine[0])
-    argv = [*engine, "run", str(audio_path), "--out", str(out_dir)]
+    return list(engine)
+
+
+def engine_command(config: dict, audio_path: str | None, out_dir: str, fixed_tracks=None, tracks=None) -> list[str]:
+    """``config["engine"] + ["run", audio, "--out", out_dir, <flags from user settings>]``, plus a
+    ``--fixed-track NAME=PATH`` per ``fixed_tracks`` entry ``(speaker name, audio of that track alone)``
+    and a ``--track ROLE:NAME=PATH`` per ``tracks`` entry ``(role, name, audio of that track alone)``.
+    With ``tracks`` the engine transcribes each of them on its own; ``audio_path`` is then None."""
+    argv = [*_engine(config), "run"]
+    if audio_path is not None:
+        argv.append(str(audio_path))
+    argv += ["--out", str(out_dir)]
     for key, flag in ENGINE_FLAGS:
         value = config.get(key)
         if value is None or value == "":
             continue
         argv += [flag, str(value)]
+    for name, path in fixed_tracks or ():
+        argv += ["--fixed-track", "%s=%s" % (name, path)]
+    for role, name, path in tracks or ():
+        argv += ["--track", "%s:%s=%s" % (role, name, path)]
+    if not voice_library_enabled(config):
+        argv.append("--no-voice-library")
     extra = config.get("engine_args")
     if isinstance(extra, (list, tuple)):
         argv += [str(x) for x in extra]
+    return argv
+
+
+def voice_library_enabled(config: dict) -> bool:
+    """Config ``"voice_library": false`` turns the voice library off: speakers are not named by voice and
+    confirmed voices are not saved."""
+    return config.get(VOICE_LIBRARY) is not False
+
+
+def voices_command(config: dict, out_dir: str, names: dict) -> list[str]:
+    """``config["engine"] + ["voices", "save", "--from", out_dir, "--name", "SPEAKER=NAME", ...]``: keep the
+    voices of the run in ``out_dir`` for the speakers the editor confirmed (``names``: speaker id -> name)."""
+    engine = _engine(config)
+    argv = [*engine, "voices", "save", "--from", str(out_dir)]
+    for speaker_id, name in names.items():
+        argv += ["--name", "%s=%s" % (speaker_id, name)]
     return argv
 
 

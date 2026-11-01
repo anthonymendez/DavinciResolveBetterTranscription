@@ -7,9 +7,10 @@ and verifies their effect.
 
 from __future__ import annotations
 
-import glob
+import math
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 
 from better_captions_plugin import compat, word_highlight
@@ -117,7 +118,12 @@ def _setting(obj, key):
 
 
 def render_range(timeline, clock: TimelineClock) -> tuple[int, int | None]:
-    """``(start_frame, end_frame)`` of the in/out range if one is set, else ``(timeline start, None)``."""
+    """``(start_frame, end_frame)`` of the in/out range if one is set, else ``(timeline start, None)``;
+    absolute frames, as ``MarkIn``/``MarkOut`` and ``recordFrame`` take them.
+
+    Resolve Studio 21.1.2 returns marks counted from the timeline start (a range set at
+    01:01:00:00 on a 01:00:00:00 timeline reads 3600 at 60 fps, checked headless 2026-11-01);
+    ``marks_offset`` decides which reading a pair of marks needs."""
     marks = None
     try:
         marks = timeline.GetMarkInOut()
@@ -129,8 +135,23 @@ def render_range(timeline, clock: TimelineClock) -> tuple[int, int | None]:
             if isinstance(section, dict) and "in" in section and "out" in section:
                 start, end = int(section["in"]), int(section["out"])
                 if end >= start:
-                    return start, end
+                    offset = marks_offset(timeline, clock.start_frame, start, end)
+                    return start + offset, end + offset
     return clock.start_frame, None
+
+
+def marks_offset(timeline, start_frame: int, mark_in: int, mark_out: int) -> int:
+    """What to add to ``GetMarkInOut()`` values for absolute frames: the timeline start when they are
+    counted from it (21.1: any mark before the start frame can only be relative, and a relative range
+    that still fits inside the timeline is taken as one), 0 for the absolute marks older releases give."""
+    if start_frame <= 0 or mark_in < start_frame:
+        return max(0, start_frame)
+    end = _try(timeline.GetEndFrame)  # one past the last frame
+    try:
+        fits_relative = start_frame + mark_out < int(end)
+    except (TypeError, ValueError):
+        fits_relative = False
+    return start_frame if fits_relative else 0
 
 
 def existing_track_names(timeline, track_type: str) -> list[str]:
@@ -148,7 +169,78 @@ def existing_track_names(timeline, track_type: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Audio track selection
+
+
+def track_enable_supported(timeline) -> bool:
+    """Whether this Resolve has the track enable calls (``GetIsTrackEnabled``/``SetTrackEnable``, README
+    v16+); without them every audio track takes part in the render and nothing can be chosen."""
+    return callable(getattr(timeline, "GetIsTrackEnabled", None)) and callable(
+        getattr(timeline, "SetTrackEnable", None)
+    )
+
+
+def audio_tracks(timeline) -> list[tuple[int, str, bool]]:
+    """``(index, name, enabled)`` for each audio track, 1-based as the API counts them. Empty when the
+    count can't be read; ``enabled`` is True for every track on a Resolve without the enable calls."""
+    try:
+        count = int(timeline.GetTrackCount("audio"))
+    except Exception:
+        return []
+    supported = track_enable_supported(timeline)
+    tracks = []
+    for index in range(1, count + 1):
+        name = _try(lambda index=index: str(timeline.GetTrackName("audio", index))) or ""
+        enabled = True
+        if supported:
+            enabled = bool(_try(lambda index=index: timeline.GetIsTrackEnabled("audio", index), True))
+        tracks.append((index, name or "Audio %d" % index, enabled))
+    return tracks
+
+
+@contextmanager
+def tracks_enabled(timeline, selected_indices):
+    """Inside the block only the audio tracks in ``selected_indices`` are enabled (so only they reach the
+    audio render); on the way out, success, error or cancel, every track is put back as it was.
+
+    ``None`` leaves the timeline alone, as does a Resolve without the enable calls. Raises ResolveError
+    for an empty selection (a silent render), an index the timeline doesn't have, or a track Resolve
+    won't switch; tracks already switched are restored first."""
+    if selected_indices is None or not track_enable_supported(timeline):
+        yield
+        return
+    wanted = {int(i) for i in selected_indices}
+    tracks = audio_tracks(timeline)
+    original = {index: enabled for index, _name, enabled in tracks}
+    if not wanted:
+        raise ResolveError("pick at least one audio track to transcribe")
+    unknown = sorted(wanted - set(original))
+    if unknown:
+        raise ResolveError("this timeline has no audio track %s" % ", ".join(str(i) for i in unknown))
+    changed = []
+    try:
+        for index, was_enabled in original.items():
+            should = index in wanted
+            if should == was_enabled:
+                continue
+            changed.append(index)  # before the call: a call that raised may still have switched it
+            if not timeline.SetTrackEnable("audio", index, should):
+                raise ResolveError("Resolve would not %s audio track %d" % ("enable" if should else "disable", index))
+        yield
+    finally:
+        for index in changed:
+            _try(lambda index=index: timeline.SetTrackEnable("audio", index, original[index]))
+
+
+# ---------------------------------------------------------------------------
 # Audio render
+
+
+# Stock render preset that sets up an audio-only WAV render. Its name is localised on non-English
+# installs, so any preset with "audio" in its name is tried after it.
+AUDIO_ONLY_PRESET = "Audio Only"
+# What the engine can decode (soundfile); a render that comes out as anything else is reported.
+AUDIO_EXTENSIONS = (".wav", ".aif", ".aiff", ".flac")
 
 
 def render_audio(
@@ -162,21 +254,22 @@ def render_audio(
     timeout: float = 6 * 3600,
     sleep=time.sleep,
 ) -> str:
-    """Render the timeline's audio (whole, or ``start_frame``..``end_frame``) as a WAV; return its path."""
-    fmt, codec = pick_wav_format(project)
-    previous_mode = None
-    try:
-        previous_mode = project.GetCurrentRenderMode()
-    except Exception:
-        pass
-    if not project.SetCurrentRenderFormatAndCodec(fmt, codec):
-        raise ResolveError("could not select the %s / %s render format" % (fmt, codec))
+    """Render the timeline's audio (whole, or ``start_frame``..``end_frame``) as a WAV; return its path.
+
+    Resolve's Wave format exposes no codecs, so ``SetCurrentRenderFormatAndCodec("wav", ...)`` is
+    rejected on 19.1-21.0 (docs/RESOLVE_INTEGRATION.md §5): the "Audio Only" preset sets up the
+    render, and on 21.1+ the ``AudioFormat`` render setting asks for WAV directly."""
+    previous_mode = _try(project.GetCurrentRenderMode)
+    previous_format = _try(project.GetCurrentRenderFormatAndCodec)
+    how = select_audio_render(project)
     try:
         project.SetCurrentRenderMode(1)  # single clip
     except Exception:
         pass
     os.makedirs(out_dir, exist_ok=True)
     name = "better-captions-%d" % int(time.time())
+    if end_frame is None:
+        start_frame, end_frame = whole_timeline_range(timeline, start_frame)
     settings = {
         "TargetDir": out_dir,
         "CustomName": name,
@@ -187,14 +280,20 @@ def render_audio(
     if end_frame is not None:
         settings["MarkIn"] = int(start_frame)
         settings["MarkOut"] = int(end_frame)
-    if not project.SetRenderSettings(settings):
-        raise ResolveError("Resolve rejected the audio render settings")
-    job = project.AddRenderJob()
-    if not job:
-        raise ResolveError("could not add the audio render job")
+    job = None
     try:
+        apply_audio_settings(project, settings, how)
+        job = project.AddRenderJob()
+        if not job:
+            raise ResolveError("could not add the audio render job")
+        # StartRendering sometimes returns False and leaves the job Ready (seen on 21.1): retry once.
         if not project.StartRendering([job]):
-            raise ResolveError("could not start the audio render")
+            sleep(0.5)
+            if not project.StartRendering([job]):
+                status = _try(lambda: project.GetRenderJobStatus(job)) or {}
+                raise ResolveError(
+                    "could not start the audio render (job status: %s)" % (status.get("JobStatus") or "unknown")
+                )
         deadline = time.time() + timeout
         while project.IsRenderingInProgress():
             if pump:
@@ -217,47 +316,141 @@ def render_audio(
         if state and state not in ("complete", "completed", "done"):
             raise ResolveError("the audio render ended with status %r" % status.get("JobStatus"))
     finally:
-        try:
-            project.DeleteRenderJob(job)
-        except Exception:
-            pass
-        if previous_mode is not None:
+        if job:
             try:
-                project.SetCurrentRenderMode(previous_mode)
+                project.DeleteRenderJob(job)
             except Exception:
                 pass
-    candidates = [p for p in glob.glob(os.path.join(out_dir, "*.wav")) if name in os.path.basename(p)]
-    candidates = candidates or glob.glob(os.path.join(out_dir, "*.wav"))
-    if not candidates:
-        raise ResolveError("the render finished but no WAV appeared in %s" % out_dir)
-    return max(candidates, key=os.path.getmtime)
+        restore_render_state(project, previous_format, previous_mode)
+    return find_rendered_audio(out_dir, name)
 
 
-def pick_wav_format(project) -> tuple[str, str]:
-    formats = project.GetRenderFormats() or {}
-    fmt = None
-    for key, ext in formats.items():
+def whole_timeline_range(timeline, start_frame: int) -> tuple[int, int | None]:
+    """The whole timeline as an explicit ``(MarkIn, MarkOut)``, or ``(start_frame, None)`` when Resolve
+    won't say. ``SelectAllFrames`` alone isn't enough: after a render job with MarkIn/MarkOut, a later
+    ``SelectAllFrames`` job can keep the stale range and ``StartRendering`` returns False (seen on 21.x)."""
+    start = _try(timeline.GetStartFrame)
+    end = _try(timeline.GetEndFrame)  # one past the last frame
+    try:
+        start, end = int(start), int(end)
+    except (TypeError, ValueError):
+        return start_frame, None
+    if end <= start:
+        return start_frame, None
+    return start, end - 1
+
+
+def select_audio_render(project) -> str:
+    """Put the Deliver page's render on audio-only WAV as far as this Resolve allows. Returns how:
+    "preset" (an audio preset loaded), "format" (a ("wav", codec) pair was accepted) or "settings"
+    (neither; ``apply_audio_settings``'s ``AudioFormat`` has to do it, which needs 21.1+)."""
+    for preset in _audio_presets(project):
+        if _try(lambda preset=preset: project.LoadRenderPreset(preset)):
+            return "preset"
+    ext = _wav_extension(project)
+    for codec in _wav_codecs(project, ext):
+        if _try(lambda codec=codec: project.SetCurrentRenderFormatAndCodec(ext, codec)):
+            return "format"
+    return "settings"
+
+
+def apply_audio_settings(project, settings: dict, how: str):
+    """``SetRenderSettings`` with the WAV/LPCM audio keys, dropping the keys an older Resolve rejects
+    (``AudioFormat`` is 21.1+)."""
+    codec = _audio_codec_token(project)
+    audio = {"AudioCodec": codec, "AudioBitDepth": 16, "AudioSampleRate": 48000}
+    attempts = [dict(settings, AudioFormat="wav", **audio)]
+    if how != "settings":  # without a preset or format, only AudioFormat makes the render a WAV
+        attempts += [dict(settings, **audio), dict(settings)]
+    for attempt in attempts:
+        if project.SetRenderSettings(attempt):
+            return
+    if how == "settings":
+        raise ResolveError(
+            "this Resolve would not set up an audio-only WAV render: the %r preset is missing and the Wave "
+            "format exposes no codec. On the Deliver page, check that the Audio Only preset exists." % AUDIO_ONLY_PRESET
+        )
+    raise ResolveError("Resolve rejected the audio render settings")
+
+
+def restore_render_state(project, previous_format, previous_mode):
+    """Put back the render format/codec and mode the user had. The audio-only state layers onto later
+    renders otherwise (an .mp4 job after an Audio Only render came out audio-only)."""
+    fmt, codec = (
+        (previous_format.get("format"), previous_format.get("codec"))
+        if isinstance(previous_format, dict)
+        else (None, None)
+    )
+    if fmt and codec and _try(lambda: project.SetCurrentRenderFormatAndCodec(fmt, codec)):
+        _try(lambda: project.SetRenderSettings({"ExportVideo": True, "ExportAudio": True}))
+    if previous_mode is not None:
+        _try(lambda: project.SetCurrentRenderMode(previous_mode))
+
+
+def find_rendered_audio(out_dir: str, name: str) -> str:
+    """The rendered file, found by its ``CustomName`` stem with any extension (presets may pick the
+    container; a per-channel render adds suffixes)."""
+    try:
+        files = [os.path.join(out_dir, f) for f in os.listdir(out_dir) if f.startswith(name)]
+    except OSError:
+        files = []
+    audio = [f for f in files if os.path.splitext(f)[1].lower() in AUDIO_EXTENSIONS]
+    if audio:
+        return sorted(audio)[0]
+    if files:
+        raise ResolveError(
+            "Resolve rendered %s, not a WAV; set the Audio Only preset on the Deliver page to Wave / Linear PCM"
+            % ", ".join(os.path.basename(f) for f in sorted(files))
+        )
+    raise ResolveError("the render finished but no audio file appeared in %s" % out_dir)
+
+
+def _try(fn, default=None):
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def _audio_presets(project) -> list:
+    names = [AUDIO_ONLY_PRESET]
+    for entry in _try(project.GetRenderPresetList) or []:
+        if isinstance(entry, dict):  # some builds return preset info tables
+            entry = entry.get("PresetName") or entry.get("Name") or entry.get("name") or ""
+        entry = str(entry)
+        if "audio" in entry.lower() and entry not in names:
+            names.append(entry)
+    return names
+
+
+def _wav_extension(project) -> str:
+    """The Wave format's extension: what the codec calls take (not the "Wave" name)."""
+    for ext in (_try(project.GetRenderFormats) or {}).values():
         if str(ext).lower().lstrip(".") == "wav":
-            fmt = key
+            return str(ext).lstrip(".")
+    return "wav"
+
+
+def _wav_codecs(project, ext) -> list:
+    codecs = {}
+    for getter in ("GetAudioRenderCodecs", "GetRenderCodecs"):  # the first is 21.1+
+        method = getattr(project, getter, None)
+        if method is not None:
+            codecs = _try(lambda method=method: method(ext)) or {}
+        if codecs:
             break
-    if fmt is None:
-        for key in formats:
-            if "wav" in str(key).lower():
-                fmt = key
-                break
-    if fmt is None:
-        raise ResolveError("this Resolve offers no WAV render format (formats: %s)" % ", ".join(map(str, formats)))
-    codecs = project.GetRenderCodecs(fmt) or {}
-    codec = None
+    values = [str(v) for _description, v in sorted(codecs.items(), key=lambda kv: "pcm" not in str(kv).lower())]
+    return values + [v for v in ("lpcm", "LinearPCM") if v not in values]
+
+
+def _audio_codec_token(project) -> str:
+    """The LPCM codec name for the ``AudioCodec`` setting: from 21.1's GetAudioRenderCodecs, else "lpcm"."""
+    method = getattr(project, "GetAudioRenderCodecs", None)
+    codecs = (_try(lambda: method("wav")) if method is not None else None) or {}
     for description, value in codecs.items():
         if "pcm" in str(description).lower() or "pcm" in str(value).lower():
-            codec = value
-            break
-    if codec is None and codecs:
-        codec = next(iter(codecs.values()))
-    if codec is None:
-        raise ResolveError("no audio codec available for the %s render format" % fmt)
-    return fmt, codec
+            return str(value)
+    return "lpcm"
 
 
 # ---------------------------------------------------------------------------
@@ -398,21 +591,23 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
     index = add_track(timeline, "video", plan.name)
     result = TrackResult(plan=plan, track_type="video", track_index=index)
     try:
-        infos = [
-            {
+        ratio = _source_ratio(item, timeline)
+
+        def info(clip, exclusive):
+            frames = _source_frames(clip.duration, ratio)
+            return {
                 "mediaPoolItem": item,
                 "startFrame": 0,
-                "endFrame": clip.duration - 1,
+                "endFrame": frames if exclusive else frames - 1,
                 "trackIndex": index,
                 "recordFrame": clip.record_frame,
                 "mediaType": 1,
             }
-            for clip, _word in clips
-        ]
-        appended = []
+
+        appended, exclusive, probed = _probe_end_frame(media_pool, timeline, index, [c for c, _w in clips], info)
+        infos = [info(clip, exclusive) for n, (clip, _word) in enumerate(clips) if n != probed]
         for start in range(0, len(infos), 100):  # keep each call modest
-            batch = media_pool.AppendToTimeline(infos[start : start + 100]) or []
-            appended.extend(batch)
+            appended.extend(_append_batch(media_pool, timeline, index, infos[start : start + 100]))
         if len(appended) != len(clips):
             appended = _items_by_start(timeline, "video", index)
         placed_by_frame = {}
@@ -457,6 +652,101 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
         delete_track(timeline, "video", index)
         raise
     return result
+
+
+def _source_ratio(item, timeline) -> float:
+    """Template frames per timeline frame: ``startFrame``/``endFrame`` count in the template's own
+    frame rate (its ``FPS`` clip property; a 60 fps title on a 23.976 timeline needs 2.5 of them
+    per timeline frame, checked on Studio 21.1.2). 1 when either rate can't be read."""
+    try:
+        template_fps = float(str(item.GetClipProperty("FPS")).replace("DF", "").strip())
+        timeline_fps = timeline_clock(timeline).fps
+    except Exception:
+        return 1.0
+    if not (template_fps > 0 and timeline_fps > 0):
+        return 1.0
+    ratio = template_fps / timeline_fps
+    return 1.0 if abs(ratio - 1.0) < 1e-3 else ratio
+
+
+def _source_frames(duration: int, ratio: float) -> int:
+    """Template frames that cover ``duration`` timeline frames (Resolve rounds the placed length down)."""
+    return max(1, math.ceil(duration * ratio - 1e-6))
+
+
+def _probe_end_frame(media_pool, timeline, index: int, clips, info) -> tuple[list, bool, int | None]:
+    """Place one clip of two or more frames with ``endFrame`` read as inclusive and measure it.
+
+    Resolve 21.1 reads ``endFrame`` as exclusive (the clip comes out short, and a one-frame
+    clip, ``endFrame == startFrame``, fails the whole AppendToTimeline call); older releases as
+    inclusive. Returns ``(placed items, exclusive, index of the probe in clips)``: a probe that
+    came out short is deleted again (index None, it is placed with the rest), one that is right
+    is kept. No clip long enough, or nothing measurable: inclusive.
+    """
+    probe = next((n for n, clip in enumerate(clips) if clip.duration >= 2), None)
+    if probe is None:
+        return [], False, None
+    placed = _append_batch(media_pool, timeline, index, [info(clips[probe], False)])
+    if not placed:
+        placed = [i for i in _items_by_start(timeline, "video", index) if _start(i) == clips[probe].record_frame]
+    if not placed:
+        return [], False, None
+    try:
+        duration = int(placed[0].GetDuration())
+    except Exception:
+        return placed, False, probe
+    if not 0 < duration < clips[probe].duration:
+        return placed, False, probe
+    try:
+        if timeline.DeleteClips(placed, False):
+            return [], True, None
+    except Exception:
+        pass
+    return placed, True, probe  # could not remove the short probe: keep it, its mismatch is reported
+
+
+def _append_batch(media_pool, timeline, index: int, infos: list) -> list:
+    """AppendToTimeline(infos); if Resolve refused the whole call (one clip it can't place makes
+    it return None for all), place them one by one so the others still land."""
+    before = len(_items_by_start(timeline, "video", index))
+    batch = media_pool.AppendToTimeline(infos) or []
+    if batch or len(infos) < 2 or len(_items_by_start(timeline, "video", index)) != before:
+        return list(batch)
+    placed = []
+    for one in infos:
+        placed.extend(media_pool.AppendToTimeline([one]) or [])
+    return placed
+
+
+def _start(item) -> int | None:
+    try:
+        return int(item.GetStart())
+    except Exception:
+        return None
+
+
+def save_marks(timeline) -> dict:
+    """The timeline's mark in/out (``GetMarkInOut()``), to put back with ``restore_marks``; {} if none or unknown."""
+    try:
+        marks = timeline.GetMarkInOut()
+    except Exception:
+        return {}
+    return dict(marks) if isinstance(marks, dict) else {}
+
+
+def restore_marks(timeline, marks: dict) -> None:
+    """Set the marks ``save_marks`` read again where they changed, in the numbers GetMarkInOut gave:
+    on Resolve 21.1 AppendToTimeline clears them and SetRenderSettings' MarkIn/MarkOut overwrite them,
+    and the next run would then render another range."""
+    if not marks or save_marks(timeline) == marks:
+        return
+    for mark_type in ("video", "audio"):
+        section = marks.get(mark_type)
+        if isinstance(section, dict) and "in" in section and "out" in section:
+            try:
+                timeline.SetMarkInOut(int(section["in"]), int(section["out"]), mark_type)
+            except Exception:
+                pass
 
 
 def apply_word_highlight(timeline_item, text: str, word, style: HighlightStyle):
@@ -550,8 +840,11 @@ def create_subtitle_track(media_pool, timeline, plan: TrackPlan, origin_frame: i
 
     Resolve has no dedicated API for this: the SRT is imported into the media pool and
     appended to the new subtitle track at ``origin_frame`` (where the rendered audio starts).
-    The result is verified; on any mismatch everything created here is removed and a
-    SubtitlePlacementError raised so the caller can fall back to manual import.
+    Resolve 21.1.2 ignores both ``recordFrame`` and ``trackIndex`` for an SRT: the cues land on
+    Subtitle 1 after the end of the timeline. The cues the append added (every subtitle item that
+    wasn't there before) are then moved as one group with ``Timeline.MoveItems`` onto the new track
+    at the first cue's frame. The result is verified; on any mismatch everything created here is
+    removed and a SubtitlePlacementError raised so the caller can fall back to manual import.
     """
     if not plan.srt_path or not os.path.isfile(plan.srt_path):
         raise SubtitlePlacementError("no SRT file for %s" % plan.name)
@@ -564,24 +857,36 @@ def create_subtitle_track(media_pool, timeline, plan: TrackPlan, origin_frame: i
         raise SubtitlePlacementError("Resolve did not import %s into the media pool" % plan.srt_path)
     srt_item = imported[0]
     index = None
+    added = []
     try:
         index = add_track(timeline, "subtitle", plan.name)
+        before = _subtitle_items(timeline)
         info = {"mediaPoolItem": srt_item, "trackIndex": index, "recordFrame": int(origin_frame)}
         media_pool.AppendToTimeline([info])
+        added = [item for key, item in _subtitle_items(timeline).items() if key not in before]
+        shown = _shown_cues(plan)
+        expected_first = shown[0].record_frame if shown else origin_frame
+        if added and _misplaced(timeline, index, added, expected_first):
+            _move_subtitles(timeline, added, index, expected_first)
         items = _items_by_start(timeline, "subtitle", index)
         if not items:
             raise SubtitlePlacementError("no subtitle clips appeared on the new track")
-        expected_first = plan.first_frame if plan.first_frame is not None else origin_frame
         first = int(items[0].GetStart())
         if first != expected_first:
             raise SubtitlePlacementError(
                 "subtitles landed at frame %d instead of %d (a known Resolve API issue when the "
                 "video track already has clips)" % (first, expected_first)
             )
-        if plan.clips and len(items) != len(plan.clips):
-            raise SubtitlePlacementError("%d subtitle clips appeared, expected %d" % (len(items), len(plan.clips)))
+        if shown and len(items) != len(shown):
+            raise SubtitlePlacementError("%d subtitle clips appeared, expected %d" % (len(items), len(shown)))
         return TrackResult(plan=plan, track_type="subtitle", track_index=index, placed=len(items))
     except Exception as exc:
+        stray = [item for item in added if _track_index(item) != index]  # cues left on another track
+        if stray:
+            try:
+                timeline.DeleteClips(stray)
+            except Exception:
+                pass
         if index is not None:
             delete_track(timeline, "subtitle", index)
         try:
@@ -591,6 +896,60 @@ def create_subtitle_track(media_pool, timeline, plan: TrackPlan, origin_frame: i
         if isinstance(exc, SubtitlePlacementError):
             raise
         raise SubtitlePlacementError(str(exc)) from exc
+
+
+def _shown_cues(plan: TrackPlan) -> list:
+    """The plan's cues that the SRT gives a length: Resolve's import drops one that starts and ends on the
+    same millisecond (an SRT has millisecond times)."""
+    return [clip for clip in plan.clips if round(clip.end * 1000) > round(clip.start * 1000)]
+
+
+def _subtitle_items(timeline) -> dict:
+    """Every subtitle item on the timeline, keyed by its unique id (by identity when Resolve has none)."""
+    found = {}
+    try:
+        count = int(timeline.GetTrackCount("subtitle"))
+    except Exception:
+        return found
+    for track in range(1, count + 1):
+        for item in _items_by_start(timeline, "subtitle", track):
+            found[_item_key(item)] = item
+    return found
+
+
+def _item_key(item):
+    try:
+        key = item.GetUniqueId()
+    except Exception:
+        key = None
+    return key if key else id(item)
+
+
+def _track_index(item):
+    try:
+        return int(item.GetPosition().get("trackIndex"))
+    except Exception:
+        return None
+
+
+def _misplaced(timeline, index: int, added: list, expected_first: int) -> bool:
+    on_track = {_item_key(item) for item in _items_by_start(timeline, "subtitle", index)}
+    first = min(_start(item) or 0 for item in added)
+    return first != expected_first or any(_item_key(item) not in on_track for item in added)
+
+
+def _move_subtitles(timeline, items: list, index: int, first_frame: int) -> None:
+    """Move ``items`` as one group (their spacing kept) so the earliest starts at ``first_frame`` on
+    subtitle track ``index``. ``Timeline.MoveItems`` is 21.x API; without it the caller's check fails."""
+    move = getattr(timeline, "MoveItems", None)
+    if move is None:
+        return
+    try:
+        moved = move(items, {"trackIndex": int(index), "startFrame": int(first_frame)})
+    except Exception as exc:
+        raise SubtitlePlacementError("MoveItems failed: %s" % exc) from exc
+    if not moved:
+        raise SubtitlePlacementError("Resolve refused to move the subtitles to frame %d" % first_frame)
 
 
 def _items_by_start(timeline, track_type: str, index: int) -> list:

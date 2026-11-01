@@ -45,6 +45,7 @@ class SpeakerRow:
     cue_count: int
     sample: str  # a short example of what they say
     source: str | None = None  # "heuristic", "llm", ...
+    uncertain: int = 0  # how many of their cues have an uncertain voice match (to check in "Fix speakers…")
 
 
 @dataclass
@@ -71,9 +72,46 @@ class ReviewRequest:
 def speaker_rows(editor) -> list[SpeakerRow]:
     """Review rows for the editor's current speakers."""
     return [
-        SpeakerRow(id=s.id, name=s.name, cue_count=s.cue_count, sample=s.sample, source=s.source)
+        SpeakerRow(
+            id=s.id, name=s.name, cue_count=s.cue_count, sample=s.sample, source=s.source, uncertain=s.uncertain_count
+        )
         for s in editor.speakers()
     ]
+
+
+# Lines whose voice match was ambiguous (transcript.is_uncertain) are flagged for checking; with none
+# (or no confidence data from the engine) every label below is what it was before.
+FIX_SPEAKERS_LABEL = "Fix speakers…"
+
+
+def checking_label(count: int) -> str:
+    """ "1 line needs checking" / "3 lines need checking"; "" for none."""
+    if count <= 0:
+        return ""
+    return "%d line%s checking" % (count, " needs" if count == 1 else "s need")
+
+
+def review_speaker_label(speaker: SpeakerRow) -> str:
+    """The review dialog's speaker column: "SPEAKER_00 (12 cues)", plus ", 2 to check" when some are uncertain."""
+    label = "%s (%d cues" % (speaker.id, speaker.cue_count)
+    if speaker.uncertain:
+        label += ", %d to check" % speaker.uncertain
+    return label + ")"
+
+
+def review_check_note(speakers, can_fix: bool) -> str:
+    """The review dialog's line about uncertain lines ("" when there are none)."""
+    text = checking_label(sum(s.uncertain for s in speakers))
+    if not text:
+        return ""
+    text += ": the voice match was unsure."
+    return text + (" %s lists them first." % FIX_SPEAKERS_LABEL if can_fix else "")
+
+
+def fix_speakers_label(speakers) -> str:
+    """ "Fix speakers…", with the number of lines to check when there are any."""
+    count = sum(s.uncertain for s in speakers)
+    return "%s (%d to check)" % (FIX_SPEAKERS_LABEL, count) if count else FIX_SPEAKERS_LABEL
 
 
 @dataclass
@@ -87,8 +125,57 @@ class ReviewResult:
     naming_provider: str | None = None  # a NAMING_CHOICES value; None leaves config.json's as is
 
 
+STEP_DONE = "done"
+STEP_CURRENT = "current"
+STEP_PENDING = "pending"
+STEP_MARKERS = {STEP_DONE: "✔", STEP_CURRENT: "▶", STEP_PENDING: "○"}
+PAUSE_LABEL = "Pause"
+RESUME_LABEL = "Resume"
+PAUSED_PREFIX = "Paused – "
+
+
+def step_states(count: int, current: int | None) -> list[str]:
+    """Marker state per step: those before ``current`` are done, ``current`` is current, the rest pending.
+    ``current`` None leaves every step pending; at or past ``count`` every step is done."""
+    if current is None:
+        return [STEP_PENDING] * count
+    return [STEP_DONE if i < current else STEP_CURRENT if i == current else STEP_PENDING for i in range(count)]
+
+
+def step_line(label: str, state: str) -> str:
+    return "%s  %s" % (STEP_MARKERS[state], label)
+
+
 class ProgressView:
-    """A modal-ish progress window. ``pump()`` must be cheap and safe to call often."""
+    """A modal-ish progress window. ``pump()`` must be cheap and safe to call often.
+
+    ``set_steps`` / ``set_step`` show the whole list of steps with done / current / pending markers;
+    the Pause button flips ``paused`` (the flow checks it, the window doesn't stop anything itself)."""
+
+    step_labels: tuple = ()
+    step_index: int | None = None
+
+    def set_steps(self, labels):
+        """Show these step labels, all pending."""
+        self.step_labels = tuple(str(label) for label in labels)
+        self.step_index = None
+        self._show_steps()
+
+    def set_step(self, index: int):
+        """Step ``index`` is now running; the ones before it are done. ``len(steps)`` marks every step done."""
+        self.step_index = index
+        self._show_steps()
+
+    def step_lines(self) -> list[str]:
+        states = step_states(len(self.step_labels), self.step_index)
+        return [step_line(label, state) for label, state in zip(self.step_labels, states)]
+
+    def _show_steps(self):
+        """Redraw the step list; backends override this."""
+
+    @property
+    def paused(self) -> bool:
+        return False
 
     def set_status(self, text: str):
         raise NotImplementedError
@@ -119,6 +206,18 @@ class Backend:
     def review(self, request: ReviewRequest) -> ReviewResult | None:
         """Return None when the user cancels."""
         raise NotImplementedError
+
+    def pick_audio_tracks(self, tracks, preselected):
+        """The audio tracks to render (``tracks`` as ``resolve_io.audio_tracks`` gives them): a
+        ``track_picker.TrackPick`` (a list of track indices with ``roles``, who talks on each track, and
+        ``speakers``, the speaker name typed for a track; ``preselected`` is one too, from
+        ``track_picker.default_selection``), or None to cancel."""
+        return preselected
+
+    def pick_model(self, models, current: str) -> str | None:
+        """The transcription model to use (``models`` as ``model_picker.catalog`` gives them, ``current`` the
+        model preselected); its name, or None to cancel."""
+        return current
 
     def message(self, title: str, text: str):
         raise NotImplementedError

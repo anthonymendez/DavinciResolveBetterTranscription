@@ -4,9 +4,79 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from better_captions import __version__
+
+# Windows without developer mode can't symlink; huggingface_hub then warns on every model load.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+
+def fixed_track(spec: str):
+    """argparse type for ``--fixed-track NAME=PATH``. Imported on use: fixed_tracks needs numpy, and
+    ``doctor`` must still run when that is broken."""
+    from better_captions.engine import fixed_tracks
+
+    try:
+        return fixed_tracks.parse_fixed_track(spec)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def track(spec: str):
+    """argparse type for ``--track ROLE:NAME=PATH`` (engine.multitrack.parse_track), imported on use as above."""
+    from better_captions.engine import multitrack
+
+    try:
+        return multitrack.parse_track(spec)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def speaker_name(spec: str) -> tuple[str, str]:
+    """argparse type for ``voices save --name SPEAKER=NAME`` (split at the first ``=``: ids have none)."""
+    speaker, sep, name = str(spec).partition("=")
+    speaker, name = speaker.strip(), " ".join(name.split())
+    if not sep or not speaker or not name:
+        raise argparse.ArgumentTypeError(f"expected SPEAKER=NAME, got {spec!r}")
+    return speaker, name
+
+
+def voices_command(args) -> int:
+    """`better-captions voices ...`: one JSON object on stdout. ``save`` reports like ``run`` does (a
+    ``done`` or ``error`` event), so the plugin reads it with the same runner."""
+    from better_captions.engine import voices
+
+    library = voices.VoiceLibrary()
+    if args.voices_action == "save":
+        try:
+            saved, skipped = voices.save_confirmed(args.source, dict(args.name), library)
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"event": "error", "message": f"{type(exc).__name__}: {exc}"}))
+            return 1
+        print(json.dumps({"event": "done", "saved": saved, "skipped": skipped, "library": str(library.root)}))
+    elif args.voices_action == "list":
+        people = [
+            {
+                "name": p.name,
+                "file": str(p.path),
+                "voices": [{"source": c.source, "model": c.model, "count": c.count} for c in p.centroids],
+            }
+            for p in library.people()
+        ]
+        print(json.dumps({"library": str(library.root), "people": people}, indent=2, ensure_ascii=False))
+    elif args.voices_action == "forget":
+        try:
+            removed = library.forget(args.name)
+        except OSError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps({"event": "voices_forgotten", "name": args.name, "removed": removed}, ensure_ascii=False))
+        if not removed:
+            print(f"no saved voice for {args.name!r}", file=sys.stderr)
+            return 1
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     r = sub.add_parser("run", help="transcribe, diarize and caption an audio file")
-    r.add_argument("audio")
+    r.add_argument("audio", nargs="?", help="the audio to caption (omit it with --track)")
     r.add_argument("--out", required=True, help="output directory")
     r.add_argument("--model", default="large-v3-turbo")
     r.add_argument("--language")
@@ -30,9 +100,54 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-lines", type=int, default=2)
     r.add_argument("--max-duration", type=float, default=6.0)
     r.add_argument("--no-cache", action="store_true", help="re-transcribe even if this audio was processed before")
+    r.add_argument(
+        "--fixed-track",
+        action="append",
+        default=[],
+        type=fixed_track,
+        metavar="NAME=PATH",
+        help="audio of one speaker alone (e.g. their microphone track): what NAME says there is captioned as "
+        "NAME and left out of speaker detection. Repeatable. Without AUDIO it is a person track (see --track).",
+    )
+    r.add_argument(
+        "--track",
+        action="append",
+        default=[],
+        type=track,
+        metavar="ROLE:NAME=PATH",
+        help="one audio track on its own, instead of AUDIO: each speech track is transcribed alone. ROLE is "
+        "'person' (one person, NAME, talks on it: e.g. person:Anthony=mic.wav), 'group' (several people: only "
+        "these tracks go through speaker detection, e.g. group:Discord=discord.wav) or 'none' (not speech, "
+        "not transcribed). Repeatable.",
+    )
+    r.add_argument(
+        "--no-voice-library",
+        action="store_true",
+        help="don't name speakers from the voices saved by `better-captions voices save`",
+    )
+    r.add_argument(
+        "--verbose", action="store_true", help="debug logging and tracebacks on stderr (the plugin's debug mode)"
+    )
 
     c = sub.add_parser("cache", help="manage the transcription cache")
     c.add_argument("action", choices=["clear"])
+
+    v = sub.add_parser("voices", help="manage the library of known voices (speakers named automatically)")
+    vs = v.add_subparsers(dest="voices_action", required=True)
+    save = vs.add_parser("save", help="keep the voices of a run's speakers under the names given")
+    save.add_argument("--from", dest="source", required=True, metavar="OUT_DIR", help="the run's --out directory")
+    save.add_argument(
+        "--name",
+        action="append",
+        default=[],
+        type=speaker_name,
+        required=True,
+        metavar="SPEAKER=NAME",
+        help="a speaker of that run and the person it is, e.g. SPEAKER_00=Anthony. Repeatable.",
+    )
+    vs.add_parser("list", help="the people whose voices are saved")
+    forget = vs.add_parser("forget", help="delete a person's saved voices")
+    forget.add_argument("name")
 
     sub.add_parser("doctor", help="print GPU/backend detection as JSON")
 
@@ -133,7 +248,32 @@ def doctor() -> dict:
     return report
 
 
-def run(audio: str, out: str, options) -> None:
+def enable_verbose_logging() -> None:
+    """`run --verbose`: the engine's own loggers at DEBUG, everything else at INFO, all on stderr
+    (stdout carries the JSON-line events)."""
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(name)s: %(message)s", force=True
+    )
+    logging.getLogger("better_captions").setLevel(logging.DEBUG)
+
+
+def run_inputs(parser: argparse.ArgumentParser, args) -> tuple[str | None, list, list]:
+    """``(audio, fixed tracks, tracks)`` for ``run``: either AUDIO (the mix, with any ``--fixed-track`` stems),
+    or ``--track``s, each transcribed alone; without AUDIO a ``--fixed-track`` is a person track."""
+    if args.audio and args.track:
+        parser.error("give either AUDIO or --track, not both: with --track every track is transcribed on its own")
+    if args.audio:
+        return args.audio, list(args.fixed_track), []
+    if not args.track and not args.fixed_track:
+        parser.error("the audio to caption is missing: give AUDIO or --track ROLE:NAME=PATH")
+    from better_captions.engine import multitrack
+
+    return None, [], [multitrack.from_fixed(t) for t in args.fixed_track] + list(args.track)
+
+
+def run(audio: str | None, out: str, options) -> None:
     # The pipeline (numpy and friends) is imported on use so `doctor` still runs when those are broken.
     from better_captions.pipeline import run as pipeline_run
 
@@ -141,10 +281,14 @@ def run(audio: str, out: str, options) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if args.command == "doctor":
         print(json.dumps(doctor(), indent=2))
     elif args.command == "run":
+        audio, fixed, tracks = run_inputs(parser, args)
+        if args.verbose:
+            enable_verbose_logging()
         from better_captions.cues import CueOptions
         from better_captions.pipeline import RunOptions, json_lines_events
 
@@ -162,14 +306,23 @@ def main(argv: list[str] | None = None) -> int:
                 max_chars_per_line=args.max_chars, max_lines=args.max_lines, max_duration=args.max_duration
             ),
             use_cache=not args.no_cache,
+            fixed_tracks=fixed,
+            tracks=tracks,
+            voice_library=not args.no_voice_library,
         )
         try:
-            run(args.audio, args.out, options)
+            run(audio, args.out, options)
         except Exception as exc:  # report to the plugin as a structured event
+            if args.verbose:
+                import traceback
+
+                traceback.print_exc(file=sys.stderr)
             json_lines_events({"event": "error", "message": f"{type(exc).__name__}: {exc}"})
             return 1
     elif args.command == "key":
         return key_command(args)
+    elif args.command == "voices":
+        return voices_command(args)
     elif args.command == "cache":
         from better_captions.engine import cache
 

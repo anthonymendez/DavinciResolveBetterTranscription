@@ -128,3 +128,19 @@ def test_plan_tracks_blank_name_falls_back_to_speaker_id_and_duplicates_get_numb
 def test_plan_tracks_rejects_unknown_mode(transcript):
     with pytest.raises(ValueError):
         plan_tracks(transcript, {}, "bogus", TimelineClock(fps=24))
+
+
+def test_place_cues_trims_the_last_clip_at_the_end_of_the_rendered_audio():
+    clock = TimelineClock(fps=60, start_frame=216000)
+    cues = [Cue("S", 58.0, 59.0, ["a"]), Cue("S", 59.91, 60.71, ["Yeah."])]
+    clips = place_cues(cues, clock, origin_frame=219600, end_frame=223200)
+    assert [(c.record_frame, c.end_frame) for c in clips] == [(223080, 223140), (223195, 223200)]
+
+
+def test_plan_tracks_keeps_clips_inside_the_rendered_range():
+    data = json.loads(json.dumps(TRANSCRIPT))
+    data["duration"] = 7.0  # the render ends at 7 s; the 6.4-8.0 s cue is cut there
+    t = transcript_mod.from_dict(data)
+    clock = TimelineClock(fps=24, start_frame=86400)
+    plans = plan_tracks(t, {}, planning.MODE_TEXTPLUS, clock, 86400)
+    assert max(c.end_frame for p in plans for c in p.clips) == 86400 + 168

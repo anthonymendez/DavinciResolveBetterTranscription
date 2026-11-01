@@ -67,13 +67,16 @@ def unique_name(name: str, taken: set[str] | list[str]) -> str:
     return "%s %d" % (name, index)
 
 
-def place_cues(cues: list[Cue], clock: TimelineClock, origin_frame: int | None = None) -> list[ClipPlacement]:
+def place_cues(
+    cues: list[Cue], clock: TimelineClock, origin_frame: int | None = None, end_frame: int | None = None
+) -> list[ClipPlacement]:
     """Map a speaker's cues onto absolute frames, at least 1 frame each, never overlapping.
 
     ``origin_frame`` is the absolute frame where the rendered audio starts (the timeline start
     or the in-point). Cue starts are kept (that is what viewers notice); an earlier cue that
     overlaps the next one is trimmed to end where the next starts, and a cue that would start
-    on the same frame as the previous one is pushed one frame later.
+    on the same frame as the previous one is pushed one frame later. ``end_frame`` (exclusive,
+    where the rendered audio ends) trims clips running past the out-point.
     """
     placements: list[ClipPlacement] = []
     previous_start = None
@@ -90,12 +93,9 @@ def place_cues(cues: list[Cue], clock: TimelineClock, origin_frame: int | None =
     # Second pass: a clip must not run into the next one.
     trimmed: list[ClipPlacement] = []
     for index, clip in enumerate(placements):
-        if index + 1 < len(placements):
-            limit = placements[index + 1].record_frame
-            if clip.end_frame > limit:
-                clip = ClipPlacement(
-                    clip.record_frame, max(1, limit - clip.record_frame), clip.text, clip.start, clip.end
-                )
+        limit = placements[index + 1].record_frame if index + 1 < len(placements) else end_frame
+        if limit is not None and clip.end_frame > limit:
+            clip = ClipPlacement(clip.record_frame, max(1, limit - clip.record_frame), clip.text, clip.start, clip.end)
         trimmed.append(clip)
     return trimmed
 
@@ -146,6 +146,8 @@ def plan_tracks(
         raise ValueError("unknown mode %r" % (mode,))
     taken = list(existing_track_names or [])
     plans: list[TrackPlan] = []
+    # where the rendered audio ends: no clip runs past the out-point (or the timeline's end)
+    end_frame = clock.frame_at(transcript.duration, origin_frame) if transcript.duration > 0 else None
     for speaker_id in transcript.speaker_ids_with_cues():
         speaker = transcript.speaker(speaker_id)
         raw = names.get(speaker_id) or (speaker.display_name if speaker else speaker_id)
@@ -159,7 +161,7 @@ def plan_tracks(
             srt_path=(srt_paths or {}).get(speaker_id),
         )
         # Subtitle mode uses the clips only to verify where Resolve put the SRT's cues.
-        plan.clips = place_cues(transcript.cues_for(speaker_id), clock, origin_frame)
+        plan.clips = place_cues(transcript.cues_for(speaker_id), clock, origin_frame, end_frame)
         if highlight and mode == MODE_TEXTPLUS:
             plan.highlight = True
             plan.clips = add_word_steps(plan.clips, transcript.words, clock, origin_frame, speaker=speaker_id)

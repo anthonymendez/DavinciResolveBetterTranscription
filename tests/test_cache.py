@@ -1,6 +1,7 @@
 """engine.cache on its own, and pipeline.run reusing cached words/turns."""
 
 import hashlib
+import json
 import os
 
 import pytest
@@ -31,10 +32,10 @@ def calls(monkeypatch):
 
     def fake_diarize(audio_path, **kw):
         counts["diarize"] += 1
-        return list(TURNS)
+        return diarize.DiarizeResult(list(TURNS))
 
     monkeypatch.setattr(transcribe, "transcribe", fake_transcribe)
-    monkeypatch.setattr(diarize, "diarize", fake_diarize)
+    monkeypatch.setattr(diarize, "diarize_detailed", fake_diarize)
     return counts
 
 
@@ -210,3 +211,29 @@ def test_cli_no_cache_flag_and_clear(monkeypatch, capsys):
     monkeypatch.setattr(cache_mod, "clear", lambda root=None: 3)
     assert cli.main(["cache", "clear"]) == 0
     assert '"removed": 3' in capsys.readouterr().out
+
+
+def test_cli_verbose_logs_and_tracebacks_go_to_stderr(monkeypatch, capsys):
+    """`run --verbose` (the plugin's debug mode): engine loggers at DEBUG, tracebacks on stderr, stdout stays JSON."""
+    import logging
+
+    from better_captions import cli
+
+    root, engine = logging.getLogger(), logging.getLogger("better_captions")
+    saved = (root.handlers[:], root.level, engine.level)
+
+    def boom(audio, out, options):
+        logging.getLogger("better_captions.test").debug("loading the model")
+        raise RuntimeError("no model")
+
+    monkeypatch.setattr(cli, "run", boom)
+    try:
+        assert cli.main(["run", "a.wav", "--out", "o", "--verbose"]) == 1
+    finally:
+        root.handlers[:] = saved[0]
+        root.setLevel(saved[1])
+        engine.setLevel(saved[2])
+    captured = capsys.readouterr()
+    assert [json.loads(line)["event"] for line in captured.out.splitlines()] == ["error"]
+    assert "DEBUG better_captions.test: loading the model" in captured.err
+    assert "Traceback (most recent call last)" in captured.err and "RuntimeError: no model" in captured.err

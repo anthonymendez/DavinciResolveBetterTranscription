@@ -113,6 +113,40 @@ Restart Resolve after Python is installed, or the script won't show up in the me
 - `BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON=1`: skip the system Python check/install
 - `BETTER_CAPTIONS_GPU`: `auto` (default) installs the NVIDIA CUDA runtime only when
   an NVIDIA GPU is found, `cuda` always installs it, `none` never does
+- `BETTER_CAPTIONS_DEBUG=1`: turn on the plugin's debug log (see [Debug logs](#debug-logs))
+
+### Debug logs
+
+If something goes wrong in Resolve, reinstall with debug logging on, reproduce the problem and
+send the log. Close Resolve first, then run one of these:
+
+- Windows, from GitHub:
+
+      irm https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install-debug.ps1 | iex
+
+- macOS / Linux, from GitHub:
+
+      curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install-debug.sh | bash
+
+- Or set the variable before the normal installer, e.g. in PowerShell
+  `$env:BETTER_CAPTIONS_DEBUG = '1'` and then the Option A command (the variable stays set
+  in that window), or `BETTER_CAPTIONS_DEBUG=1 bash install/install.sh` on macOS / Linux.
+- From a local copy (in the project folder, as in Option B):
+
+      $env:BETTER_CAPTIONS_SOURCE = (Get-Location).Path
+      powershell -ExecutionPolicy Bypass -File .\install\install-debug.ps1
+
+  or `BETTER_CAPTIONS_SOURCE="$PWD" bash install/install-debug.sh` on macOS / Linux.
+
+Each run of Better Captions then writes a log to the `logs` folder of the data dir:
+`%LOCALAPPDATA%\BetterCaptions\logs` on Windows, `~/Library/Application Support/BetterCaptions/logs`
+on macOS, `~/.local/share/BetterCaptions/logs` on Linux (the newest 20 are kept). The summary
+and error dialogs end with the log's path. Send the newest `better-captions-*.log` along with
+what you did. It records every call the plugin makes to Resolve's API, what Resolve offers for
+rendering, and the engine's full output.
+
+The log can contain file paths and transcript text; API keys and other secrets are redacted.
+To turn debug logging off, reinstall normally (the plain install command).
 
 ### API keys for LLM speaker naming
 
@@ -173,6 +207,65 @@ what it found under `naming_clis`. Optional `config.json` settings:
 | `claude_cli_model`, `antigravity_cli_model` | model to ask for (`--model`); claude defaults to `haiku` |
 | `naming_cli_timeout` | seconds before giving up (default 120) |
 
+When the timeline has two or more audio tracks, the plugin asks which ones to
+transcribe and who talks on each:
+
+- **One person** (your own microphone, say): type their name. Everything said
+  on it is captioned as that person, named already in the review.
+- **Several people** (a Discord call): speaker detection runs on this track
+  alone.
+- **Not speech** (game audio, music): it isn't transcribed.
+
+A track you type a name for starts as one person, a track named like game audio
+or music as not speech, and any other as several people. The roles are
+remembered per timeline. Each speech track is rendered and transcribed on its
+own, so two people talking at once both get captions. The same word picked up
+by a second track (your microphone hearing the call, or the reverse) is kept
+only where it is louder. Your tracks are switched back as they were afterwards.
+If a track's audio hasn't changed since the last run, the previous render (kept
+in `<data>/renders`) is reused. Set `"force_rerender": true` in `config.json` to
+always render again. The progress window lists the steps left and has a Pause
+button.
+
+On the command line, pass each track as `--track ROLE:NAME=PATH` instead of one
+audio file, e.g. `--track person:Anthony=mic.wav --track group:Discord=discord.wav`
+(ROLE is `person`, `group` or `none`; repeatable). The older
+`--fixed-track NAME=PATH` still works: next to a mixed audio file it pins NAME
+to that track, and without one it is a person track.
+
+### Remembered voices
+
+When you click OK in the review dialog, the voice of every detected speaker you
+confirmed with a real name is saved in `<data>/voices` (one small file per
+person, on your machine only). On the next video, a speaker whose voice clearly
+matches a saved one is named automatically; a doubtful match is left to the
+usual name guessing and to you. Manage the library with
+`better-captions voices list` and `better-captions voices forget NAME`, or turn
+it off with `"voice_library": false` in `config.json`.
+
+## Developing on Windows
+
+The checked-in `.venv` may have been created under WSL/Linux, so `uv run` on Windows
+can't reuse it (it tries to replace it and fails with "Access denied"). Leave it alone
+and point uv at a separate environment outside the repo:
+
+```powershell
+$env:UV_PROJECT_ENVIRONMENT = "D:envsetter-captions-win"   # any path outside the repo
+uv sync
+uv run pytest -q
+uv run ruff check .
+```
+
+Notes:
+
+- Set `UV_PROJECT_ENVIRONMENT` in every shell (or in your user environment variables).
+- Tests that need bash, `/proc`, or a real display are skipped on Windows; the
+  Windows-specific code paths (`NtSuspendProcess`, the PowerShell installer) have their own tests.
+- Tests that need symlinks fall back to copying when Windows denies the privilege
+  (or turn on Developer Mode).
+- `.brindle/config.json` runs `env -u DISPLAY ... uv run pytest -q`, which is POSIX-only;
+  run brindle from WSL, or run the PowerShell commands above by hand.
+
 ## How it works
 
 The plugin has two halves. The **Resolve plugin** runs inside Resolve and only
@@ -213,7 +306,8 @@ flowchart LR
    The models download once on first use.
 4. **Align.** Each word gets the speaker who was talking at that moment, and
    words are grouped into sentences per speaker.
-5. **Name speakers.** The engine looks for names in the conversation, such as
+5. **Name speakers.** Voices you confirmed on earlier videos are recognised
+   first (see "Remembered voices"). For the rest, the engine looks for names in the conversation, such as
    self-introductions ("I'm Sam") and people addressing each other ("thanks,
    Maria"). Optionally it asks Claude, OpenAI, a local model through Ollama,
    or your signed-in Claude Code / Antigravity CLI for better guesses. If no name is found, the speaker stays `SPEAKER_00` and

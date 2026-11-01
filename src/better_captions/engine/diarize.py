@@ -3,13 +3,18 @@ from __future__ import annotations
 import math
 import os
 import shutil
+import sys
 import tarfile
+import time
 from collections.abc import Callable, Hashable
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
 import numpy as np
 
 from better_captions.engine.download import download
+from better_captions.engine.merge_speakers import MINOR_SECONDS, MINOR_SHARE, EmbedFn, merge_minor_speakers
+from better_captions.engine.reassign_segments import TurnScore, reassign_segments, turn_confidence
 from better_captions.paths import models_dir
 from better_captions.schema import SpeakerTurn
 
@@ -30,6 +35,17 @@ CLUSTER_THRESHOLD = 0.5
 PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
 
 
+@dataclass
+class DiarizeResult:
+    """diarize()'s turns plus what the reassignment pass learned about the voices (empty without embeddings)."""
+
+    turns: list[SpeakerTurn]
+    centroids: dict[str, np.ndarray] = field(default_factory=dict)  # speaker -> unit-length voice centroid
+    scores: list[TurnScore | None] = field(default_factory=list)  # aligned with turns; label is a speaker name
+    # the embedding model the centroids come from (voices from another model are not comparable); None without
+    embedding_model: str | None = None
+
+
 def diarize(
     audio_path: str,
     num_speakers: int | None = None,
@@ -37,8 +53,54 @@ def diarize(
     max_speakers: int | None = None,
     backend: str = "sherpa",
     progress: ProgressFn | None = None,
+    log: LogFn | None = None,
+    merge_minor: bool = True,
+    minor_seconds: float = MINOR_SECONDS,
+    minor_share: float = MINOR_SHARE,
+    reassign: bool = True,
 ) -> list[SpeakerTurn]:
-    """Return speaker turns sorted by start, labelled SPEAKER_00, SPEAKER_01, ... in order of first appearance."""
+    """Return speaker turns sorted by start, labelled SPEAKER_00, SPEAKER_01, ... in order of first appearance.
+
+    Status lines (started, models loading, progress, speakers found, finished) go to `log`; by default
+    that is stderr, which the Resolve plugin shows in its log window (also without --verbose).
+
+    With merge_minor, clusters with little speech (under max(minor_seconds, minor_share of all speech), see
+    merge_speakers) are folded into the most similar remaining speaker. The result never drops below
+    num_speakers (or min_speakers), so a forced count that clustering already met is left alone.
+
+    With reassign, each turn is then re-checked against every speaker's voice and moved when another speaker
+    matches it clearly better (see reassign_segments). Use diarize_detailed() to also get the voice centroids
+    and per-turn similarities.
+    """
+    return diarize_detailed(
+        audio_path,
+        num_speakers,
+        min_speakers,
+        max_speakers,
+        backend,
+        progress,
+        log,
+        merge_minor,
+        minor_seconds,
+        minor_share,
+        reassign,
+    ).turns
+
+
+def diarize_detailed(
+    audio_path: str,
+    num_speakers: int | None = None,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
+    backend: str = "sherpa",
+    progress: ProgressFn | None = None,
+    log: LogFn | None = None,
+    merge_minor: bool = True,
+    minor_seconds: float = MINOR_SECONDS,
+    minor_share: float = MINOR_SHARE,
+    reassign: bool = True,
+) -> DiarizeResult:
+    """diarize(), returning the turns together with the speakers' voice centroids and per-turn similarities."""
     if min_speakers is not None and max_speakers is not None and min_speakers > max_speakers:
         raise ValueError(f"min_speakers ({min_speakers}) > max_speakers ({max_speakers})")
     if num_speakers is not None:
@@ -48,26 +110,66 @@ def diarize(
     elif min_speakers is not None and min_speakers == max_speakers:
         num_speakers = min_speakers
 
-    progress = _monotonic(progress)
-    if backend == "sherpa":
-        raw = _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress)
-    elif backend == "pyannote":
-        raw = _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress)
-    else:
+    if backend not in ("sherpa", "pyannote"):
         raise ValueError(f"unknown diarization backend {backend!r}; expected 'sherpa' or 'pyannote'")
-    return relabel(raw)
+
+    status = _Status(log or _stderr_log)
+    status.started(backend)
+    progress = _monotonic(progress, status)
+    if backend == "sherpa":
+        raw, embed = _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress, status)
+    else:  # pyannote: no embedder of our own, so minor clusters merge by time
+        raw, embed = _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress, status), None
+    if merge_minor:
+        merged = merge_minor_speakers(
+            raw,
+            embed,
+            min_seconds=minor_seconds,
+            min_share=minor_share,
+            keep_at_least=num_speakers if num_speakers is not None else (min_speakers or 1),
+        )
+        if merged.minor:
+            status.merged(merged.minor, merged.remaining)
+        raw = merged.raw
+    moved = None
+    if reassign and embed is not None:
+        moved = reassign_segments(raw, embed)
+        if moved.moved:
+            status.reassigned(moved.moved)
+        raw = moved.raw
+    turns, order, names = _relabel(raw)
+    status.finished(len({t.speaker for t in turns}))
+    if moved is None:
+        return DiarizeResult(turns, {}, [None] * len(turns))
+    centroids = {names[lb]: c for lb, c in moved.centroids.items() if lb in names}
+    scores = []
+    for i in order:
+        score = moved.scores[i]
+        if score is not None and score.label in names:
+            score = TurnScore(names[score.label], score.best, score.second)
+        scores.append(score)
+    turns = [replace(t, confidence=turn_confidence(s, t.speaker)) for t, s in zip(turns, scores, strict=True)]
+    return DiarizeResult(turns, centroids, scores, EMBEDDING_NAME if centroids else None)
 
 
 def relabel(raw: list[tuple[float, float, Hashable]]) -> list[SpeakerTurn]:
     """(start, end, backend label) -> SpeakerTurns sorted by start, labels SPEAKER_NN by first appearance."""
-    labels: dict[Hashable, str] = {}
+    return _relabel(raw)[0]
+
+
+def _relabel(raw: list[tuple[float, float, Hashable]]) -> tuple[list[SpeakerTurn], list[int], dict[Hashable, str]]:
+    """relabel(), plus the index in `raw` of each returned turn and the backend label -> speaker name map."""
+    names: dict[Hashable, str] = {}
     turns = []
-    for start, end, label in sorted(raw, key=lambda r: (r[0], r[1])):
+    order = []
+    for i in sorted(range(len(raw)), key=lambda i: (raw[i][0], raw[i][1])):
+        start, end, label = raw[i]
         if end <= start:
             continue
-        speaker = labels.setdefault(label, f"SPEAKER_{len(labels):02d}")
+        speaker = names.setdefault(label, f"SPEAKER_{len(names):02d}")
         turns.append(SpeakerTurn(speaker=speaker, start=float(start), end=float(end)))
-    return turns
+        order.append(i)
+    return turns, order, names
 
 
 def _clamp(n: int, lo: int | None, hi: int | None) -> int:
@@ -78,18 +180,98 @@ def _clamp(n: int, lo: int | None, hi: int | None) -> int:
     return n
 
 
-def _monotonic(progress: ProgressFn | None) -> ProgressFn:
+def _monotonic(progress: ProgressFn | None, status: _Status | None = None) -> ProgressFn:
     """Wrap progress so it never goes backwards (e.g. when clustering is re-run)."""
     last = 0.0
 
     def report(frac: float) -> None:
         nonlocal last
         frac = min(max(frac, last), 1.0)
-        if progress and frac > last:
-            progress(frac)
+        if frac > last:
+            if progress:
+                progress(frac)
+            if status:
+                status.progress(frac)
         last = frac
 
     return report
+
+
+# --- status reporting --------------------------------------------------------
+
+LogFn = Callable[[str], None]
+
+# Progress is logged each time it crosses another multiple of this share of the audio.
+PROGRESS_LOG_STEP = 0.1
+
+
+def _stderr_log(message: str) -> None:
+    """The engine's stderr is what the plugin's runner turns into `log` events (and so its log window)."""
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except (OSError, ValueError):  # stderr closed or detached: status lines are never worth failing a run
+        pass
+
+
+def format_clock(seconds: float) -> str:
+    """12:05 / 1:02:03: a position in the audio."""
+    s = int(round(max(seconds, 0.0)))
+    h, rest = divmod(s, 3600)
+    m, s = divmod(rest, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    m, s = divmod(int(round(seconds)), 60)
+    return f"{m}m {s:02d}s"
+
+
+class _Status:
+    """Throttled status lines for one diarization run."""
+
+    def __init__(self, log: LogFn):
+        self._log = log
+        self._t0 = time.monotonic()
+        self._duration: float | None = None  # seconds of audio, once loaded
+        self._bucket = 0
+
+    def started(self, backend: str) -> None:
+        self._log(f"Detecting speakers: started ({backend} backend)")
+
+    def loading_models(self) -> None:
+        self._log("Detecting speakers: loading models")
+
+    def audio_loaded(self, seconds: float) -> None:
+        self._duration = seconds
+        self._log(f"Detecting speakers: analysing {format_clock(seconds)} of audio")
+
+    def progress(self, frac: float) -> None:
+        bucket = int(frac / PROGRESS_LOG_STEP + 1e-9)
+        if bucket <= self._bucket:
+            return
+        self._bucket = bucket
+        text = f"Detecting speakers: {int(frac * 100 + 1e-9)}%"
+        if self._duration:
+            text += f" ({format_clock(frac * self._duration)} of {format_clock(self._duration)})"
+        self._log(text)
+
+    def retrying(self, speakers: int) -> None:
+        self._log(f"Detecting speakers: re-clustering for {speakers} speaker{'s' if speakers != 1 else ''}")
+
+    def merged(self, minor: int, remaining: int) -> None:
+        self._log(f"Detecting speakers: merged {minor} minor speaker{'s' if minor != 1 else ''} into {remaining}")
+
+    def reassigned(self, moved: int) -> None:
+        self._log(f"Detecting speakers: moved {moved} turn{'s' if moved != 1 else ''} to a better-matching speaker")
+
+    def no_embeddings(self, error: BaseException) -> None:
+        self._log(f"Detecting speakers: voice embeddings unavailable ({error}); merging by time instead")
+
+    def finished(self, speakers: int) -> None:
+        self._log(f"Detecting speakers: found {speakers} speaker{'s' if speakers != 1 else ''}")
+        self._log(f"Detecting speakers: finished in {format_elapsed(time.monotonic() - self._t0)}")
 
 
 # --- audio -------------------------------------------------------------------
@@ -179,9 +361,10 @@ def _extract_member(archive: Path, name: str, dest: Path) -> None:
         os.replace(tmp, dest)
 
 
-def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress):
+def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress, status):
     import sherpa_onnx
 
+    status.loading_models()
     segmentation, embedding = sherpa_models()
     threads = max(1, min(os.cpu_count() or 1, 8))
 
@@ -204,6 +387,7 @@ def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progre
 
     sd = build(num_speakers)
     audio = load_audio(audio_path, sd.sample_rate)
+    status.audio_loaded(len(audio) / sd.sample_rate)
 
     def run(sd) -> list[tuple[float, float, int]]:
         def callback(done: int, total: int) -> int:
@@ -218,14 +402,54 @@ def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progre
         found = len({speaker for _, _, speaker in raw})
         wanted = _clamp(found, min_speakers, max_speakers)
         if raw and wanted != found:  # threshold clustering landed outside [min, max]: force the count
+            status.retrying(wanted)
             raw = run(build(wanted))
-    return raw
+    return raw, _sherpa_embedder(embedding, threads, audio, sd.sample_rate, status)
+
+
+# Turns shorter than this give unreliable speaker embeddings; they are matched some other way.
+MIN_EMBED_SECONDS = 0.5
+
+
+def _sherpa_embedder(model: Path, threads: int, audio: np.ndarray, sample_rate: int, status: _Status) -> EmbedFn:
+    """(start, end) -> the WeSpeaker embedding of that stretch of `audio`, with the model diarization used.
+
+    The extractor is only loaded when the first embedding is asked for (i.e. there are minor speakers to
+    merge). If it can't be loaded or run, that is reported once and every later call returns None, so the
+    merge falls back to timing instead of failing the run.
+    """
+    extractor = None
+    failed = False
+
+    def embed(start: float, end: float) -> np.ndarray | None:
+        nonlocal extractor, failed
+        a, b = max(0, int(start * sample_rate)), min(len(audio), int(end * sample_rate))
+        if failed or b - a < MIN_EMBED_SECONDS * sample_rate:
+            return None
+        try:
+            if extractor is None:
+                import sherpa_onnx
+
+                config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(model), num_threads=threads)
+                extractor = sherpa_onnx.SpeakerEmbeddingExtractor(config)
+            stream = extractor.create_stream()
+            stream.accept_waveform(sample_rate=sample_rate, waveform=audio[a:b])
+            stream.input_finished()
+            if not extractor.is_ready(stream):
+                return None
+            return np.asarray(extractor.compute(stream), dtype=np.float32)
+        except Exception as e:  # an optional refinement: never worth failing the run over
+            failed = True
+            status.no_embeddings(e)
+            return None
+
+    return embed
 
 
 # --- pyannote backend (optional) ---------------------------------------------
 
 
-def _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress):
+def _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress, status):
     try:
         import torch
         from pyannote.audio import Pipeline
@@ -236,6 +460,7 @@ def _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, prog
         raise RuntimeError(
             f"the pyannote backend needs a Hugging Face token in HF_TOKEN (with {PYANNOTE_PIPELINE} terms accepted)"
         )
+    status.loading_models()
     try:
         pipeline = Pipeline.from_pretrained(PYANNOTE_PIPELINE, token=token)
     except TypeError:  # pyannote.audio < 4
@@ -250,6 +475,7 @@ def _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, prog
     else:
         counts = {k: v for k, v in (("min_speakers", min_speakers), ("max_speakers", max_speakers)) if v is not None}
     audio = load_audio(audio_path, SAMPLE_RATE)
+    status.audio_loaded(len(audio) / SAMPLE_RATE)
     waveform = {"waveform": torch.from_numpy(audio).unsqueeze(0), "sample_rate": SAMPLE_RATE}
     output = pipeline(waveform, hook=_pyannote_hook(progress), **counts)
     annotation = getattr(output, "speaker_diarization", output)  # pyannote.audio 4 wraps the Annotation

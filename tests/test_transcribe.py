@@ -71,9 +71,11 @@ def test_transcribe_words_language_duration(fake_whisper, monkeypatch):
 
 def test_progress_from_segment_end_over_duration(fake_whisper, monkeypatch):
     monkeypatch.setattr(tr, "_cuda_available", lambda: False)
+    monkeypatch.setattr(tr, "PROGRESS_MIN_INTERVAL", 0.0)  # no throttling here: see test_transcribe_progress.py
+    monkeypatch.setattr(tr, "PROGRESS_MIN_STEP", 0.0)
     seen = []
     tr.transcribe("in.wav", progress=seen.append)
-    assert seen == [0.2, 0.5, 1.0]  # last segment ends past the duration: clamped
+    assert seen == [0.0, 0.2, 0.5, 1.0]  # starts at 0; last segment ends past the duration: clamped
 
 
 @pytest.mark.parametrize(
@@ -146,3 +148,18 @@ def test_choose_backend_auto_prefers_cuda_then_alternatives(monkeypatch):
     assert tr.choose_backend("mlx") == "mlx"
     with pytest.raises(ValueError):
         tr.choose_backend("nope")
+
+
+def test_faster_whisper_can_decode_a_wav_with_the_installed_pyav(tmp_path):
+    """The real decode path: PyAV 19 dropped av.open(metadata_errors=), which faster-whisper still passes."""
+    import wave
+
+    audio = pytest.importorskip("faster_whisper.audio")
+    path = tmp_path / "tone.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(48000)
+        handle.writeframes(b"\x00\x01" * 2 * 4800)  # 0.1 s
+    samples = audio.decode_audio(str(path), sampling_rate=16000)
+    assert abs(len(samples) - 1600) < 50

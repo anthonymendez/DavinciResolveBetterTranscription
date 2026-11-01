@@ -17,6 +17,8 @@
 #   BETTER_CAPTIONS_GPU        auto (default): install the NVIDIA CUDA runtime when nvidia-smi finds a GPU
 #                              (Linux); cuda: always install it; none: never (see docs/GPU.md)
 #   BETTER_CAPTIONS_SKIP_SYSTEM_PYTHON  =1: don't check/install the Python Resolve runs the plugin with
+#   BETTER_CAPTIONS_DEBUG      =1: turn on the plugin's debug log (config.json "debug": true; install-debug.sh
+#                              sets it); a reinstall without it turns the log off again
 #   BETTER_CAPTIONS_RESOLVE_PYTHONS     colon-separated Pythons to check instead of Resolve's locations (tests)
 #   BETTER_CAPTIONS_NONINTERACTIVE      =1: never prompt (tests)
 #   BETTER_CAPTIONS_LIB        =1: only define the functions, don't run main (tests)
@@ -210,11 +212,16 @@ install_package() {
     uv "${args[@]}" "$target" || die "package install failed"
 }
 
+debug_choice() {
+    if [ "${BETTER_CAPTIONS_DEBUG:-}" = 1 ]; then echo true; else echo false; fi
+}
+
 # Writes config.json, keeping any user settings already in it.
 write_config() {
-    local data="$1" gpu="$2" py
+    local data="$1" gpu="$2" debug="$3" py
     py="$(venv_python "$data")"
-    BC_CONFIG="$data/config.json" BC_PYTHON="$py" BC_GPU="$gpu" "$py" - <<'PY' || die "could not write config.json"
+    BC_CONFIG="$data/config.json" BC_PYTHON="$py" BC_GPU="$gpu" BC_DEBUG="$debug" \
+        "$py" - <<'PY' || die "could not write config.json"
 import importlib.metadata
 import json
 import os
@@ -230,6 +237,7 @@ if os.path.exists(path):
 config["engine"] = [os.environ["BC_PYTHON"], "-m", "better_captions.cli"]
 config["version"] = importlib.metadata.version("better-captions")
 config["gpu"] = os.environ["BC_GPU"]
+config["debug"] = os.environ["BC_DEBUG"] == "true"
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as f:
     json.dump(config, f, indent=2)
@@ -398,7 +406,7 @@ installed_version() {
 }
 
 print_next_steps() {
-    local data="$1" gpu="$2" version="$3" origin="$4" gpu_note
+    local data="$1" gpu="$2" version="$3" origin="$4" debug="$5" gpu_note
     if [ "$gpu" = cuda ]; then
         gpu_note="The NVIDIA GPU runtime (CUDA) is installed; the engine uses your GPU
 automatically and falls back to the CPU if it can't."
@@ -420,12 +428,23 @@ $gpu_note
 Check what the engine detects: "$(venv_python "$data")" -m better_captions.cli doctor
 Re-run this installer any time to upgrade.
 EOF
+    if [ "$debug" = true ]; then
+        cat <<EOF
+
+Debug logging is ON. Each run of Better Captions in Resolve writes a log to
+  $data/logs/better-captions-YYYYMMDD-HHMMSS.log
+(the newest 20 are kept; the summary and error dialogs show the file's path).
+Send the newest log when reporting a problem. It can contain file paths and
+transcript text; API keys are redacted. To turn it off, re-run the normal installer.
+EOF
+    fi
 }
 
 main() {
-    local os data src gpu ref origin
+    local os data src gpu ref origin debug
     os="$(detect_os)"
     gpu="$(gpu_choice "$os")" || exit 1
+    debug="$(debug_choice)"
     data="$(data_dir "$os")"
     if [ "$(id -u)" = 0 ] && [ -z "${BETTER_CAPTIONS_HOME:-}" ]; then
         warn "running as root installs for root only; run as your normal user instead (no sudo needed)"
@@ -445,10 +464,10 @@ main() {
     src="$(fetch_source "$workdir" "$ref")"
     create_venv "$data"
     install_package "$data" "$src" "$gpu"
-    write_config "$data" "$gpu"
+    write_config "$data" "$gpu" "$debug"
     install_plugin "$os" "$data" "$src"
     ensure_resolve_python "$os" "$workdir"
-    print_next_steps "$data" "$gpu" "$(installed_version "$data")" "$origin"
+    print_next_steps "$data" "$gpu" "$(installed_version "$data")" "$origin" "$debug"
 }
 
 if [ "${BETTER_CAPTIONS_LIB:-}" != 1 ]; then

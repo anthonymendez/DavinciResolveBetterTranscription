@@ -2,7 +2,7 @@
 #
 #   irm https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/uninstall.ps1 | iex
 #
-# Removes the engine venv, config.json and the Resolve plugin files the
+# Removes the engine venv, config.json, the debug logs and the Resolve plugin files the
 # installer copied. Leaves uv installed. Honours BETTER_CAPTIONS_HOME.
 
 & {
@@ -30,6 +30,12 @@
         # point at a directory that holds other things.
         foreach ($name in 'venv', 'config.json', 'plugin_files.txt') {
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $data $name)
+        }
+        # The plugin's debug logs (install-debug.ps1).
+        $logs = Join-Path $data 'logs'
+        if (Test-Path $logs) {
+            Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $logs 'better-captions-*.log')
+            if (-not (Get-ChildItem -Force -Path $logs)) { Remove-Item -Force $logs }
         }
         if (-not (Get-ChildItem -Force -Path $data)) {
             Remove-Item -Force $data

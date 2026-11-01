@@ -10,58 +10,123 @@ from better_captions_plugin.ui import (
     HIGHLIGHT_LABEL,
     NAMING_CHOICES,
     NAMING_LABEL,
+    PAUSE_LABEL,
+    PAUSED_PREFIX,
+    RESUME_LABEL,
+    STEP_CURRENT,
+    STEP_DONE,
+    STEP_PENDING,
     Backend,
     ProgressView,
     ReviewRequest,
     ReviewResult,
     checked_highlight_color,
+    fix_speakers_label,
     naming_index,
+    review_check_note,
+    review_scroll,
+    review_speaker_label,
     speaker_rows,
+    step_line,
+    step_states,
 )
-from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
+from better_captions_plugin.ui.speaker_editor import CONFIRM_LABEL, ONLY_UNCERTAIN_LABEL, EditorController, cue_index
 
 TITLE = "Better Captions"
+CHECK_ROW_BACKGROUND = "#fff4c2"  # cue list rows whose voice match is uncertain
+CHECK_NOTE_COLOR = "#9a6700"
+_STEP_COLORS = {STEP_DONE: "#2e7d32", STEP_CURRENT: "#0b57d0", STEP_PENDING: "#888888"}
 
 
 class TkProgress(ProgressView):
     def __init__(self, root: tk.Tk, title: str):
         self._root = root
         self._cancelled = False
+        self._paused = False
+        self._status_text = "Starting…"
+        self._step_labels: list[ttk.Label] = []
         self.window = tk.Toplevel(root)
         self.window.title(title)
         self.window.resizable(True, False)
         self.window.protocol("WM_DELETE_WINDOW", self._cancel)
         frame = ttk.Frame(self.window, padding=12)
         frame.pack(fill="both", expand=True)
-        self._status = tk.StringVar(value="Starting…")
+        self._status = tk.StringVar(value=self._status_text)
         ttk.Label(frame, textvariable=self._status, width=60).pack(anchor="w")
+        self._steps_frame = ttk.Frame(frame)
+        self._steps_frame.pack(fill="x", pady=(6, 0))
         self._bar = ttk.Progressbar(frame, length=440, mode="determinate", maximum=100)
-        self._bar.pack(fill="x", pady=(6, 6))
+        self._bar.pack(fill="x", pady=(6, 0))
+        self._indeterminate = False
+        self._percent = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self._percent).pack(anchor="e", pady=(0, 6))
         self._log = tk.Text(frame, height=8, width=70, state="disabled", wrap="word")
         self._log.pack(fill="both", expand=True)
-        ttk.Button(frame, text="Cancel", command=self._cancel).pack(anchor="e", pady=(8, 0))
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor="e", pady=(8, 0))
+        self._pause_button = ttk.Button(buttons, text=PAUSE_LABEL, command=self._toggle_pause)
+        self._pause_button.pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="left")
         self.window.update_idletasks()
         _center(self.window)
         self.pump()
 
     def _cancel(self):
         self._cancelled = True
-        self._status.set("Cancelling…")
+        self._paused = False  # a paused engine has to run again to be stopped
+        self._status_text = "Cancelling…"
+        self._show_status()
+
+    def _toggle_pause(self):
+        if self._cancelled:
+            return
+        self._paused = not self._paused
+        self._pause_button.configure(text=RESUME_LABEL if self._paused else PAUSE_LABEL)
+        self._show_status()
+
+    def _show_status(self):
+        self._status.set((PAUSED_PREFIX if self._paused else "") + self._status_text)
+
+    def _show_steps(self):
+        if len(self._step_labels) != len(self.step_labels):
+            for label in self._step_labels:
+                label.destroy()
+            self._step_labels = [ttk.Label(self._steps_frame) for _ in self.step_labels]
+            for label in self._step_labels:
+                label.pack(anchor="w")
+        states = step_states(len(self.step_labels), self.step_index)
+        for widget, text, state in zip(self._step_labels, self.step_labels, states):
+            widget.configure(text=step_line(text, state), foreground=_STEP_COLORS[state])
+        self.pump()
 
     @property
     def cancelled(self) -> bool:
         return self._cancelled
 
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
     def set_status(self, text: str):
-        self._status.set(text)
+        self._status_text = text
+        self._show_status()
         self.pump()
 
     def set_progress(self, pct):
         if pct is None:
-            self._bar.configure(mode="indeterminate")
+            if not self._indeterminate:
+                self._indeterminate = True
+                self._bar.configure(mode="indeterminate")
+                self._bar.start(60)  # the sweep only moves while started
+            self._percent.set("")
         else:
-            self._bar.configure(mode="determinate")
-            self._bar["value"] = max(0.0, min(100.0, float(pct)))
+            if self._indeterminate:
+                self._indeterminate = False
+                self._bar.stop()
+                self._bar.configure(mode="determinate")
+            value = max(0.0, min(100.0, float(pct)))
+            self._bar["value"] = value
+            self._percent.set("%d%%" % int(value))
         self.pump()
 
     def log(self, line: str):
@@ -107,6 +172,16 @@ class TkBackend(Backend):
         self.root.update()
         messagebox.showerror(title, text, parent=self.root)
 
+    def pick_audio_tracks(self, tracks, preselected):
+        from better_captions_plugin import track_picker
+
+        return track_picker.pick_audio_tracks_tk(self.root, tracks, preselected)
+
+    def pick_model(self, models, current: str) -> str | None:
+        from better_captions_plugin import model_picker
+
+        return model_picker.pick_model_tk(self.root, models, current)
+
     def review(self, request: ReviewRequest) -> ReviewResult | None:
         dialog = _ReviewDialog(self.root, request)
         return dialog.run()
@@ -134,13 +209,27 @@ class _ReviewDialog:
             header += "   Range: %s" % request.range_label
         if header:
             ttk.Label(frame, text=header).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        notes = ttk.Frame(frame)
+        notes.grid(row=1, column=0, columnspan=4, sticky="w")
         if request.note:
-            ttk.Label(frame, text=request.note, foreground="#666").grid(
-                row=1, column=0, columnspan=4, sticky="w", pady=(0, 8)
-            )
+            ttk.Label(notes, text=request.note, foreground="#666").pack(anchor="w", pady=(0, 8))
+        # "3 lines need checking: …"; only packed while there are such lines.
+        self.check_note = ttk.Label(notes, foreground=CHECK_NOTE_COLOR)
+        self.fix_button = None
 
-        self.table = ttk.Frame(frame)
-        self.table.grid(row=2, column=0, columnspan=4, sticky="we")
+        # The speaker rows live in a canvas no taller than VISIBLE_ROWS rows (scrollbar + mouse wheel),
+        # so the options and the OK/Cancel buttons stay on screen however many speakers there are.
+        table_area = ttk.Frame(frame)
+        table_area.grid(row=2, column=0, columnspan=4, sticky="we")
+        self._canvas = tk.Canvas(table_area, highlightthickness=0, borderwidth=0)
+        self._scrollbar = ttk.Scrollbar(table_area, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._scrollbar.set)
+        self._canvas.pack(side="left", fill="both", expand=True)
+        self.table = ttk.Frame(self._canvas)
+        self._canvas.create_window((0, 0), window=self.table, anchor="nw")
+        self._scrolls = False
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.window.bind(sequence, self._on_wheel, add="+")
         self.name_vars = {}
         self.template_boxes = {}
         self._build_rows({})
@@ -196,7 +285,9 @@ class _ReviewDialog:
         ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="right", padx=(8, 0))
         ttk.Button(buttons, text="Create tracks", command=self._ok).pack(side="right")
         if request.editor is not None:
-            ttk.Button(buttons, text="Fix speakers…", command=self._fix_speakers).pack(side="right", padx=(0, 24))
+            self.fix_button = ttk.Button(buttons, text=fix_speakers_label(self.speakers), command=self._fix_speakers)
+            self.fix_button.pack(side="right", padx=(0, 24))
+        self._show_check_note()
         self.window.bind("<Return>", lambda _e: self._ok())
         self.window.bind("<Escape>", lambda _e: self._cancel())
         self.window.update_idletasks()
@@ -214,8 +305,9 @@ class _ReviewDialog:
         self.template_boxes = {}
         template_labels = list(self.request.templates) or ["(no Text+ templates in the media pool)"]
         for row_index, speaker in enumerate(self.speakers, start=1):
-            label = "%s (%d cues)" % (speaker.id, speaker.cue_count)
-            ttk.Label(self.table, text=label).grid(row=row_index, column=0, sticky="w", padx=(0, 8))
+            ttk.Label(self.table, text=review_speaker_label(speaker)).grid(
+                row=row_index, column=0, sticky="w", padx=(0, 8)
+            )
             var = tk.StringVar(value=speaker.name)
             self.name_vars[speaker.id] = var
             ttk.Entry(self.table, textvariable=var, width=24).grid(row=row_index, column=1, sticky="we", padx=(0, 8))
@@ -227,6 +319,30 @@ class _ReviewDialog:
             ttk.Label(self.table, text=_shorten(speaker.sample, 48), foreground="#666").grid(
                 row=row_index, column=3, sticky="w"
             )
+        self._fit_table()
+
+    def _fit_table(self):
+        """Size the rows canvas to at most VISIBLE_ROWS rows (plus the header); show the scrollbar if it overflows."""
+        self.table.update_idletasks()
+        width, height = self.table.winfo_reqwidth(), self.table.winfo_reqheight()
+        lines = len(self.speakers) + 1  # the header row counts
+        row_height = max(1, height // lines)
+        shown = review_scroll.bounded_height(lines, row_height, review_scroll.VISIBLE_ROWS + 1)
+        self._canvas.configure(
+            width=width, height=shown, scrollregion=(0, 0, width, height), yscrollincrement=row_height
+        )
+        self._canvas.yview_moveto(0)
+        scrolls = height > shown
+        if scrolls and not self._scrolls:
+            self._scrollbar.pack(side="right", fill="y")
+        elif self._scrolls and not scrolls:
+            self._scrollbar.pack_forget()
+        self._scrolls = scrolls
+
+    def _on_wheel(self, event):
+        units = review_scroll.wheel_units(event)
+        if units and self._scrolls:
+            self._canvas.yview_scroll(units, "units")
 
     def _fix_speakers(self):
         """Open the speaker editor; names typed so far go in as renames, the rows are rebuilt after."""
@@ -237,10 +353,22 @@ class _ReviewDialog:
         _SpeakerEditorDialog(self.window, EditorController(editor, self.request.time_label)).run()
         self.speakers = speaker_rows(editor)
         self._build_rows(template_choice)
+        self._show_check_note()
         try:
             self.window.grab_set()  # the editor took the grab
         except tk.TclError:
             pass
+
+    def _show_check_note(self):
+        """Show (or hide) the uncertain-lines note and the count on "Fix speakers…"."""
+        text = review_check_note(self.speakers, self.request.editor is not None)
+        self.check_note.configure(text=text)
+        if text:
+            self.check_note.pack(anchor="w", pady=(0, 8))
+        else:
+            self.check_note.pack_forget()
+        if self.fix_button is not None:
+            self.fix_button.configure(text=fix_speakers_label(self.speakers))
 
     def _sync_highlight_state(self):
         """Highlighting only applies to Text+ captions: usable while that output is ticked."""
@@ -342,17 +470,26 @@ class _SpeakerEditorDialog:
         self.filter_box = ttk.Combobox(right, state="readonly", width=30)
         self.filter_box.grid(row=0, column=1, sticky="w")
         self.filter_box.bind("<<ComboboxSelected>>", lambda _e: self._refresh_cues())
+        # Checking mode: "Only lines to check" plus the count, right of the speaker filter.
+        self.only_uncertain_var = tk.BooleanVar(value=controller.only_uncertain)
+        self.check_var = tk.StringVar()
+        if controller.checking:
+            check_row = ttk.Frame(right)
+            check_row.grid(row=0, column=2, columnspan=2, sticky="e")
+            ttk.Checkbutton(
+                check_row, text=ONLY_UNCERTAIN_LABEL, variable=self.only_uncertain_var, command=self._toggle_uncertain
+            ).pack(side="left")
+            ttk.Label(check_row, textvariable=self.check_var, foreground=CHECK_NOTE_COLOR).pack(
+                side="left", padx=(10, 0)
+            )
+        columns = controller.cue_columns()
         self.cue_tree = ttk.Treeview(
-            right, columns=("num", "time", "speaker", "text"), show="headings", selectmode="extended", height=14
+            right, columns=[key for key, _title, _width in columns], show="headings", selectmode="extended", height=14
         )
-        for column, title, width in (
-            ("num", "#", 50),
-            ("time", "Time", 100),
-            ("speaker", "Speaker", 120),
-            ("text", "Text", 360),
-        ):
+        for column, title, width in columns:
             self.cue_tree.heading(column, text=title)
             self.cue_tree.column(column, width=width, stretch=column == "text")
+        self.cue_tree.tag_configure("check", background=CHECK_ROW_BACKGROUND)
         scroll = ttk.Scrollbar(right, orient="vertical", command=self.cue_tree.yview)
         self.cue_tree.configure(yscrollcommand=scroll.set)
         self.cue_tree.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
@@ -361,6 +498,8 @@ class _SpeakerEditorDialog:
         self.move_box = ttk.Combobox(right, state="readonly", width=30)
         self.move_box.grid(row=2, column=1, sticky="w", pady=(6, 0))
         ttk.Button(right, text="Move", command=self._move).grid(row=2, column=2, sticky="e", pady=(6, 0))
+        if controller.checking:
+            ttk.Button(right, text=CONFIRM_LABEL, command=self._confirm).grid(row=3, column=2, sticky="e", pady=(6, 0))
 
         bottom = ttk.Frame(frame)
         bottom.grid(row=1, column=0, columnspan=2, sticky="we", pady=(10, 0))
@@ -417,7 +556,13 @@ class _SpeakerEditorDialog:
     def _refresh_cues(self):
         self.cue_tree.delete(*self.cue_tree.get_children())
         for row in self.controller.cue_rows(self._choice(self.filter_box)):
-            self.cue_tree.insert("", "end", iid=row[0], values=row)
+            tags = ("check",) if self.controller.is_check_row(row) else ()
+            self.cue_tree.insert("", "end", iid=row[0], values=row, tags=tags)
+        self.check_var.set(self.controller.check_status())
+
+    def _toggle_uncertain(self):
+        self.controller.only_uncertain = bool(self.only_uncertain_var.get())
+        self._refresh_cues()
 
     def _on_speaker_selected(self):
         speaker_id = self.selected_speaker()
@@ -436,6 +581,10 @@ class _SpeakerEditorDialog:
 
     def _move(self):
         self.controller.move(self.selected_cues(), self._choice(self.move_box))
+        self._refresh()
+
+    def _confirm(self):
+        self.controller.confirm(self.selected_cues())
         self._refresh()
 
     def _undo(self):

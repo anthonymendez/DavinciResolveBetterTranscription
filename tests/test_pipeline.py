@@ -23,12 +23,12 @@ def fake_transcribe(audio_path, **kw):
 
 
 def fake_diarize(audio_path, **kw):
-    return [SpeakerTurn("SPEAKER_00", 0.0, 1.5), SpeakerTurn("SPEAKER_01", 1.9, 3.0)]
+    return diarize.DiarizeResult([SpeakerTurn("SPEAKER_00", 0.0, 1.5), SpeakerTurn("SPEAKER_01", 1.9, 3.0)])
 
 
 def test_cli_run_end_to_end(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(transcribe, "transcribe", fake_transcribe)
-    monkeypatch.setattr(diarize, "diarize", fake_diarize)
+    monkeypatch.setattr(diarize, "diarize_detailed", fake_diarize)
     rc = cli.main(["run", "in.wav", "--out", str(tmp_path), "--naming", "heuristic"])
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert rc == 0, events

@@ -2,11 +2,10 @@
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
-
-import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLUGIN = os.path.join(REPO, "resolve_plugin")
@@ -85,7 +84,10 @@ def test_launcher_falls_back_to_src_when_zip_is_missing(tmp_path):
     utility = tmp_path / "resolve_plugin" / "Utility"
     utility.mkdir(parents=True)
     src = tmp_path / "resolve_plugin" / "src"
-    os.symlink(os.path.join(PLUGIN, "src"), src) if hasattr(os, "symlink") else pytest.skip("no symlinks")
+    try:
+        os.symlink(os.path.join(PLUGIN, "src"), src, target_is_directory=True)
+    except OSError:  # Windows without the symlink privilege: a plain copy exercises the same fallback
+        shutil.copytree(os.path.join(PLUGIN, "src"), src)
     with open(LAUNCHER, "rb") as handle:
         (utility / "Better Captions.py").write_bytes(handle.read())
     driver = tmp_path / "driver.py"

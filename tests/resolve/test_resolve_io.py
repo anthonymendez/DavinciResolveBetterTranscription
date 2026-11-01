@@ -12,6 +12,7 @@ from tests.resolve.fake_resolve import (
     FakeMediaPoolItem,
     FakeProject,
     FakeTimeline,
+    FakeTimelineItem,
     make_media_pool,
     make_world,
 )
@@ -85,68 +86,116 @@ def test_render_range_uses_in_out_marks_when_set():
 # -- render
 
 
-def test_render_audio_writes_wav_with_audio_only_settings(tmp_path):
-    resolve = make_world()
-    project = resolve.project
+def _render(project, tmp_path, start=86400, end=None, **kwargs):
+    kwargs.setdefault("sleep", lambda s: None)
+    return resolve_io.render_audio(project, project.timeline, str(tmp_path / "audio"), start, end, **kwargs)
+
+
+def test_render_audio_uses_the_audio_only_preset_and_restores_the_render(tmp_path):
+    """Real Resolve: Wave has no codecs, so the preset sets the render up (not SetCurrentRenderFormatAndCodec)."""
+    project = make_world().project
     pumps = []
-    wav = resolve_io.render_audio(
-        project,
-        project.timeline,
-        str(tmp_path / "audio"),
-        86400,
-        None,
-        pump=lambda: pumps.append(1),
-        sleep=lambda s: None,
-    )
-    assert os.path.isfile(wav) and wav.endswith(".wav")
-    assert pumps
-    settings = project.jobs or {}
-    assert not settings  # job deleted afterwards
-    assert project.deleted_jobs == ["job-1"]
-    assert project.render_settings["ExportVideo"] is False
-    assert project.render_settings["ExportAudio"] is True
-    assert project.render_settings["SelectAllFrames"] is True
-    assert "MarkIn" not in project.render_settings
-    assert project.render_format == ("Wave", "LinearPCM")
-    assert project.render_mode == 0  # restored
+    wav = _render(project, tmp_path, pump=lambda: pumps.append(1))
+    assert os.path.isfile(wav) and wav.endswith(".wav") and pumps
+    job = project.last_job
+    assert job["format"] == ("wav", "")  # what the Audio Only preset selects
+    settings = job["settings"]
+    assert settings["ExportVideo"] is False and settings["ExportAudio"] is True
+    timeline = project.timeline
+    assert settings["SelectAllFrames"] is False  # an explicit range: a stale one can block SelectAllFrames
+    assert (settings["MarkIn"], settings["MarkOut"]) == (timeline.GetStartFrame(), timeline.GetEndFrame() - 1)
+    assert settings["AudioCodec"] == "lpcm" and "AudioFormat" not in settings  # pre-21.1 rejects AudioFormat
+    assert any("AudioFormat" in call for call in project.settings_calls)  # ... but it was tried first
+    assert project.jobs == {} and project.deleted_jobs == ["job-1"]
+    # The user's render is put back: format/codec, video export, mode.
+    assert project.render_format == ("mov", "H264")
+    assert project.render_settings["ExportVideo"] is True and project.render_mode == 0
+
+
+def test_render_audio_on_21_1_asks_for_wav_directly(tmp_path):
+    project = make_world().project
+    project.audio_render_api = True
+    project.presets = []  # even without the preset
+    wav = _render(project, tmp_path)
+    assert wav.endswith(".wav")
+    settings = project.last_job["settings"]
+    assert settings["AudioFormat"] == "wav" and settings["AudioCodec"] == "lpcm"
 
 
 def test_render_audio_with_range_sets_marks(tmp_path):
     project = make_world().project
-    resolve_io.render_audio(project, project.timeline, str(tmp_path), 86500, 86700, sleep=lambda s: None)
-    assert project.render_settings["SelectAllFrames"] is False
-    assert (project.render_settings["MarkIn"], project.render_settings["MarkOut"]) == (86500, 86700)
+    _render(project, tmp_path, 86500, 86700)
+    settings = project.last_job["settings"]
+    assert settings["SelectAllFrames"] is False
+    assert (settings["MarkIn"], settings["MarkOut"]) == (86500, 86700)
+
+
+def test_render_audio_finds_a_localised_audio_preset(tmp_path):
+    project = make_world().project
+    project.presets = ["H.264 Master", "Solo audio"]
+    assert _render(project, tmp_path).endswith(".wav")
+    assert project.last_job["format"] == ("wav", "")
+
+
+def test_render_audio_without_any_way_to_get_a_wav_says_so(tmp_path):
+    project = make_world().project
+    project.presets = ["H.264 Master"]  # no audio preset, no 21.1 audio API, Wave takes no codec
+    with pytest.raises(ResolveError, match="Audio Only"):
+        _render(project, tmp_path)
+    assert project.jobs == {} and project.render_format == ("mov", "H264")
+
+
+def test_render_audio_reports_a_non_wav_render(tmp_path):
+    project = make_world().project
+    original = project.LoadRenderPreset
+
+    def load_preset_as_mxf(name):
+        ok = original(name)
+        project.render_format = ("mxf", "")  # e.g. a preset left on MXF OP-Atom
+        return ok
+
+    project.formats["MXF OP-Atom"] = "mxf"
+    project.LoadRenderPreset = load_preset_as_mxf
+    with pytest.raises(ResolveError, match=r"\.mxf, not a WAV"):
+        _render(project, tmp_path)
+
+
+def test_render_audio_retries_a_start_that_did_not_take(tmp_path):
+    project = make_world().project
+    project.start_failures = 1
+    assert _render(project, tmp_path).endswith(".wav")
+    project = make_world().project
+    project.start_failures = 2
+    with pytest.raises(ResolveError, match="could not start"):
+        _render(project, tmp_path)
+    assert project.deleted_jobs == ["job-1"]
 
 
 def test_render_audio_failures(tmp_path):
     project = make_world().project
     project.fail_render = True
     with pytest.raises(ResolveError, match="Failed"):
-        resolve_io.render_audio(project, project.timeline, str(tmp_path), 0, None, sleep=lambda s: None)
-    project = make_world().project
-    project.formats = {"QuickTime": "mov"}
-    with pytest.raises(ResolveError, match="WAV"):
-        resolve_io.render_audio(project, project.timeline, str(tmp_path), 0, None, sleep=lambda s: None)
+        _render(project, tmp_path)
+    assert project.render_format == ("mov", "H264")
 
 
 def test_render_audio_cancel(tmp_path):
     project = make_world().project
     project.polls_until_done = 50
     with pytest.raises(ResolveError, match="cancelled"):
-        resolve_io.render_audio(
-            project, project.timeline, str(tmp_path), 0, None, should_cancel=lambda: True, sleep=lambda s: None
-        )
+        _render(project, tmp_path, should_cancel=lambda: True)
     assert project.deleted_jobs == ["job-1"]
 
 
-def test_pick_wav_format_matches_by_extension_then_name():
+def test_wav_codecs_use_the_extension_and_prefer_pcm():
     project = make_world().project
-    project.formats = {"WAVE AUDIO": ".WAV", "MP4": "mp4"}
-    project.codecs = {"WAVE AUDIO": {"AAC": "aac", "Linear PCM 16": "lpcm16", "24-bit": "lpcm24"}}
-    assert resolve_io.pick_wav_format(project) == ("WAVE AUDIO", "lpcm16")
-    project.formats = {"Wav thing": "weird"}
-    project.codecs = {"Wav thing": {"Only": "x"}}
-    assert resolve_io.pick_wav_format(project) == ("Wav thing", "x")
+    project.formats = {"WAVE AUDIO": ".WAV"}
+    project.codecs = {"WAV": {"AAC": "aac", "Linear PCM 16": "lpcm16"}}
+    ext = resolve_io._wav_extension(project)
+    assert ext == "WAV"
+    assert resolve_io._wav_codecs(project, ext)[:2] == ["lpcm16", "aac"]
+    project.codecs = {}
+    assert resolve_io._wav_codecs(project, "wav") == ["lpcm", "LinearPCM"]
 
 
 # -- media pool
@@ -298,6 +347,76 @@ def test_create_subtitle_track_falls_back_cleanly_when_resolve_ignores_record_fr
     assert os.path.isfile(srt)  # the file stays for manual import
 
 
+def _studio_21_1_2_with_user_subtitles():
+    resolve = make_world(profile="21.1.2-studio")
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    tl.AddTrack("subtitle")
+    users = FakeTimelineItem("The user's own cue", 86400 + 240, 48)
+    users.timeline = tl
+    tl.tracks["subtitle"][0].items.append(users)
+    return tl, mp, users
+
+
+def test_create_subtitle_track_moves_cues_resolve_21_1_2_appends_after_the_end(tmp_path):
+    # 21.1.2 puts the SRT on Subtitle 1 after the timeline's end, whatever recordFrame and trackIndex say.
+    tl, mp, users = _studio_21_1_2_with_user_subtitles()
+    srt = _srt(tmp_path / "SPEAKER_00.srt", [(0.5, 2.0, "Hey"), (4.0, 6.5, "Ready?")])
+    plan = _plan(
+        "Maria",
+        [ClipPlacement(86412, 36, "Hey", 0.5, 2.0), ClipPlacement(86496, 60, "Ready?", 4.0, 6.5)],
+        srt_path=srt,
+        mode="subtitles",
+    )
+    result = resolve_io.create_subtitle_track(mp, tl, plan, origin_frame=86400)
+    assert (result.track_index, result.placed) == (2, 2)
+    track = tl.track("subtitle", "Maria")
+    assert [(i.GetStart(), i.GetName()) for i in track.items] == [(86412, "Hey"), (86496, "Ready?")]
+    assert tl.tracks["subtitle"][0].items == [users]  # nothing left behind on the user's track
+    assert tl.GetEndFrame() == 86400 + 24 * 60  # the footage's end again
+
+
+def test_create_subtitle_track_expects_resolve_to_drop_zero_length_cues(tmp_path):
+    # Studio 21.1.2 run: "00:00:57,030 --> 00:00:57,030" was not placed, and 4 of 5 cues failed the check.
+    tl, mp, _ = _studio_21_1_2_with_user_subtitles()
+    cues = [(0.0, 0.0, "Gone"), (0.5, 2.0, "Hey"), (2.03, 2.03, "Also gone"), (4.0, 6.5, "Ready?")]
+    srt = _srt(tmp_path / "SPEAKER_00.srt", cues)
+    plan = _plan(
+        "Maria",
+        [ClipPlacement(86400 + round(a * 24), 24, t, a, b) for a, b, t in cues],
+        srt_path=srt,
+        mode="subtitles",
+    )
+    result = resolve_io.create_subtitle_track(mp, tl, plan, origin_frame=86400)
+    assert result.placed == 2
+    assert [(i.GetStart(), i.GetName()) for i in tl.track("subtitle", "Maria").items] == [
+        (86412, "Hey"),
+        (86496, "Ready?"),
+    ]
+
+
+def test_create_subtitle_track_falls_back_and_cleans_up_when_the_move_fails(tmp_path):
+    tl, mp, users = _studio_21_1_2_with_user_subtitles()
+    tl.refuse_move_items = True
+    srt = _srt(tmp_path / "SPEAKER_00.srt", [(0.5, 2.0, "Hey"), (4.0, 6.5, "Ready?")])
+    plan = _plan("Maria", [ClipPlacement(86412, 36, "Hey", 0.5, 2.0)], srt_path=srt, mode="subtitles")
+    with pytest.raises(SubtitlePlacementError, match="refused to move"):
+        resolve_io.create_subtitle_track(mp, tl, plan, origin_frame=86400)
+    assert [t.name for t in tl.tracks["subtitle"]] == ["Subtitle 1"]
+    assert tl.tracks["subtitle"][0].items == [users]  # the stray cues were deleted, the user's kept
+    assert mp.deleted == mp.imported
+
+
+def test_create_subtitle_track_without_move_items_falls_back_cleanly(tmp_path):
+    tl, mp, users = _studio_21_1_2_with_user_subtitles()
+    tl.has_move_items_api = False
+    srt = _srt(tmp_path / "SPEAKER_00.srt", [(0.5, 2.0, "Hey")])
+    plan = _plan("Maria", [ClipPlacement(86412, 36, "Hey", 0.5, 2.0)], srt_path=srt, mode="subtitles")
+    with pytest.raises(SubtitlePlacementError, match="no subtitle clips appeared"):
+        resolve_io.create_subtitle_track(mp, tl, plan, origin_frame=86400)
+    assert [t.name for t in tl.tracks["subtitle"]] == ["Subtitle 1"]
+    assert tl.tracks["subtitle"][0].items == [users]
+
+
 def test_create_subtitle_track_missing_srt_or_import_failure(tmp_path):
     resolve = make_world()
     tl, mp = resolve.project.timeline, resolve.project.media_pool
@@ -312,3 +431,127 @@ def test_create_subtitle_track_missing_srt_or_import_failure(tmp_path):
             mp, tl, _plan("M", [ClipPlacement(0, 24, "x", 0, 1)], srt_path=srt, mode="subtitles"), 0
         )
     assert tl.GetTrackCount("subtitle") == 0
+
+
+def test_whole_timeline_range_falls_back_to_select_all_frames():
+    class Blind:
+        def GetStartFrame(self):
+            raise RuntimeError("no API")
+
+        def GetEndFrame(self):
+            return None
+
+    assert resolve_io.whole_timeline_range(Blind(), 86400) == (86400, None)
+
+
+def test_whole_timeline_render_starts_despite_a_stale_mark_range(tmp_path):
+    project = make_world().project
+    project.stale_range_blocks_select_all = True
+    wav = resolve_io.render_audio(project, project.timeline, str(tmp_path), 86400, None, sleep=lambda s: None)
+    assert os.path.isfile(wav)
+
+
+def test_create_textplus_track_measures_an_exclusive_end_frame():
+    # Resolve 21.1: endFrame is exclusive, so duration - 1 would make every clip a frame short
+    resolve = make_world()
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    mp.end_frame_exclusive = True
+    template = resolve_io.find_text_templates(mp)[0]
+    clips = [ClipPlacement(86400, 1, "um", 0, 0.01), ClipPlacement(86412, 36, "a", 0.5, 2.0)]
+    clips.append(ClipPlacement(86496, 60, "b", 4.0, 6.5))
+    result = resolve_io.create_textplus_track(mp, tl, _plan("S", clips, template=template))
+    assert result.placed == 3 and result.misplaced == []
+    assert [(i.GetStart(), i.GetDuration()) for i in tl.track("video", "S").items] == [
+        (86400, 1),
+        (86412, 36),
+        (86496, 60),
+    ]
+    assert [i["endFrame"] for i in mp.append_calls[-1]] == [1, 36, 60]
+
+
+def test_create_textplus_track_keeps_an_inclusive_probe():
+    resolve = make_world()
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    template = resolve_io.find_text_templates(mp)[0]
+    clips = [ClipPlacement(86412, 36, "a", 0.5, 2.0), ClipPlacement(86496, 60, "b", 4.0, 6.5)]
+    result = resolve_io.create_textplus_track(mp, tl, _plan("S", clips, template=template))
+    assert result.placed == 2 and result.misplaced == []
+    assert [[i["endFrame"] for i in call] for call in mp.append_calls] == [[35], [59]]
+
+
+def test_create_textplus_track_places_the_rest_when_one_clip_fails_the_batch():
+    resolve = make_world()
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    template = resolve_io.find_text_templates(mp)[0]
+    original = mp.AppendToTimeline
+
+    def refuse_frame(infos):  # Resolve returns None for the whole call if it can't place one clip
+        if any(i["recordFrame"] == 86600 for i in infos):
+            if len(infos) > 1:
+                return None
+            return []
+        return original(infos)
+
+    mp.AppendToTimeline = refuse_frame
+    clips = [ClipPlacement(86412, 36, "a", 0.5, 2.0), ClipPlacement(86496, 60, "b", 4.0, 6.5)]
+    clips.append(ClipPlacement(86600, 10, "c", 8.0, 8.4))
+    result = resolve_io.create_textplus_track(mp, tl, _plan("S", clips, template=template))
+    assert result.placed == 2 and result.misplaced == ["c: no clip at frame 86600"]
+
+
+def test_restore_marks_puts_back_marks_that_appending_cleared():
+    marks = {"video": {"in": 86400, "out": 90000}, "audio": {"in": 86400, "out": 90000}}
+    tl = FakeTimeline(mark_in_out=marks)
+    saved = resolve_io.save_marks(tl)
+    tl.mark_in_out = None
+    resolve_io.restore_marks(tl, saved)
+    assert tl.GetMarkInOut() == marks
+
+
+def test_restore_marks_without_marks_or_api_does_nothing():
+    tl = FakeTimeline()
+    resolve_io.restore_marks(tl, resolve_io.save_marks(tl))
+    assert tl.mark_in_out is None
+    tl = FakeTimeline(has_mark_in_out_api=False)
+    assert resolve_io.save_marks(tl) == {}
+    resolve_io.restore_marks(tl, {"video": {"in": 1, "out": 2}})  # no SetMarkInOut either: no error
+
+
+def test_render_range_reads_marks_counted_from_the_timeline_start():
+    # Resolve 21.1: a range at 01:00:04:04 on a 01:00:00:00 timeline at 24 fps reads 100
+    tl = FakeTimeline()
+    clock = resolve_io.timeline_clock(tl, FakeProject(tl))
+    tl.mark_in_out = {"video": {"in": 100, "out": 300}, "audio": {"in": 100, "out": 300}}
+    assert resolve_io.render_range(tl, clock) == (86500, 86700)
+
+
+def test_marks_offset_tells_relative_from_absolute():
+    tl = FakeTimeline()
+    tl.GetEndFrame = lambda: 86400 + 100000  # a long timeline: 86500 also fits as a relative mark
+    assert resolve_io.marks_offset(tl, 86400, 100, 300) == 86400  # before the start: relative
+    assert resolve_io.marks_offset(tl, 86400, 86500, 86700) == 86400  # fits inside counted from the start
+    tl.GetEndFrame = lambda: 90000
+    assert resolve_io.marks_offset(tl, 86400, 86500, 86700) == 0  # only fits as absolute frames
+    assert resolve_io.marks_offset(tl, 0, 100, 300) == 0  # a timeline starting at 0: both readings agree
+
+
+@pytest.mark.parametrize(("frame_rate", "start_tc"), [("23.976", "01:00:00:00"), ("29.97", "01:00:00;00")])
+def test_create_textplus_track_converts_lengths_to_a_60_fps_template(frame_rate, start_tc):
+    # Studio 21.1.2: a 60 fps "Fusion Title" on a slower timeline reads startFrame/endFrame in its own frames
+    resolve = make_world(frame_rate=frame_rate, start_timecode=start_tc, drop_frame=";" in start_tc)
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    mp.end_frame_exclusive = True
+    template = resolve_io.find_text_templates(mp)[0]
+    template.item.props["FPS"] = 60.0
+    start = tl.start_frame
+    clips = [ClipPlacement(start, 1, "um", 0, 0.04), ClipPlacement(start + 12, 15, "a", 0.5, 1.1)]
+    clips.append(ClipPlacement(start + 40, 36, "b", 1.6, 3.1))
+    result = resolve_io.create_textplus_track(mp, tl, _plan("S", clips, template=template))
+    assert result.placed == 3 and result.misplaced == []
+    assert [i.GetDuration() for i in tl.track("video", "S").items] == [1, 15, 36]
+
+
+def test_source_frames_rounds_up_to_cover_the_length():
+    assert resolve_io._source_frames(15, 60 / 23.976) == 38
+    assert resolve_io._source_frames(1, 1.0) == 1
+    assert resolve_io._source_frames(36, 1.0) == 36

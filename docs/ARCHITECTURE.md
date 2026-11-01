@@ -32,6 +32,7 @@ Two halves, joined by a subprocess + JSON contract:
 | `engine/backends/whispercpp.py` | whisper.cpp + Vulkan (AMD/Intel/NVIDIA GPUs, Windows/Linux); binary in `<data>/bin`, see `docs/GPU_VULKAN.md` |
 | `engine/diarize.py` | speaker turns; default backend sherpa-onnx (no HF token needed), optional pyannote |
 | `engine/align.py` | words -> speakers -> segments |
+| `engine/voices.py` | voice library in `<data>/voices/<safe name>.json`: speakers whose voice centroid matches a saved person are named before `naming/` (`name_source` "voice"); each run writes `voices.json` next to `transcript.json`; `better-captions voices save/list/forget` |
 | `naming/` | speaker names from context: heuristic + Anthropic / OpenAI-compatible (Ollama) LLM |
 | `secrets.py` | LLM API keys in the OS keychain (`keyring`); `better-captions key set/delete/status/migrate` |
 | `cues.py` | segments -> readable caption cues |
@@ -49,6 +50,10 @@ Two halves, joined by a subprocess + JSON contract:
   (`secrets.py`, service `better-captions`) or env; plain-text `anthropic_api_key` / `openai_api_key`
   here are legacy, still read with a warning, and moved out by `better-captions key migrate`.
   `"gpu"` records whether the installer added the NVIDIA CUDA runtime (the `cuda` extra); see `docs/GPU.md`.
+  `"debug"` is true after `install-debug.ps1` / `install-debug.sh` (or `BETTER_CAPTIONS_DEBUG=1`) and false
+  after a normal install; while it is true (or `BETTER_CAPTIONS_DEBUG=1` is set in Resolve's environment)
+  each run writes `<data>/logs/better-captions-YYYYMMDD-HHMMSS.log` (`debug_log.py`; newest 20 kept) and
+  passes `--verbose` to the engine.
 - Everything under `resolve_plugin/Utility/` is copied into Resolve's `Fusion/Scripts/Utility/` folder:
   - Windows `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility`
   - macOS `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility`

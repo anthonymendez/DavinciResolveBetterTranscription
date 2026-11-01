@@ -29,7 +29,7 @@ def build_cues(transcript: Transcript, options: CueOptions | None = None) -> lis
         for group in _segment_groups(segment, opts):
             cues.append(_make_cue(segment.speaker, group, opts))
     cues.sort(key=lambda c: (c.start, c.end))
-    _extend_short_cues(cues, opts)
+    _extend_short_cues(cues, opts, transcript.duration)
     return cues
 
 
@@ -121,11 +121,21 @@ def _make_cue(speaker: str, words: list[Word], opts: CueOptions) -> Cue:
         start=words[0].start,
         end=words[-1].end,
         lines=[" ".join(line) for line in lines],
+        speaker_confidence=_speaker_confidence(words),
     )
 
 
-def _extend_short_cues(cues: list[Cue], opts: CueOptions) -> None:
-    """Stretch cues shorter than min_duration, never reaching the next cue of the same speaker."""
+def _speaker_confidence(words: list[Word]) -> float | None:
+    """The words' speaker_confidence weighted by duration (words without one are left out); None if none has one."""
+    known = [(max(w.end - w.start, 0.01), w.speaker_confidence) for w in words if w.speaker_confidence is not None]
+    if not known:
+        return None
+    return round(sum(d * c for d, c in known) / sum(d for d, _ in known), 3)
+
+
+def _extend_short_cues(cues: list[Cue], opts: CueOptions, duration: float = 0.0) -> None:
+    """Stretch cues shorter than min_duration, never reaching the next cue of the same speaker nor
+    past the end of the audio (``duration``, when known); a cue ending after it is cut back to it."""
     next_start: dict[str, float] = {}
     for cue in reversed(cues):
         limit = next_start.get(cue.speaker)
@@ -134,6 +144,8 @@ def _extend_short_cues(cues: list[Cue], opts: CueOptions) -> None:
             if limit is not None:
                 target = min(target, limit - opts.min_gap)
             cue.end = max(cue.end, target)
+        if duration > 0 and cue.end > duration:
+            cue.end = max(cue.start, duration)
         next_start[cue.speaker] = cue.start
 
 

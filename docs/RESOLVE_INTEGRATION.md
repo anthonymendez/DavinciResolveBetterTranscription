@@ -89,18 +89,42 @@ media_pool.AppendToTimeline([{"mediaPoolItem": items[0], "trackIndex": index, "r
 
 `AppendToTimeline`'s clipInfo keys `trackIndex` and `recordFrame` are documented
 ([README][xraym-gist]). The forum poster reports a bug: when the video track already has
-content, the cues land where that content ends instead of at `recordFrame`. The plugin
-(`resolve_io.create_subtitle_track`) therefore verifies the result with
-`GetItemListInTrack("subtitle", index)` and `GetStart()` against the planned first-cue
-frame; on any mismatch it deletes the new track (`DeleteTrack`) and the imported item
+content, the cues land where that content ends instead of at `recordFrame`.
+
+**Studio 21.1.2 (headless, 2026-11-01): the append ignores both `recordFrame` and
+`trackIndex`.** Every SRT goes onto Subtitle 1, starting at the timeline's end
+(`GetEndFrame()`, every track counted) plus the SRT's own times: on the 60 fps test timeline,
+`recordFrame` 219600 gave a first cue at 761837 = 761717 + 2 s, and a second SRT appended for
+track 2 landed on track 1 after the first one's last cue. `AppendToTimeline` returns only the
+first cue. A cue whose start and end are the same millisecond (`00:00:57,030 --> 00:00:57,030`)
+is not placed at all. `Timeline.SetCurrentTimecode` before the append is no help: under
+`Resolve.exe -nogui` it never returned and hung the scripting server.
+
+What works there is moving the cues afterwards with `Timeline.MoveItems(items, {"trackIndex":
+index, "startFrame": first_cue_frame})` (21.x API; `TimelineItem.SetPosition` is its
+one-item form). It moves the leftmost item to the position and the others by the same offset,
+so the cue spacing is kept, and it puts them on another track. The timeline's end goes back
+to where it was. The plugin (`resolve_io.create_subtitle_track`) therefore:
+
+1. adds the track, notes every subtitle item on the timeline (by `GetUniqueId()`), appends;
+2. takes the new items (all subtitle items that weren't there before, on whatever track);
+3. if they aren't on the new track at the planned first-cue frame, calls `MoveItems` on them;
+4. verifies `GetItemListInTrack("subtitle", index)`: the first cue's `GetStart()` against the
+   planned frame and the count against the plan's cues that have a length in the SRT.
+
+On any mismatch, or when `MoveItems` is missing or returns False, it deletes the new cues left
+on other tracks (`Timeline.DeleteClips`), the new track (`DeleteTrack`) and the imported item
 (`DeleteClips`), keeps the per-speaker SRT files, and the summary tells the user where
 they are and how to import them (File > Import > Subtitle, then "Insert Selected
 Subtitles to Timeline Using Timecode"). The engine's SRTs count from the start of the
 rendered range; for manual import at absolute timecode they would need the timeline start
 added, which is why the message says to drop them at the in-point.
 
-Status: **unverified against a live Resolve** (it is the documented path, but the forum
-bug may still exist in 19/20). Text+ mode is the robust path.
+Checked on Studio 21.1.2 with the range 01:01:00:00–01:01:59:59 and a timeline that already had
+clips to 761717: three speakers' tracks (28, 1 and 4 cues), every cue within half a frame of
+its SRT time, first cue 219600, user's subtitle tracks and the timeline end untouched.
+Studio 19/20: unverified (the forum bug may still apply, and there `MoveItems` may not exist,
+which falls back to the `.srt` files as before). Text+ mode does not depend on any of this.
 
 ## 3. Appending a Text+ template and setting its text
 
@@ -128,6 +152,14 @@ comp.FindToolByID("TextPlus").SetInput("StyledText", text)   # fallback: comp.Ge
 - Known quirk: the placed clip's duration can differ from `endFrame - startFrame + 1`
   (OpenCaptions measures a "duration multiplier" with a probe clip). The plugin checks
   `GetDuration()` per clip and lists mismatches in the summary instead of guessing.
+- `endFrame` is exclusive on Resolve Studio 21.1.2 (checked headless, 2026-11-01): `endFrame:
+  duration - 1` gives a clip one frame short, and a one-frame clip (`endFrame == startFrame`)
+  makes the whole `AppendToTimeline` call return None. The plugin places one probe clip with the
+  inclusive reading, measures it, and uses `endFrame: duration` when it came out a frame short
+  (`resolve_io._probe_end_frame`). A batch Resolve refuses outright is retried clip by clip.
+- `AppendToTimeline` clears the timeline's mark in/out on 21.1.2; the plugin reads the marks
+  before creating tracks and sets them again afterwards (`Timeline.SetMarkInOut`), so the next
+  run renders the same range.
 - Timeline items of a Fusion title have one comp (`GetFusionCompCount() == 1`).
 - Undo: Resolve's API edits are not grouped into one undo step; because only new tracks
   are created (named after the speaker), the user can delete those tracks to revert.
@@ -147,20 +179,67 @@ comp.FindToolByID("TextPlus").SetInput("StyledText", text)   # fallback: comp.Ge
 - In/out range: `Timeline.GetMarkInOut()` (returns `{"video": {"in", "out"},
   "audio": {...}}`, README v19+); when the call is missing or no marks are set, the whole
   timeline is used. Cue frames count from the range start (`origin_frame`).
+  On Studio 21.1.2 the marks are counted from the timeline start (01:01:00:00 on a
+  01:00:00:00 timeline at 60 fps reads 3600), while `SetRenderSettings`' `MarkIn`/`MarkOut`
+  take absolute frames and overwrite the timeline's marks. `resolve_io.marks_offset` adds
+  the start frame when the marks lie before it or fit inside the timeline counted from it,
+  and `app.run` puts the marks back after the run in the numbers it read.
 - Drop-frame arithmetic (`timing.py`) is the standard 2/4 frames-per-minute skip; tested
   against known values (`00:01:00;02` = 1800 frames, `00:10:00;00` = 17982 at 29.97).
 
 ## 5. Rendering the audio
 
-`project.GetRenderFormats()` → the format whose extension is `wav`; `GetRenderCodecs(fmt)`
-→ the codec whose description/name contains "pcm"; `SetCurrentRenderFormatAndCodec`,
-`SetCurrentRenderMode(1)` (single clip), `SetRenderSettings({"TargetDir", "CustomName",
-"ExportVideo": False, "ExportAudio": True, "SelectAllFrames" or "MarkIn"/"MarkOut"})`,
-`AddRenderJob()`, `StartRendering([job])`, poll `IsRenderingInProgress()` while pumping the
-UI, check `GetRenderJobStatus(job)["JobStatus"]`, `DeleteRenderJob(job)`, restore the render
-mode. All documented in the README ([X-Raym gist][xraym-gist]). Side effect: the Deliver
-page's current render settings are changed (format/codec/paths); render presets are not.
-The WAV goes to a temp dir that is deleted unless the subtitle fallback needs the SRTs.
+**What doesn't work.** `GetRenderFormats()` returns `{name: extension}` (`"Wave": "wav"`), and
+`GetRenderCodecs` / `SetCurrentRenderFormatAndCodec` take the *extension*: the 21.1 stub names
+the parameter `renderFormatFileExtension`, and `GetRenderCodecs("QuickTime")` returns `{}` where
+`"mov"` returns the codecs ([mcp #59][mcp-59]). Even with `"wav"`, Wave exposes no codecs and
+every `("wav", codec)` pair is rejected, measured on Studio 19.1.3.7, 21.0.3.7 and 21.0.4.5
+([mcp api-limitations][mcp-limits], [resolve-mcp #32][rmcp-32]). The plugin's first version
+passed `"Wave"`, and a real Resolve stopped it with "no audio codec available for the Wave
+render format".
+
+**What the plugin does** (`resolve_io.render_audio`), the sequence AutoSubs and
+davinci-resolve-mcp use ([AutoSubs core][autosubs-core], [mcp live 21.1 test][mcp-live]):
+
+1. Remember `GetCurrentRenderFormatAndCodec()` and `GetCurrentRenderMode()`.
+2. `LoadRenderPreset("Audio Only")`, else any preset from `GetRenderPresetList()` with "audio" in
+   its name (the stock name is localised). Failing that, `SetCurrentRenderFormatAndCodec("wav",
+   codec)` with the codecs from `GetAudioRenderCodecs("wav")` (21.1+) or `GetRenderCodecs("wav")`,
+   then `"lpcm"` / `"LinearPCM"`.
+3. `SetCurrentRenderMode(1)`, then `SetRenderSettings` with `TargetDir`, `CustomName`,
+   `ExportVideo: False`, `ExportAudio: True`, `MarkIn`/`MarkOut` (the in/out range, or the whole
+   timeline from `GetStartFrame()` to `GetEndFrame() - 1`; `SelectAllFrames` only when those can't be
+   read, because after a MarkIn/MarkOut job a `SelectAllFrames` job may fail to start), plus
+   `AudioFormat: "wav"` (21.1+), `AudioCodec: "lpcm"`, `AudioBitDepth: 16`, `AudioSampleRate:
+   48000`. If that returns False, it is retried without `AudioFormat`, then without the audio
+   keys. With no preset and no accepted format, only `AudioFormat` can make the render a WAV,
+   so then a refusal is reported (check that the Audio Only preset exists).
+4. `AddRenderJob()`, `StartRendering([job])` (retried once: on 21.1 it sometimes returns False
+   and leaves the job Ready, [mcp #207][mcp-207]), poll `IsRenderingInProgress()` while pumping
+   the UI, check `GetRenderJobStatus(job)["JobStatus"]`, `DeleteRenderJob(job)`.
+5. Restore the format/codec (with `ExportVideo: True`) and the render mode: settings layer
+   onto the current state, so a later video render would otherwise come out audio-only.
+6. Find the output by its `CustomName` stem with any extension. `.wav`/`.aif(f)`/`.flac` are
+   used; anything else (for example an Audio Only preset left on MXF) is reported by name.
+
+Side effect: the Deliver page's current preset state is changed (paths, audio settings);
+saved render presets are not. The WAV goes to a temp dir that is deleted unless the subtitle
+fallback needs the SRTs.
+
+**Reusing a render** (`render_cache.py`). Before rendering, `render_cache.fingerprint` hashes
+what the audio depends on: the timeline's id and name, the render range, the frame rate and
+start, the track selection, and per audio track its enabled state and every item's media,
+position, offsets, enabled state and volume/pan properties. A finished render is copied to
+`<data>/renders/<fingerprint>.wav`; the next run with the same fingerprint uses it instead
+(unless `force_rerender`). On Studio 21.1.2 the fingerprint is the same after the run's marks
+are restored and across a Resolve restart (the debug log traces of the reads are identical, and
+the run log prints the first 12 characters on a miss).
+
+A run of a two-track timeline stores two entries, and every timeline shares the directory. The
+first version kept only the 5 most recently used, so two per-track runs on other timelines
+evicted an unchanged timeline's renders, and the 60 fps test timeline rendered again
+with nothing changed. Now up to 24 entries and 4 GB (about six hour-long renders) are kept,
+least recently used dropped first; the entry just stored is always kept.
 
 ## 6. Engine subprocess
 
@@ -168,6 +247,14 @@ The WAV goes to a temp dir that is deleted unless the subtitle fallback needs th
 and parsed line by line (`engine_runner.py`); `PYTHONPATH`/`PYTHONHOME` from Resolve's
 script host are stripped from the child's environment so the engine venv is clean; on
 Windows `CREATE_NO_WINDOW` avoids a console flashing up. Cancel terminates the process.
+
+With debug logging on (README, "Debug logs") the plugin adds `--verbose` (engine loggers at DEBUG
+and tracebacks on stderr, which the plugin already reads) and records the command, the
+environment changes, every raw stdout/stderr line and the exit code in the run's log. The same
+log traces every Resolve API call (`debug_log.Tracer`, a transparent proxy around `resolve` and
+every object it returns) and, just before rendering, what `GetRenderFormats()` /
+`GetRenderCodecs()` (by format name and by extension), `GetRenderPresetList()`,
+`GetCurrentRenderFormatAndCodec()`, `GetCurrentRenderMode()` and `GetRenderSettings()` return.
 
 ## 7. Fixing speakers before tracks are written
 
@@ -328,11 +415,13 @@ Studio 21.1.x, and whether the plugin's calls behave the same on Studio 21.1.2.
 
 ## Still to verify on a real Resolve (free and Studio)
 
-1. Subtitle placement (§2) and whether `ImportMedia` returns the SRT item.
+1. Subtitle placement (§2) on 19/20: whether `recordFrame` is honoured there and whether
+   `MoveItems` exists (Studio 21.1.2 is checked).
 2. Placed Text+ clip durations (§3 quirk) and that `FindToolByID("TextPlus")` finds the
    node in user templates (nested macros may need `GetToolList`).
 3. `GetMarkInOut()` shape on 19.0 (older builds may lack it; handled).
-4. The exact format/codec names for WAV on each OS (`Wave` / `Linear PCM` expected).
+4. The audio render (§5) on 21.1.2: that the Audio Only preset loads and `AudioFormat: "wav"` is
+   accepted, the output is one `.wav`, and the user's render format is restored afterwards.
 5. tkinter dialogs appearing in front of Resolve's window (topmost is requested).
 6. The UIManager "Fix speakers" window (§7): `ui.Tree` selection (`SelectionMode`
    `"ExtendedSelection"`, `SelectedItems()` returning a 1-based table), `ItemClicked`'s
@@ -374,3 +463,9 @@ Studio 21.1.x, and whether the plugin's calls behave the same on Studio 21.1.2.
 [cined-211]: https://www.cined.com/davinci-resolve-21-1-released-ai-assistant-integration-via-mcp-individual-hdr-trims-and-python-scripting-moves-to-studio/
 [dp-2111]: https://digitalproduction.com/2026/10/06/davinci-resolve-21-1-1/
 [ns-2112]: https://www.newsshooter.com/2026/10/26/davinci-resolve-21-1-2/
+[mcp-59]: https://github.com/samuelgursky/davinci-resolve-mcp/issues/59
+[mcp-limits]: https://github.com/samuelgursky/davinci-resolve-mcp/blob/main/docs/reference/api-limitations.md
+[mcp-live]: https://github.com/samuelgursky/davinci-resolve-mcp/blob/main/tests/live_resolve211_normalization.py
+[mcp-207]: https://github.com/samuelgursky/davinci-resolve-mcp/issues/207
+[rmcp-32]: https://github.com/danielbaldwin47/resolve-mcp/issues/32
+[autosubs-core]: https://github.com/tmoroney/auto-subs/blob/main/AutoSubs-App/src-tauri/resources/modules/autosubs_core.lua

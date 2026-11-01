@@ -35,8 +35,8 @@ def _resolve_auto(options: dict) -> str:
 def _apply_llm(speakers: list[Speaker], names: dict[str, llm.LLMName | None]) -> list[Speaker]:
     out = []
     for s in speakers:
-        if s.name and s.name_source == "user":
-            out.append(Speaker(id=s.id, name=s.name, name_confidence=s.name_confidence, name_source="user"))
+        if heuristic.is_kept(s):  # typed by the user or recognised by voice: the LLM doesn't override it
+            out.append(Speaker(id=s.id, name=s.name, name_confidence=s.name_confidence, name_source=s.name_source))
             continue
         found = names.get(s.id)
         if found:

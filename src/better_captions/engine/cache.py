@@ -111,8 +111,39 @@ class TranscriptCache:
                 _unlink(self._path("turns", key))
             return None
 
-    def put_turns(self, key: str, turns: list[SpeakerTurn]) -> None:
-        self._write("turns", key, {"turns": [asdict(t) for t in turns]})
+    def put_turns(
+        self,
+        key: str,
+        turns: list[SpeakerTurn],
+        centroids: dict[str, list[float]] | None = None,
+        embedding_model: str | None = None,
+    ) -> None:
+        """Store diarization turns, with the speakers' voice centroids (speaker -> vector) and their model."""
+        data = {
+            "turns": [asdict(t) for t in turns],
+            "centroids": {str(k): [float(x) for x in v] for k, v in (centroids or {}).items()},
+            "embedding_model": embedding_model,
+        }
+        self._write("turns", key, data)
+
+    def get_diarization(self, key: str) -> tuple[list[SpeakerTurn], dict[str, list[float]], str | None] | None:
+        """``(turns, centroids, embedding model)``; None on a miss, and for an entry stored before voice
+        centroids were kept (so it is diarized again once, and the voice library can be used)."""
+        data = self._read("turns", key)
+        try:
+            turns = [SpeakerTurn(**t) for t in data["turns"]]
+            centroids = data["centroids"]
+            if not isinstance(centroids, dict):
+                raise ValueError("centroids")
+            vectors = {str(k): [float(x) for x in v] for k, v in centroids.items()}
+            model = data.get("embedding_model")
+        except KeyError:
+            return None
+        except (TypeError, ValueError):
+            if data is not None:
+                _unlink(self._path("turns", key))
+            return None
+        return turns, vectors, model if isinstance(model, str) else None
 
     def _entries(self) -> list[tuple[float, int, Path]]:
         out = []
