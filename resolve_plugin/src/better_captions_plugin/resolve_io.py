@@ -840,8 +840,11 @@ def create_subtitle_track(media_pool, timeline, plan: TrackPlan, origin_frame: i
 
     Resolve has no dedicated API for this: the SRT is imported into the media pool and
     appended to the new subtitle track at ``origin_frame`` (where the rendered audio starts).
-    The result is verified; on any mismatch everything created here is removed and a
-    SubtitlePlacementError raised so the caller can fall back to manual import.
+    Resolve 21.1.2 ignores both ``recordFrame`` and ``trackIndex`` for an SRT: the cues land on
+    Subtitle 1 after the end of the timeline. The cues the append added (every subtitle item that
+    wasn't there before) are then moved as one group with ``Timeline.MoveItems`` onto the new track
+    at the first cue's frame. The result is verified; on any mismatch everything created here is
+    removed and a SubtitlePlacementError raised so the caller can fall back to manual import.
     """
     if not plan.srt_path or not os.path.isfile(plan.srt_path):
         raise SubtitlePlacementError("no SRT file for %s" % plan.name)
@@ -854,24 +857,36 @@ def create_subtitle_track(media_pool, timeline, plan: TrackPlan, origin_frame: i
         raise SubtitlePlacementError("Resolve did not import %s into the media pool" % plan.srt_path)
     srt_item = imported[0]
     index = None
+    added = []
     try:
         index = add_track(timeline, "subtitle", plan.name)
+        before = _subtitle_items(timeline)
         info = {"mediaPoolItem": srt_item, "trackIndex": index, "recordFrame": int(origin_frame)}
         media_pool.AppendToTimeline([info])
+        added = [item for key, item in _subtitle_items(timeline).items() if key not in before]
+        shown = _shown_cues(plan)
+        expected_first = shown[0].record_frame if shown else origin_frame
+        if added and _misplaced(timeline, index, added, expected_first):
+            _move_subtitles(timeline, added, index, expected_first)
         items = _items_by_start(timeline, "subtitle", index)
         if not items:
             raise SubtitlePlacementError("no subtitle clips appeared on the new track")
-        expected_first = plan.first_frame if plan.first_frame is not None else origin_frame
         first = int(items[0].GetStart())
         if first != expected_first:
             raise SubtitlePlacementError(
                 "subtitles landed at frame %d instead of %d (a known Resolve API issue when the "
                 "video track already has clips)" % (first, expected_first)
             )
-        if plan.clips and len(items) != len(plan.clips):
-            raise SubtitlePlacementError("%d subtitle clips appeared, expected %d" % (len(items), len(plan.clips)))
+        if shown and len(items) != len(shown):
+            raise SubtitlePlacementError("%d subtitle clips appeared, expected %d" % (len(items), len(shown)))
         return TrackResult(plan=plan, track_type="subtitle", track_index=index, placed=len(items))
     except Exception as exc:
+        stray = [item for item in added if _track_index(item) != index]  # cues left on another track
+        if stray:
+            try:
+                timeline.DeleteClips(stray)
+            except Exception:
+                pass
         if index is not None:
             delete_track(timeline, "subtitle", index)
         try:
@@ -881,6 +896,60 @@ def create_subtitle_track(media_pool, timeline, plan: TrackPlan, origin_frame: i
         if isinstance(exc, SubtitlePlacementError):
             raise
         raise SubtitlePlacementError(str(exc)) from exc
+
+
+def _shown_cues(plan: TrackPlan) -> list:
+    """The plan's cues that the SRT gives a length: Resolve's import drops one that starts and ends on the
+    same millisecond (an SRT has millisecond times)."""
+    return [clip for clip in plan.clips if round(clip.end * 1000) > round(clip.start * 1000)]
+
+
+def _subtitle_items(timeline) -> dict:
+    """Every subtitle item on the timeline, keyed by its unique id (by identity when Resolve has none)."""
+    found = {}
+    try:
+        count = int(timeline.GetTrackCount("subtitle"))
+    except Exception:
+        return found
+    for track in range(1, count + 1):
+        for item in _items_by_start(timeline, "subtitle", track):
+            found[_item_key(item)] = item
+    return found
+
+
+def _item_key(item):
+    try:
+        key = item.GetUniqueId()
+    except Exception:
+        key = None
+    return key if key else id(item)
+
+
+def _track_index(item):
+    try:
+        return int(item.GetPosition().get("trackIndex"))
+    except Exception:
+        return None
+
+
+def _misplaced(timeline, index: int, added: list, expected_first: int) -> bool:
+    on_track = {_item_key(item) for item in _items_by_start(timeline, "subtitle", index)}
+    first = min(_start(item) or 0 for item in added)
+    return first != expected_first or any(_item_key(item) not in on_track for item in added)
+
+
+def _move_subtitles(timeline, items: list, index: int, first_frame: int) -> None:
+    """Move ``items`` as one group (their spacing kept) so the earliest starts at ``first_frame`` on
+    subtitle track ``index``. ``Timeline.MoveItems`` is 21.x API; without it the caller's check fails."""
+    move = getattr(timeline, "MoveItems", None)
+    if move is None:
+        return
+    try:
+        moved = move(items, {"trackIndex": int(index), "startFrame": int(first_frame)})
+    except Exception as exc:
+        raise SubtitlePlacementError("MoveItems failed: %s" % exc) from exc
+    if not moved:
+        raise SubtitlePlacementError("Resolve refused to move the subtitles to frame %d" % first_frame)
 
 
 def _items_by_start(timeline, track_type: str, index: int) -> list:
