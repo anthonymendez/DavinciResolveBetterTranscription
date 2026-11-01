@@ -100,11 +100,16 @@ def test_unchanged_timeline_reuses_the_render(config, monkeypatch):
     assert any("Reusing previous audio render" in line for line in backend.progress_views[0].lines)
 
 
-def test_changed_track_selection_or_force_renders_again(config, monkeypatch):
+def test_a_newly_picked_speech_track_or_force_renders_again(config, monkeypatch):
+    # each speech track is rendered alone and cached on its own: picking another one renders only that one
     calls = _count_renders(monkeypatch)
     resolve = _two_track_world()
-    for pick in ([1, 2], [1], [1]):
-        _run(resolve, FakeBackend(accept_all(subtitles=True, textplus=False), tracks_answer=pick), config)
+    music_as_speech = {2: "group"}  # "Music" is not speech by default
+    for pick in ([1], [1, 2], [1, 2], [2]):
+        backend = FakeBackend(
+            accept_all(subtitles=True, textplus=False), tracks_answer=pick, roles_answer=music_as_speech
+        )
+        assert _run(resolve, backend, config).error is None
     assert len(calls) == 2
     config["force_rerender"] = True
     _run(resolve, FakeBackend(accept_all(subtitles=True, textplus=False), tracks_answer=[1]), config)
@@ -118,18 +123,23 @@ def test_unchanged_track_choice_is_not_a_warning(config):
         assert outcome.error is None and outcome.warnings == []
 
 
-def test_pinned_track_never_reuses_the_mix_when_resolve_reports_stale_enabled_states(config, monkeypatch):
-    # Resolve can keep answering GetIsTrackEnabled -> True after SetTrackEnable(False) succeeded; the
-    # one-track stem must still get its own render, not the cached mix (which pinned everyone to it).
+def test_each_track_gets_its_own_render_when_resolve_reports_stale_enabled_states(config, monkeypatch):
+    # Resolve can keep answering GetIsTrackEnabled -> True after SetTrackEnable(False) succeeded; each
+    # one-track render must still be its own, not the other track's cached render.
     calls = _count_renders(monkeypatch)
     resolve = _two_track_world()
     _timeline(resolve).enabled_reads_stale = True
     backend = FakeBackend(
-        accept_all(subtitles=True, textplus=False), tracks_answer=[1, 2], speakers_answer={1: "Anthony"}
+        accept_all(subtitles=True, textplus=False),
+        tracks_answer=[1, 2],
+        speakers_answer={1: "Anthony"},
+        roles_answer={2: "group"},
     )
     assert _run(resolve, backend, config).error is None
     assert len(calls) == 2
     engine_line = next(line for line in backend.progress_views[0].lines if line.startswith("Engine: "))
     argv = engine_line.split(" ")
-    mix, stem = argv[argv.index("run") + 1], argv[argv.index("--fixed-track") + 1].partition("=")[2]
-    assert mix != stem
+    specs = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--track"]
+    assert [spec.partition("=")[0] for spec in specs] == ["person:Anthony", "group:Music"]
+    mic, music = (spec.partition("=")[2] for spec in specs)
+    assert mic != music

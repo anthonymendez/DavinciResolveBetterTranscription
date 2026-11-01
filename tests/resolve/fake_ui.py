@@ -89,19 +89,22 @@ class FakeBackend(Backend):
         tracks_answer="default",
         model_answer="default",
         speakers_answer=None,
+        roles_answer=None,
     ):
         """``answer``: ReviewResult, None (cancel) or a callable(ReviewRequest) -> ReviewResult|None.
         ``tracks_answer``: the audio track pick — "default" (the preselection, with its speaker names),
         None (cancel), a list or a TrackPick; ``speakers_answer`` ({track index: name}) names the speakers
-        of a ``tracks_answer`` list.
+        of a ``tracks_answer`` list and ``roles_answer`` ({track index: role}) gives their roles.
         ``model_answer``: the model pick — "default" (the preselected model), None (cancel) or a model name."""
         self._answer = answer
         self._tracks_answer = tracks_answer
         self._speakers_answer = speakers_answer
+        self._roles_answer = roles_answer
         self._model_answer = model_answer
         self.model_requests = []  # (models, current) per pick_model
         self.track_requests = []
         self.track_speaker_requests = []  # the speaker names preselected, per pick_audio_tracks
+        self.track_role_requests = []  # the roles preselected, per pick_audio_tracks
         self.cancel_after = cancel_after
         self.cancel_when = cancel_when
         self.pause_when = pause_when
@@ -126,10 +129,13 @@ class FakeBackend(Backend):
     def pick_audio_tracks(self, tracks, preselected):
         self.track_requests.append((list(tracks), list(preselected)))
         self.track_speaker_requests.append(track_picker.speakers_of(preselected))
+        self.track_role_requests.append(track_picker.roles_of(preselected))
         if self._tracks_answer == "default":
-            return track_picker.TrackPick(preselected, track_picker.speakers_of(preselected))
-        if self._tracks_answer is not None and self._speakers_answer is not None:
-            return track_picker.TrackPick(self._tracks_answer, self._speakers_answer)
+            return track_picker.TrackPick(
+                preselected, track_picker.speakers_of(preselected), track_picker.roles_of(preselected)
+            )
+        if self._tracks_answer is not None and (self._speakers_answer is not None or self._roles_answer is not None):
+            return track_picker.TrackPick(self._tracks_answer, self._speakers_answer, self._roles_answer)
         return self._tracks_answer
 
     def pick_model(self, models, current):

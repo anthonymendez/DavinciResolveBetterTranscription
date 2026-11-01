@@ -171,10 +171,10 @@ def _spy(monkeypatch):
     def command(*args, **kwargs):
         argv = real_command(*args, **kwargs)
         audio = {}
-        for spec in _fixed_tracks(argv):
-            name, _sep, path = spec.partition("=")
+        for spec in _tracks(argv):
+            who, _sep, path = spec.partition("=")
             with open(path, "rb") as handle:  # the work dir is gone after the run
-                audio[name] = handle.read()
+                audio[who.partition(":")[2]] = handle.read()
         commands.append((argv, audio))
         return argv
 
@@ -183,8 +183,13 @@ def _spy(monkeypatch):
     return renders, commands
 
 
-def _fixed_tracks(argv):
-    return [argv[i + 1] for i, arg in enumerate(argv) if arg == "--fixed-track"]
+def _tracks(argv):
+    return [argv[i + 1] for i, arg in enumerate(argv) if arg == "--track"]
+
+
+def _who(argv):
+    """ROLE:NAME of each --track."""
+    return [spec.partition("=")[0] for spec in _tracks(argv)]
 
 
 def test_a_pinned_track_is_rendered_alone_and_passed_to_the_engine(config, monkeypatch):
@@ -194,15 +199,15 @@ def test_a_pinned_track_is_rendered_alone_and_passed_to_the_engine(config, monke
     outcome = app.main(resolve=resolve, backend=backend, config=config, sleep=lambda s: None)
     assert outcome.error is None and not outcome.cancelled
 
-    assert renders == [[1, 2], [2]]  # the mix, then the microphone alone
+    assert renders == [[1], [2]]  # each track alone, no mix
     assert timeline.enabled_audio() == [1, 2]  # put back as it was
     argv, audio = commands[0]
-    (fixed,) = _fixed_tracks(argv)
-    name, _sep, path = fixed.partition("=")
-    assert name == "Anthony"
-    assert path != argv[argv.index("run") + 1]  # not the mix
-    assert audio["Anthony"].endswith(b"tracks=2")
-    assert _saved(config)[config_mod.TRACK_SPEAKERS] == {"Timeline 1": {"2": "Anthony"}}
+    assert argv[argv.index("run") + 1] == "--out"  # no mix to pass
+    assert _who(argv) == ["group:Audio 1", "person:Anthony"]
+    assert audio["Anthony"].endswith(b"tracks=2") and audio["Audio 1"].endswith(b"tracks=1")
+    assert _saved(config)[config_mod.TRACK_ROLES] == {
+        "Timeline 1": {"1": {"role": "group"}, "2": {"role": "person", "name": "Anthony"}}
+    }
 
 
 def test_the_review_pre_fills_the_pinned_speakers_name(config, monkeypatch):
@@ -226,20 +231,20 @@ def test_the_next_run_remembers_the_name_and_reuses_the_single_track_render(conf
     assert outcome.error is None
     assert second.track_requests[0][1] == [1, 2]
     assert second.track_speaker_requests == [{2: "Anthony"}]
-    assert renders == []  # both the mix and the microphone came from the render cache
+    assert renders == []  # both one-track renders came from the render cache
     argv, audio = commands[0]
-    assert [f.partition("=")[0] for f in _fixed_tracks(argv)] == ["Anthony"]
+    assert _who(argv) == ["group:Audio 1", "person:Anthony"]
     assert audio["Anthony"].endswith(b"tracks=2")
 
 
-def test_tracks_without_a_speaker_name_render_only_the_mix(config, monkeypatch):
+def test_tracks_without_a_speaker_name_are_several_people_each_rendered_alone(config, monkeypatch):
     resolve, _timeline = _world()
     renders, commands = _spy(monkeypatch)
     backend = FakeBackend(accept_all(subtitles=True), tracks_answer=[1, 2])
     outcome = app.main(resolve=resolve, backend=backend, config=config, sleep=lambda s: None)
     assert outcome.error is None
-    assert renders == [[1, 2]]
-    assert _fixed_tracks(commands[0][0]) == []
+    assert renders == [[1], [2]]
+    assert _who(commands[0][0]) == ["group:Audio 1", "group:Microphone"]
     assert config_mod.TRACK_SPEAKERS not in _saved(config)
 
 
@@ -250,7 +255,22 @@ def test_two_pinned_tracks_each_render_alone(config, monkeypatch):
     backend = FakeBackend(accept_all(subtitles=True), tracks_answer=[1, 2, 3], speakers_answer={3: "Sam", 2: "Anthony"})
     outcome = app.main(resolve=resolve, backend=backend, config=config, sleep=lambda s: None)
     assert outcome.error is None
-    assert renders == [[1, 2, 3], [2], [3]]
+    assert renders == [[1], [2], [3]]
     argv, audio = commands[0]
-    assert [f.partition("=")[0] for f in _fixed_tracks(argv)] == ["Anthony", "Sam"]
+    assert _who(argv) == ["group:Audio 1", "person:Anthony", "person:Sam"]
     assert audio["Anthony"].endswith(b"tracks=2") and audio["Sam"].endswith(b"tracks=3")
+
+
+def test_old_track_speakers_are_read_as_person_tracks_and_moved_to_track_roles(config, monkeypatch):
+    with open(config["_path"], "w", encoding="utf-8") as handle:
+        json.dump({config_mod.TRACK_SPEAKERS: {"Timeline 1": {"2": "Anthony"}, "Other": {"1": "Sam"}}}, handle)
+    config[config_mod.TRACK_SPEAKERS] = {"Timeline 1": {"2": "Anthony"}, "Other": {"1": "Sam"}}
+    resolve, _timeline = _world()
+    _renders, commands = _spy(monkeypatch)
+    backend = FakeBackend(accept_all(subtitles=True))
+    assert app.main(resolve=resolve, backend=backend, config=config, sleep=lambda s: None).error is None
+    assert backend.track_role_requests[0] == {1: "group", 2: "person"}
+    assert _who(commands[0][0]) == ["group:Audio 1", "person:Anthony"]
+    saved = _saved(config)
+    assert saved[config_mod.TRACK_SPEAKERS] == {"Other": {"1": "Sam"}}
+    assert saved[config_mod.TRACK_ROLES]["Timeline 1"]["2"] == {"role": "person", "name": "Anthony"}

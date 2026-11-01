@@ -24,13 +24,23 @@ def fixed_track(spec: str):
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def track(spec: str):
+    """argparse type for ``--track ROLE:NAME=PATH`` (engine.multitrack.parse_track), imported on use as above."""
+    from better_captions.engine import multitrack
+
+    try:
+        return multitrack.parse_track(spec)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="better-captions")
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
 
     r = sub.add_parser("run", help="transcribe, diarize and caption an audio file")
-    r.add_argument("audio")
+    r.add_argument("audio", nargs="?", help="the audio to caption (omit it with --track)")
     r.add_argument("--out", required=True, help="output directory")
     r.add_argument("--model", default="large-v3-turbo")
     r.add_argument("--language")
@@ -52,7 +62,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=fixed_track,
         metavar="NAME=PATH",
         help="audio of one speaker alone (e.g. their microphone track): what NAME says there is captioned as "
-        "NAME and left out of speaker detection. Repeatable.",
+        "NAME and left out of speaker detection. Repeatable. Without AUDIO it is a person track (see --track).",
+    )
+    r.add_argument(
+        "--track",
+        action="append",
+        default=[],
+        type=track,
+        metavar="ROLE:NAME=PATH",
+        help="one audio track on its own, instead of AUDIO: each speech track is transcribed alone. ROLE is "
+        "'person' (one person, NAME, talks on it: e.g. person:Anthony=mic.wav), 'group' (several people: only "
+        "these tracks go through speaker detection, e.g. group:Discord=discord.wav) or 'none' (not speech, "
+        "not transcribed). Repeatable.",
     )
     r.add_argument(
         "--verbose", action="store_true", help="debug logging and tracebacks on stderr (the plugin's debug mode)"
@@ -171,7 +192,21 @@ def enable_verbose_logging() -> None:
     logging.getLogger("better_captions").setLevel(logging.DEBUG)
 
 
-def run(audio: str, out: str, options) -> None:
+def run_inputs(parser: argparse.ArgumentParser, args) -> tuple[str | None, list, list]:
+    """``(audio, fixed tracks, tracks)`` for ``run``: either AUDIO (the mix, with any ``--fixed-track`` stems),
+    or ``--track``s, each transcribed alone; without AUDIO a ``--fixed-track`` is a person track."""
+    if args.audio and args.track:
+        parser.error("give either AUDIO or --track, not both: with --track every track is transcribed on its own")
+    if args.audio:
+        return args.audio, list(args.fixed_track), []
+    if not args.track and not args.fixed_track:
+        parser.error("the audio to caption is missing: give AUDIO or --track ROLE:NAME=PATH")
+    from better_captions.engine import multitrack
+
+    return None, [], [multitrack.from_fixed(t) for t in args.fixed_track] + list(args.track)
+
+
+def run(audio: str | None, out: str, options) -> None:
     # The pipeline (numpy and friends) is imported on use so `doctor` still runs when those are broken.
     from better_captions.pipeline import run as pipeline_run
 
@@ -179,10 +214,12 @@ def run(audio: str, out: str, options) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if args.command == "doctor":
         print(json.dumps(doctor(), indent=2))
     elif args.command == "run":
+        audio, fixed, tracks = run_inputs(parser, args)
         if args.verbose:
             enable_verbose_logging()
         from better_captions.cues import CueOptions
@@ -202,10 +239,11 @@ def main(argv: list[str] | None = None) -> int:
                 max_chars_per_line=args.max_chars, max_lines=args.max_lines, max_duration=args.max_duration
             ),
             use_cache=not args.no_cache,
-            fixed_tracks=list(args.fixed_track),
+            fixed_tracks=fixed,
+            tracks=tracks,
         )
         try:
-            run(args.audio, args.out, options)
+            run(audio, args.out, options)
         except Exception as exc:  # report to the plugin as a structured event
             if args.verbose:
                 import traceback

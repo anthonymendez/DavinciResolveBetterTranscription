@@ -186,10 +186,13 @@ def test_uimanager_picker_starts_with_the_preselection_and_returns_the_ticked_tr
         seen["texts"] = [items["Track_%d" % i].Text for i in (1, 2, 3)]
         items["Track_2"].Checked = True
         items["Track_1"].Checked = False
+        # Music and Game start as "Not speech"; at least one ticked track must have speech
+        items["Role_2"].CurrentIndex = track_picker.ROLES.index(track_picker.ROLE_GROUP)
         window.On.Ok.Clicked()
 
     result, window = _uimanager_pick(script)
     assert result == [2, 3]
+    assert result.roles == {2: track_picker.ROLE_GROUP, 3: track_picker.ROLE_NONE}
     assert seen["start"] == [True, False, True]
     assert seen["texts"] == ["1  Dialogue", "2  Music  (disabled now)", "3  Game"]
     assert window.shown is False

@@ -1,6 +1,7 @@
 """A stand-in for `better-captions run` used as a real subprocess by the plugin tests.
 
-Usage: python fake_engine.py run AUDIO --out DIR [--fail] [--crash] [--slow] [--with-words] [...ignored flags]
+Usage: python fake_engine.py run [AUDIO] --out DIR [--track ROLE:NAME=PATH ...] [--fixed-track NAME=PATH ...]
+       [--fail] [--crash] [--slow] [--with-words] [...ignored flags]
 
 Emits the same JSON-line events as the engine and writes transcript.json plus one SRT per
 speaker from the fixture below (the shape matches src/better_captions/schema.py, see
@@ -60,10 +61,10 @@ def with_words(transcript):
     return dict(transcript, segments=segments)
 
 
-def with_fixed_tracks(transcript, specs):
-    """``--fixed-track NAME=PATH``, as the engine reports it: the first pinned speaker says what
-    SPEAKER_01 said, under id PINNED_00, already named (name_source "user"). None (after an error
-    event) when a track's audio is missing."""
+def with_fixed_tracks(transcript, specs, meta_key="fixed_tracks"):
+    """``--fixed-track NAME=PATH`` (or a ``--track person:NAME=PATH``), as the engine reports it: the
+    first pinned speaker says what SPEAKER_01 said, under id PINNED_00, already named (name_source
+    "user"). None (after an error event) when a track's audio is missing."""
     ids = {}
     tracks = []
     for spec in specs:
@@ -73,13 +74,34 @@ def with_fixed_tracks(transcript, specs):
             return None
         sid = ids.setdefault(name, "PINNED_%02d" % len(ids))
         tracks.append({"id": sid, "name": name, "audio": path})
+    if not ids:
+        return transcript
     for cue in transcript["cues"]:
         if cue["speaker"] == "SPEAKER_01":
             cue["speaker"] = "PINNED_00"
     transcript["speakers"] = [s for s in transcript["speakers"] if s["id"] != "SPEAKER_01"] + [
         {"id": sid, "name": name, "name_confidence": 1.0, "name_source": "user"} for name, sid in ids.items()
     ]
-    transcript["meta"]["fixed_tracks"] = tracks
+    transcript["meta"][meta_key] = tracks
+    return transcript
+
+
+def with_tracks(transcript, specs):
+    """``--track ROLE:NAME=PATH`` (each track transcribed alone): person tracks as ``with_fixed_tracks``;
+    meta "tracks" lists every track. None (after an error event) when a track's audio is missing."""
+    persons, tracks = [], []
+    for spec in specs:
+        left, _sep, path = spec.partition("=")
+        role, _colon, name = left.partition(":")
+        if not os.path.isfile(path):
+            emit({"event": "error", "message": "FileNotFoundError: %s" % path})
+            return None
+        tracks.append({"role": role, "name": name, "audio": path})
+        if role == "person":
+            persons.append("%s=%s" % (name, path))
+    transcript = with_fixed_tracks(transcript, persons, meta_key="persons")
+    if transcript is not None:
+        transcript["meta"]["tracks"] = tracks
     return transcript
 
 
@@ -100,10 +122,14 @@ def main(argv):
     if not argv or argv[0] != "run":
         sys.stderr.write("usage: fake_engine.py run AUDIO --out DIR\n")
         return 2
-    audio = argv[1]
+    audio = argv[1] if len(argv) > 1 and not argv[1].startswith("--") else None  # None: --track only
     out = argv[argv.index("--out") + 1]
     slow = "--slow" in argv
-    if not os.path.isfile(audio):
+    track_specs = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--track"]
+    if audio is None and not track_specs:
+        emit({"event": "error", "message": "no audio and no --track"})
+        return 2
+    if audio is not None and not os.path.isfile(audio):
         emit({"event": "error", "message": "FileNotFoundError: %s" % audio})
         return 1
     os.makedirs(out, exist_ok=True)
@@ -131,6 +157,10 @@ def main(argv):
     fixed = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--fixed-track"]
     if fixed:
         transcript = with_fixed_tracks(transcript, fixed)
+        if transcript is None:
+            return 1
+    if track_specs:
+        transcript = with_tracks(transcript, track_specs)
         if transcript is None:
             return 1
     if "--with-words" in argv:

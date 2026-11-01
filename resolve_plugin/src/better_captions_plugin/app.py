@@ -1,10 +1,12 @@
 """The Better Captions flow, from menu click to new tracks.
 
 1. read ``<data>/config.json``
-2. render the current timeline's audio (or its in/out range) to a temp WAV, from the audio tracks
-   picked (``track_picker``); a picked track given a speaker name is also rendered alone
-3. run the engine subprocess, streaming its progress into a dialog (each named track goes in as
-   ``--fixed-track NAME=WAV``, so what is said on it comes back as that speaker, already named)
+2. render the current timeline's audio (or its in/out range) to temp WAVs: with several audio tracks,
+   each picked speech track alone (``track_picker``: one person, several people, or not speech, which
+   is not rendered); with one, the timeline's audio as it is
+3. run the engine subprocess, streaming its progress into a dialog (each speech track goes in as
+   ``--track ROLE:NAME=WAV``: a one-person track comes back as that speaker, already named, and only
+   several-people tracks go through speaker detection)
 4. load ``transcript.json``
 5. review dialog: rename speakers, pick outputs and a Text+ template per speaker; "Fix
    speakers…" merges / reassigns / splits speakers (``speaker_edits``), saved as
@@ -23,6 +25,8 @@ process; Cancel still works while paused.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -238,19 +242,24 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
             render_kwargs["sleep"] = sleep
         debug_log.render_diagnostics(project)
         try:
-            with resolve_io.tracks_enabled(timeline, picked):
+            if picked is None:  # one audio track (or no way to switch tracks): the timeline's audio as it is
                 wav = render_or_reuse(
-                    project, timeline, audio_dir, range_start, range_end, clock, config, progress, render_kwargs, picked
+                    project, timeline, audio_dir, range_start, range_end, clock, config, progress, render_kwargs
                 )
-            pinned = render_pinned_tracks(
-                project, timeline, picked, audio_dir, range_start, range_end, clock, config, progress, render_kwargs
-            )
+                rendered = None
+            else:  # each speech track alone; no mix
+                wav = None
+                rendered = render_speech_tracks(
+                    project, timeline, picked, audio_dir, range_start, range_end, clock, config, progress, render_kwargs
+                )
         except resolve_io.ResolveError as exc:
             if progress.cancelled:
                 raise Cancelled() from exc
             raise exc
 
-        argv = config_mod.engine_command(config, wav, out_dir, fixed_tracks=pinned)
+        argv = config_mod.engine_command(
+            config, wav, out_dir, tracks=[(role, name, path) for _index, role, name, path in rendered or ()] or None
+        )
         if debug_log.current() is not None:
             argv.append("--verbose")  # the engine's debug logging, on stderr
         start_step(progress, STEP_ENGINE, sleep)
@@ -267,7 +276,9 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
                 if stage in engine_runner.STAGES and STEP_ENGINE + engine_runner.STAGES.index(stage) > engine_step:
                     engine_step = STEP_ENGINE + engine_runner.STAGES.index(stage)
                     progress.set_step(engine_step)
-                progress.set_status("%s…" % engine_runner.stage_label(stage))
+                track = event.get("track")  # per-track runs say which track the stage is on
+                label = engine_runner.stage_label(stage)
+                progress.set_status("%s (%s)…" % (label, track) if track else "%s…" % label)
                 progress.set_progress(event.get("pct"))
             elif kind == "log":
                 progress.log(event.get("line", ""))
@@ -304,7 +315,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
 
         # Speaker fixes: re-apply those saved for this audio, let the user add more, save them all.
         editor = speaker_edits.SpeakerEditor(raw_transcript)
-        audio_sha = speaker_edits.audio_fingerprint(wav)
+        audio_sha = speaker_edits.audio_fingerprint(wav) if rendered is None else tracks_fingerprint(rendered)
         edits_paths = [os.path.join(os.path.dirname(transcript_path), speaker_edits.EDITS_FILE)]
         store = config_mod.edits_dir(config)
         if store and audio_sha:
@@ -375,22 +386,29 @@ def choose_audio_tracks(backend, timeline, timeline_name, config: dict, outcome:
     debug_log.note("Audio tracks picked: %r of %r" % (picked, tracks))
     if picked is None:
         raise Cancelled()
-    picked = track_picker.TrackPick(picked, track_picker.speakers_of(picked))
+    picked = track_picker.complete(tracks, picked)
+    speech = track_picker.speech_tracks(tracks, picked)
+    if not speech:
+        raise resolve_io.ResolveError(
+            'none of the picked audio tracks has speech: mark at least one as "One person" or "Several people"'
+        )
+    picked.speech = speech
     try:
         # False just means "unchanged"
-        config_mod.remember_audio_tracks(config, timeline_name, picked, speakers=picked.speakers)
+        config_mod.remember_audio_tracks(config, timeline_name, picked, speakers=picked.speakers, roles=picked.roles)
     except (OSError, config_mod.ConfigError) as exc:
         outcome.warnings.append("Could not save your audio track choice to the config file: %s" % exc)
     return picked
 
 
-def render_pinned_tracks(
+def render_speech_tracks(
     project, timeline, picked, audio_dir, range_start, range_end, clock, config: dict, progress, render_kwargs
 ):
-    """Render each track that has a speaker name alone (``tracks_enabled`` + the render cache, as the mix);
-    returns ``[(speaker name, wav)]`` in track order, for ``engine_command``'s ``--fixed-track``."""
+    """Render each speech track of ``picked`` (``picked.speech``, from ``choose_audio_tracks``) alone, with
+    ``tracks_enabled`` and the render cache keyed by that one track; returns ``[(track index, role, name,
+    wav)]`` in track order, for ``engine_command``'s ``--track``."""
     rendered = []
-    for index, name in sorted(track_picker.speakers_of(picked).items()):
+    for index, role, name in picked.speech:
         hold_while_paused(progress, render_kwargs.get("sleep"))
         progress.set_status("Rendering audio track %d alone (%s)…" % (index, name))
         with resolve_io.tracks_enabled(timeline, [index]):
@@ -406,9 +424,21 @@ def render_pinned_tracks(
                 render_kwargs,
                 [index],
             )
-        progress.log("Audio track %d is %s: %s" % (index, name, wav))
-        rendered.append((name, wav))
+        progress.log("Audio track %d (%s: %s): %s" % (index, track_picker.ROLE_LABELS[role].lower(), name, wav))
+        rendered.append((index, role, name, wav))
     return rendered
+
+
+def tracks_fingerprint(rendered) -> str | None:
+    """What identifies a per-track run's audio for saved speaker fixes (``speaker_edits``): every speech
+    track's role, name and audio (sha256); None when one can't be read."""
+    parts = []
+    for index, role, name, wav in rendered:
+        sha = speaker_edits.audio_fingerprint(wav)
+        if sha is None:
+            return None
+        parts.append([index, role, name, sha])
+    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def render_or_reuse(
