@@ -29,7 +29,8 @@ _ABBREVIATIONS = {
 
 
 def assign_speakers(words: list[Word], turns: list[SpeakerTurn]) -> list[Word]:
-    """Set Word.speaker from the turn with the greatest overlap (nearest turn if none overlaps)."""
+    """Set Word.speaker (and speaker_confidence, the turn's confidence) from the turn with the greatest overlap
+    (nearest turn if none overlaps)."""
     if not turns:
         return [replace(w, speaker=DEFAULT_SPEAKER) for w in words]
 
@@ -54,7 +55,7 @@ def assign_speakers(words: list[Word], turns: list[SpeakerTurn]) -> list[Word]:
                 best, best_overlap = t, overlap
         if best is None:
             best = _nearest(w, turns, latest_end, hi)
-        out.append(replace(w, speaker=best.speaker))
+        out.append(replace(w, speaker=best.speaker, speaker_confidence=best.confidence))
     return out
 
 

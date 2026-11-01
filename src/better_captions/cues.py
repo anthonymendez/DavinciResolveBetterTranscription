@@ -121,7 +121,16 @@ def _make_cue(speaker: str, words: list[Word], opts: CueOptions) -> Cue:
         start=words[0].start,
         end=words[-1].end,
         lines=[" ".join(line) for line in lines],
+        speaker_confidence=_speaker_confidence(words),
     )
+
+
+def _speaker_confidence(words: list[Word]) -> float | None:
+    """The words' speaker_confidence weighted by duration (words without one are left out); None if none has one."""
+    known = [(max(w.end - w.start, 0.01), w.speaker_confidence) for w in words if w.speaker_confidence is not None]
+    if not known:
+        return None
+    return round(sum(d * c for d, c in known) / sum(d for d, _ in known), 3)
 
 
 def _extend_short_cues(cues: list[Cue], opts: CueOptions) -> None:

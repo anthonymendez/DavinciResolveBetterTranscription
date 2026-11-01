@@ -151,7 +151,8 @@ class GroupNumbering:
 
 
 def label_person(words: list[Word], speaker_id: str) -> list[Word]:
-    return [replace(w, speaker=speaker_id) for w in words]
+    """A one-person track's words are that person's for certain."""
+    return [replace(w, speaker=speaker_id, speaker_confidence=1.0) for w in words]
 
 
 # --- bleed -------------------------------------------------------------------

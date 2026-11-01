@@ -45,6 +45,7 @@ class SpeakerRow:
     cue_count: int
     sample: str  # a short example of what they say
     source: str | None = None  # "heuristic", "llm", ...
+    uncertain: int = 0  # how many of their cues have an uncertain voice match (to check in "Fix speakers…")
 
 
 @dataclass
@@ -71,9 +72,46 @@ class ReviewRequest:
 def speaker_rows(editor) -> list[SpeakerRow]:
     """Review rows for the editor's current speakers."""
     return [
-        SpeakerRow(id=s.id, name=s.name, cue_count=s.cue_count, sample=s.sample, source=s.source)
+        SpeakerRow(
+            id=s.id, name=s.name, cue_count=s.cue_count, sample=s.sample, source=s.source, uncertain=s.uncertain_count
+        )
         for s in editor.speakers()
     ]
+
+
+# Lines whose voice match was ambiguous (transcript.is_uncertain) are flagged for checking; with none
+# (or no confidence data from the engine) every label below is what it was before.
+FIX_SPEAKERS_LABEL = "Fix speakers…"
+
+
+def checking_label(count: int) -> str:
+    """ "1 line needs checking" / "3 lines need checking"; "" for none."""
+    if count <= 0:
+        return ""
+    return "%d line%s checking" % (count, " needs" if count == 1 else "s need")
+
+
+def review_speaker_label(speaker: SpeakerRow) -> str:
+    """The review dialog's speaker column: "SPEAKER_00 (12 cues)", plus ", 2 to check" when some are uncertain."""
+    label = "%s (%d cues" % (speaker.id, speaker.cue_count)
+    if speaker.uncertain:
+        label += ", %d to check" % speaker.uncertain
+    return label + ")"
+
+
+def review_check_note(speakers, can_fix: bool) -> str:
+    """The review dialog's line about uncertain lines ("" when there are none)."""
+    text = checking_label(sum(s.uncertain for s in speakers))
+    if not text:
+        return ""
+    text += ": the voice match was unsure."
+    return text + (" %s lists them first." % FIX_SPEAKERS_LABEL if can_fix else "")
+
+
+def fix_speakers_label(speakers) -> str:
+    """ "Fix speakers…", with the number of lines to check when there are any."""
+    count = sum(s.uncertain for s in speakers)
+    return "%s (%d to check)" % (FIX_SPEAKERS_LABEL, count) if count else FIX_SPEAKERS_LABEL
 
 
 @dataclass

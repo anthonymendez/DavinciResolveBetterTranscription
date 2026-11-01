@@ -29,6 +29,8 @@ REASSIGN_MARGIN = 0.1
 MIN_REASSIGN_SECONDS = 1.0
 # Rounds of "move turns, rebuild centroids".
 MAX_ITERATIONS = 2
+# A turn whose own speaker beats the next best by this much cosine similarity has confidence 1.
+CONFIDENT_MARGIN = 0.2
 
 
 @dataclass
@@ -104,6 +106,19 @@ def reassign_segments(
         scores[i] = TurnScore(ranked[0][1], ranked[0][0], ranked[1][0] if len(ranked) > 1 else None)
     moved_total = sum(1 for before, after in zip(raw, out, strict=True) if before[2] != after[2])
     return ReassignResult(out, moved_total, centroids, scores)
+
+
+def turn_confidence(score: TurnScore | None, label: Hashable, margin: float = CONFIDENT_MARGIN) -> float | None:
+    """0..1: how clearly a turn sitting with ``label`` sounds like that speaker rather than the next best.
+    0 when another speaker's voice matches it better (it stayed only because the lead was below the margin);
+    None when the turn was not embedded."""
+    if score is None:
+        return None
+    if score.label != label:
+        return 0.0
+    if score.second is None:
+        return 1.0
+    return round(min(1.0, max(0.0, (score.best - score.second) / margin)), 3)
 
 
 def _label_centroids(raw: Raw, embed: EmbedFn) -> dict[Hashable, np.ndarray]:

@@ -20,11 +20,14 @@ from better_captions_plugin.ui import (
     ReviewRequest,
     ReviewResult,
     checked_highlight_color,
+    fix_speakers_label,
     naming_index,
+    review_check_note,
     review_scroll,
+    review_speaker_label,
     speaker_rows,
 )
-from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
+from better_captions_plugin.ui.speaker_editor import CONFIRM_LABEL, ONLY_UNCERTAIN_LABEL, EditorController, cue_index
 
 TITLE = "Better Captions"
 WINDOW_ID_PROGRESS = "BetterCaptionsProgress"
@@ -277,7 +280,7 @@ class UIManagerBackend(Backend):
                 ui.HGroup(
                     {"Spacing": 8, "Weight": 0},
                     [
-                        ui.Label({"Text": "%s (%d cues)" % (speaker.id, speaker.cue_count), "Weight": 0.25}),
+                        ui.Label({"Text": review_speaker_label(speaker), "Weight": 0.25}),
                         ui.LineEdit(
                             {"ID": "Name_" + speaker.id, "Text": names.get(speaker.id, speaker.name), "Weight": 0.3}
                         ),
@@ -294,13 +297,16 @@ class UIManagerBackend(Backend):
             header.append(ui.Label({"Text": text, "Weight": 0}))
         if request.note:
             header.append(ui.Label({"Text": request.note, "Weight": 0}))
+        check_note = review_check_note(speakers, request.editor is not None)  # counts every page's speakers
+        if check_note:
+            header.append(ui.Label({"ID": "CheckNote", "Text": check_note, "Weight": 0}))
         buttons = [
             ui.HGap(0, 1),
             ui.Button({"ID": "Cancel", "Text": "Cancel", "Weight": 0}),
             ui.Button({"ID": "Ok", "Text": "Create tracks", "Weight": 0}),
         ]
         if request.editor is not None:
-            buttons.insert(0, ui.Button({"ID": "FixSpeakers", "Text": "Fix speakers…", "Weight": 0}))
+            buttons.insert(0, ui.Button({"ID": "FixSpeakers", "Text": fix_speakers_label(speakers), "Weight": 0}))
         pager = []
         if pages > 1:
             pager = [
@@ -317,7 +323,7 @@ class UIManagerBackend(Backend):
             {
                 "ID": WINDOW_ID_REVIEW,
                 "WindowTitle": "%s – review speakers" % TITLE,
-                "Geometry": [200, 200, 760, 240 + 48 * len(shown) + (40 if pager else 0)],
+                "Geometry": [200, 200, 760, 240 + 48 * len(shown) + (40 if pager else 0) + (24 if check_note else 0)],
             },
             [
                 ui.VGroup(
@@ -433,6 +439,20 @@ class UIManagerBackend(Backend):
     def edit_speakers(self, controller: EditorController):
         """The "Fix speakers" window: speaker list (rename, merge into…), cue list (filter, move), undo."""
         ui, disp = self.ui, self.disp
+        check_tools, confirm_tools = [], []
+        if controller.checking:  # lines to check: "Only lines to check", the count, "Speaker is right"
+            check_tools = [
+                ui.CheckBox(
+                    {
+                        "ID": "OnlyUncertain",
+                        "Text": ONLY_UNCERTAIN_LABEL,
+                        "Checked": controller.only_uncertain,
+                        "Weight": 0,
+                    }
+                ),
+                ui.Label({"ID": "CheckCount", "Text": "", "Weight": 0}),
+            ]
+            confirm_tools = [ui.Button({"ID": "Confirm", "Text": CONFIRM_LABEL, "Weight": 0})]
         window = disp.AddWindow(
             {"ID": WINDOW_ID_EDITOR, "WindowTitle": "%s – fix speakers" % TITLE, "Geometry": [160, 160, 940, 540]},
             [
@@ -483,6 +503,7 @@ class UIManagerBackend(Backend):
                                             [
                                                 ui.Label({"Text": "Cues    Show:", "Weight": 0}),
                                                 ui.ComboBox({"ID": "Filter", "Weight": 1}),
+                                                *check_tools,
                                             ],
                                         ),
                                         ui.Tree(
@@ -499,6 +520,7 @@ class UIManagerBackend(Backend):
                                                 ui.Label({"Text": "Move selected to:", "Weight": 0}),
                                                 ui.ComboBox({"ID": "MoveTarget", "Weight": 1}),
                                                 ui.Button({"ID": "Move", "Text": "Move", "Weight": 0}),
+                                                *confirm_tools,
                                             ],
                                         ),
                                     ],
@@ -519,7 +541,12 @@ class UIManagerBackend(Backend):
         )
         items = window.GetItems()
         _set_header(items["SpeakerTree"], ["Speaker", "Name", "Cues"], [110, 140, 50])
-        _set_header(items["CueTree"], ["#", "Time", "Speaker", "Text"], [50, 100, 120, 380])
+        columns = controller.cue_columns()
+        _set_header(
+            items["CueTree"],
+            [title for _key, title, _width in columns],
+            [380 if key == "text" else width for key, _title, width in columns],
+        )
         state = {"speaker": None, "refreshing": False, "choices": {}}
 
         def choice(box_id):
@@ -541,6 +568,8 @@ class UIManagerBackend(Backend):
             tree.Clear()
             for row in controller.cue_rows(choice("Filter")):
                 _add_row(tree, row)
+            if controller.checking:
+                items["CheckCount"].Text = controller.check_status()
 
         def refresh_speaker_tools():
             speaker_id = state["speaker"]
@@ -576,6 +605,13 @@ class UIManagerBackend(Backend):
             if not state["refreshing"]:
                 refresh_cues()
 
+        def on_only_uncertain(_event=None):
+            controller.only_uncertain = bool(items["OnlyUncertain"].Checked)
+            refresh_cues()
+
+        def selected_cues():
+            return [cue_index(_item_text(item)) for item in _selected_items(items["CueTree"])]
+
         def act(action):
             def handler(_event=None):
                 action()
@@ -587,11 +623,10 @@ class UIManagerBackend(Backend):
         window.On.Filter.CurrentIndexChanged = on_filter_changed
         window.On.Rename.Clicked = act(lambda: controller.rename(state["speaker"], str(items["SpeakerName"].Text)))
         window.On.Merge.Clicked = act(lambda: controller.merge(state["speaker"], choice("MergeTarget")))
-        window.On.Move.Clicked = act(
-            lambda: controller.move(
-                [cue_index(_item_text(item)) for item in _selected_items(items["CueTree"])], choice("MoveTarget")
-            )
-        )
+        window.On.Move.Clicked = act(lambda: controller.move(selected_cues(), choice("MoveTarget")))
+        if controller.checking:
+            window.On.OnlyUncertain.Clicked = on_only_uncertain
+            window.On.Confirm.Clicked = act(lambda: controller.confirm(selected_cues()))
         window.On.Undo.Clicked = act(controller.undo)
         window.On.Done.Clicked = lambda _event=None: disp.ExitLoop()
         window.On[WINDOW_ID_EDITOR].Close = lambda _event=None: disp.ExitLoop()

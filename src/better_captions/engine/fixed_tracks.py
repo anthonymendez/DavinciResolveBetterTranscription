@@ -184,8 +184,13 @@ class FixedAnalysis:
         return best
 
     def label_words(self, words: list[Word]) -> list[Word]:
-        """Copies of ``words``: a pinned speaker's words get its id, the others ``speaker=None``."""
-        return [replace(w, speaker=self.owner(w.start, w.end)) for w in words]
+        """Copies of ``words``: a pinned speaker's words get its id (with speaker_confidence 1, its own track
+        says so), the others ``speaker=None``."""
+        out = []
+        for w in words:
+            owner = self.owner(w.start, w.end)
+            out.append(replace(w, speaker=owner, speaker_confidence=1.0 if owner else None))
+        return out
 
     def residual(self) -> np.ndarray:
         """The mix with every frame a pinned speaker holds silenced."""

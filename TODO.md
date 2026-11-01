@@ -12,8 +12,16 @@
     timeline takes to write (`docs/RESOLVE_INTEGRATION.md` §8).
   - First run downloads the speech models (several GB for `large-v3-turbo`); check the progress UI.
   - See `docs/RESOLVE_INTEGRATION.md` for the API calls used and their known risks.
-- [ ] **Verify on Resolve 21.1.2, free and Studio.** 21.1 moved Python scripting to Studio
-      (`docs/RESOLVE_INTEGRATION.md` §9). On free 21.1.2, note whether Workspace > Scripts lists
-      and runs Better Captions, whether `resolve` is None or its calls return None, and that the
-      "needs Studio" message shows (dialog or Console). On Studio 21.1.2, run the whole flow and
-      check the progress log's first line reads `Resolve: DaVinci Resolve Studio 21.1.2`.
+- [ ] **Verify on Resolve 21.1.2 free.** 21.1 moved Python scripting to Studio
+      (`docs/RESOLVE_INTEGRATION.md` §9). Note whether Workspace > Scripts lists and runs Better
+      Captions, whether `resolve` is None or its calls return None, and that the "needs Studio"
+      message shows (dialog or Console).
+- [x] **Studio 21.1.2, headless (2026-11-01).** The whole flow ran through the scripting API on a
+      60 fps, 01:00:00:00 timeline with a GUI-style in/out range: the log's first line reads
+      `Resolve: DaVinci Resolve Studio 21.1.2`, the range renders, Text+ (plain and word
+      highlighting) lands on the right frames at full length, and the marks survive the run.
+      Subtitle tracks land after the last clip there, so the `.srt` fallback is what you get.
+      Still to see in the GUI: the progress window, the review / Fix speakers dialogs and the
+      highlight colour; and 23.976 / 29.97 DF timing.
+- [ ] **The last cue can run past the range's out point** (one ended 43 frames after it on
+      Studio 21.1.2): trim cues to the rendered range.

@@ -128,6 +128,14 @@ comp.FindToolByID("TextPlus").SetInput("StyledText", text)   # fallback: comp.Ge
 - Known quirk: the placed clip's duration can differ from `endFrame - startFrame + 1`
   (OpenCaptions measures a "duration multiplier" with a probe clip). The plugin checks
   `GetDuration()` per clip and lists mismatches in the summary instead of guessing.
+- `endFrame` is exclusive on Resolve Studio 21.1.2 (checked headless, 2026-11-01): `endFrame:
+  duration - 1` gives a clip one frame short, and a one-frame clip (`endFrame == startFrame`)
+  makes the whole `AppendToTimeline` call return None. The plugin places one probe clip with the
+  inclusive reading, measures it, and uses `endFrame: duration` when it came out a frame short
+  (`resolve_io._probe_end_frame`). A batch Resolve refuses outright is retried clip by clip.
+- `AppendToTimeline` clears the timeline's mark in/out on 21.1.2; the plugin reads the marks
+  before creating tracks and sets them again afterwards (`Timeline.SetMarkInOut`), so the next
+  run renders the same range.
 - Timeline items of a Fusion title have one comp (`GetFusionCompCount() == 1`).
 - Undo: Resolve's API edits are not grouped into one undo step; because only new tracks
   are created (named after the speaker), the user can delete those tracks to revert.
@@ -147,6 +155,11 @@ comp.FindToolByID("TextPlus").SetInput("StyledText", text)   # fallback: comp.Ge
 - In/out range: `Timeline.GetMarkInOut()` (returns `{"video": {"in", "out"},
   "audio": {...}}`, README v19+); when the call is missing or no marks are set, the whole
   timeline is used. Cue frames count from the range start (`origin_frame`).
+  On Studio 21.1.2 the marks are counted from the timeline start (01:01:00:00 on a
+  01:00:00:00 timeline at 60 fps reads 3600), while `SetRenderSettings`' `MarkIn`/`MarkOut`
+  take absolute frames and overwrite the timeline's marks. `resolve_io.marks_offset` adds
+  the start frame when the marks lie before it or fit inside the timeline counted from it,
+  and `app.run` puts the marks back after the run in the numbers it read.
 - Drop-frame arithmetic (`timing.py`) is the standard 2/4 frames-per-minute skip; tested
   against known values (`00:01:00;02` = 1800 frames, `00:10:00;00` = 17982 at 29.97).
 

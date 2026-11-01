@@ -4,10 +4,14 @@ and re-write the per-speaker SRTs when speaker edits changed who says what."""
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass, field
 
 SUPPORTED_SCHEMA_VERSION = 1
+# A cue whose ``speaker_confidence`` is below this is "uncertain": the voice match for that line was
+# ambiguous, so the review dialogs list it first for the user to check. Unknown confidence is not uncertain.
+UNCERTAIN_BELOW = 0.6
 
 
 class TranscriptError(ValueError):
@@ -32,10 +36,15 @@ class Cue:
     start: float
     end: float
     lines: list[str] = field(default_factory=list)
+    speaker_confidence: float | None = None  # 0..1, how sure the voice match is; None: unknown
 
     @property
     def text(self) -> str:
         return "\n".join(self.lines)
+
+    @property
+    def uncertain(self) -> bool:
+        return is_uncertain(self)
 
 
 @dataclass
@@ -74,6 +83,24 @@ class Transcript:
         return ordered
 
 
+def parse_confidence(value) -> float | None:
+    """A cue's ``speaker_confidence`` as a float in 0..1, or None when it is missing or not one."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and 0.0 <= number <= 1.0 else None
+
+
+def is_uncertain(cue) -> bool:
+    """True when ``cue`` (a Cue, a CueSummary or a raw cue dict) has a known confidence below UNCERTAIN_BELOW."""
+    value = cue.get("speaker_confidence") if isinstance(cue, dict) else getattr(cue, "speaker_confidence", None)
+    confidence = parse_confidence(value)
+    return confidence is not None and confidence < UNCERTAIN_BELOW
+
+
 def from_dict(data: dict) -> Transcript:
     version = int(data.get("schema_version", SUPPORTED_SCHEMA_VERSION))
     if version > SUPPORTED_SCHEMA_VERSION:
@@ -96,7 +123,13 @@ def from_dict(data: dict) -> Transcript:
         if lines is None:
             lines = str(c.get("text", "")).split("\n")
         cues.append(
-            Cue(speaker=str(c["speaker"]), start=float(c["start"]), end=float(c["end"]), lines=[str(x) for x in lines])
+            Cue(
+                speaker=str(c["speaker"]),
+                start=float(c["start"]),
+                end=float(c["end"]),
+                lines=[str(x) for x in lines],
+                speaker_confidence=parse_confidence(c.get("speaker_confidence")),
+            )
         )
     words = []
     for segment in data.get("segments", []) or []:

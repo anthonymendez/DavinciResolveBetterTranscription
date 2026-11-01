@@ -76,13 +76,21 @@ def test_full_flow_subtitle_tracks_with_renamed_speakers(config):
     assert backend.closed is False  # injected backends are not closed by main
 
 
-def test_full_flow_textplus_tracks_on_drop_frame_timeline_with_in_out_range(config):
+@pytest.mark.parametrize("resolve_21_1", [False, True], ids=["absolute-marks", "21.1-relative-marks"])
+def test_full_flow_textplus_tracks_on_drop_frame_timeline_with_in_out_range(config, resolve_21_1):
     resolve = make_world(frame_rate="29.97", start_timecode="01:00:00;00", drop_frame=True)
     tl = resolve.project.timeline
     mark_in, mark_out = tl.start_frame + 300, tl.start_frame + 900
-    tl.mark_in_out = {"video": {"in": mark_in, "out": mark_out}, "audio": {"in": mark_in, "out": mark_out}}
+    shown = (300, 900) if resolve_21_1 else (mark_in, mark_out)  # 21.1 counts marks from the timeline start
+    tl.mark_in_out = {key: {"in": shown[0], "out": shown[1]} for key in ("video", "audio")}
+    marks = dict(tl.mark_in_out)
+    if resolve_21_1:
+        resolve.project.media_pool.append_clears_marks = True
+        resolve.project.media_pool.end_frame_exclusive = True
+        resolve.project.render_sets_relative_marks = True
     backend = FakeBackend(accept_all(subtitles=False, textplus=True, template_index={"SPEAKER_00": 1, "SPEAKER_01": 2}))
     outcome = _run(resolve, backend, config)
+    assert tl.mark_in_out == marks  # the next run renders the same range
 
     assert outcome.error is None, backend.errors
     assert (resolve.project.last_job["settings"]["MarkIn"], resolve.project.last_job["settings"]["MarkOut"]) == (

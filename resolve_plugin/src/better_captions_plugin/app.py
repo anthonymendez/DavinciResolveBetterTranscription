@@ -226,6 +226,14 @@ def main(
 def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None, popen=None, sleep=None, info=None):
     info = info or compat.detect(resolve)
     project, timeline = resolve_io.current_project_and_timeline(resolve, info=info)
+    marks = resolve_io.save_marks(timeline)  # the render and the appends change them on 21.1
+    try:
+        _run(project, timeline, backend, config, outcome, work_dir, popen, sleep, info)
+    finally:
+        resolve_io.restore_marks(timeline, marks)
+
+
+def _run(project, timeline, backend: Backend, config: dict, outcome: Outcome, work_dir, popen, sleep, info):
     media_pool = project.GetMediaPool()
     clock = resolve_io.timeline_clock(timeline, project)
     range_start, range_end = resolve_io.render_range(timeline, clock)
@@ -529,6 +537,7 @@ def build_review_request(
                     cue_count=len(cues),
                     sample=sample,
                     source=speaker.name_source if speaker else None,
+                    uncertain=sum(1 for c in cues if c.uncertain),
                 )
             )
     if range_end is None:
