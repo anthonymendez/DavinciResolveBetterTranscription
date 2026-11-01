@@ -17,8 +17,10 @@
       `Resolve: DaVinci Resolve Studio 21.1.2`, the range renders, Text+ (plain and word
       highlighting) lands on the right frames at full length, and the marks survive the run.
       Subtitle tracks land after the last clip there, so the `.srt` fallback is what you get.
-      Still to see in the GUI: the progress window, the review / Fix speakers dialogs and the
-      highlight colour; and 23.976 / 29.97 DF timing.
+      Text+ timing also checked at 23.976 and 29.97 DF (01:00:00:00 start) with a 60 fps
+      template: starts within a frame of the cue times, full lengths, no gaps.
+- [ ] **Check in the Resolve GUI:** the progress window, the review / Fix speakers dialogs
+      (uncertain lines first, "Speaker is right") and that the highlight colour shows.
 - [x] **The last cue no longer runs past the range's out point** (one ended 43 frames after it
       on Studio 21.1.2): the engine stops short cues' minimum-length stretch at the end of the
       audio, and the plugin trims clips to the rendered range.
