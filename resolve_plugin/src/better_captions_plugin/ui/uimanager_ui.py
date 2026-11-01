@@ -159,7 +159,7 @@ class UIManagerBackend(Backend):
     def progress(self, title: str) -> ProgressView:
         return UIManagerProgress(self.ui, self.disp, title)
 
-    def pick_audio_tracks(self, tracks, preselected) -> list[int] | None:
+    def pick_audio_tracks(self, tracks, preselected):
         from better_captions_plugin import track_picker
 
         return track_picker.pick_audio_tracks_uimanager(None, self.ui, self.disp, tracks, preselected)

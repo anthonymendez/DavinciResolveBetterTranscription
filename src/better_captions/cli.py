@@ -13,6 +13,17 @@ from better_captions import __version__
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 
+def fixed_track(spec: str):
+    """argparse type for ``--fixed-track NAME=PATH``. Imported on use: fixed_tracks needs numpy, and
+    ``doctor`` must still run when that is broken."""
+    from better_captions.engine import fixed_tracks
+
+    try:
+        return fixed_tracks.parse_fixed_track(spec)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="better-captions")
     parser.add_argument("--version", action="version", version=__version__)
@@ -34,6 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--max-lines", type=int, default=2)
     r.add_argument("--max-duration", type=float, default=6.0)
     r.add_argument("--no-cache", action="store_true", help="re-transcribe even if this audio was processed before")
+    r.add_argument(
+        "--fixed-track",
+        action="append",
+        default=[],
+        type=fixed_track,
+        metavar="NAME=PATH",
+        help="audio of one speaker alone (e.g. their microphone track): what NAME says there is captioned as "
+        "NAME and left out of speaker detection. Repeatable.",
+    )
     r.add_argument(
         "--verbose", action="store_true", help="debug logging and tracebacks on stderr (the plugin's debug mode)"
     )
@@ -182,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_chars_per_line=args.max_chars, max_lines=args.max_lines, max_duration=args.max_duration
             ),
             use_cache=not args.no_cache,
+            fixed_tracks=list(args.fixed_track),
         )
         try:
             run(args.audio, args.out, options)

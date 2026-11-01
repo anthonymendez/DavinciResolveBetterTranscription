@@ -60,6 +60,29 @@ def with_words(transcript):
     return dict(transcript, segments=segments)
 
 
+def with_fixed_tracks(transcript, specs):
+    """``--fixed-track NAME=PATH``, as the engine reports it: the first pinned speaker says what
+    SPEAKER_01 said, under id PINNED_00, already named (name_source "user"). None (after an error
+    event) when a track's audio is missing."""
+    ids = {}
+    tracks = []
+    for spec in specs:
+        name, _sep, path = spec.partition("=")
+        if not os.path.isfile(path):
+            emit({"event": "error", "message": "FileNotFoundError: %s" % path})
+            return None
+        sid = ids.setdefault(name, "PINNED_%02d" % len(ids))
+        tracks.append({"id": sid, "name": name, "audio": path})
+    for cue in transcript["cues"]:
+        if cue["speaker"] == "SPEAKER_01":
+            cue["speaker"] = "PINNED_00"
+    transcript["speakers"] = [s for s in transcript["speakers"] if s["id"] != "SPEAKER_01"] + [
+        {"id": sid, "name": name, "name_confidence": 1.0, "name_source": "user"} for name, sid in ids.items()
+    ]
+    transcript["meta"]["fixed_tracks"] = tracks
+    return transcript
+
+
 def _ts(seconds):
     ms = int(round(seconds * 1000))
     h, rest = divmod(ms, 3600000)
@@ -105,6 +128,11 @@ def main(argv):
         emit({"event": "error", "message": "RuntimeError: no speech found"})
         return 1
     transcript = json.loads(json.dumps(TRANSCRIPT))
+    fixed = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--fixed-track"]
+    if fixed:
+        transcript = with_fixed_tracks(transcript, fixed)
+        if transcript is None:
+            return 1
     if "--with-words" in argv:
         transcript = with_words(transcript)
     transcript["meta"]["audio"] = audio

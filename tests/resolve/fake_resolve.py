@@ -630,8 +630,11 @@ class FakeProject:
             return False
         self._rendering = self.polls_until_done
         self._active = list(job_ids or self.jobs)
+        timeline = self.timeline
+        enabled = timeline.enabled_audio() if timeline is not None and hasattr(timeline, "enabled_audio") else None
         for job_id in self._active:
             self.jobs[job_id]["status"] = "Rendering"
+            self.jobs[job_id]["enabled_audio"] = enabled  # the audio tracks this render hears
         return True
 
     def IsRenderingInProgress(self):
@@ -656,6 +659,8 @@ class FakeProject:
             name = "%s.%s" % (settings.get("CustomName", "render"), ext)
             with open(os.path.join(target, name), "wb") as handle:
                 handle.write(b"RIFF....WAVEfake")
+                if job.get("enabled_audio") is not None:  # tests tell a mix from a single-track render
+                    handle.write((" tracks=%s" % ",".join(map(str, job["enabled_audio"]))).encode("ascii"))
             job["status"] = "Complete"
 
     def GetRenderJobStatus(self, job_id):

@@ -167,7 +167,7 @@ class TkBackend(Backend):
         self.root.update()
         messagebox.showerror(title, text, parent=self.root)
 
-    def pick_audio_tracks(self, tracks, preselected) -> list[int] | None:
+    def pick_audio_tracks(self, tracks, preselected):
         from better_captions_plugin import track_picker
 
         return track_picker.pick_audio_tracks_tk(self.root, tracks, preselected)
