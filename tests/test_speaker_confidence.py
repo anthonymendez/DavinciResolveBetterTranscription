@@ -106,3 +106,44 @@ def test_pipeline_writes_cue_confidence(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     data = json.loads((out / "transcript.json").read_text(encoding="utf-8"))
     assert [c["speaker_confidence"] for c in data["cues"]] == [0.95, 0.1]
+
+
+def _embed_by_voice(voices):
+    def embed(start, end):
+        mid = (start + end) / 2
+        return next((v for (s, e), v in voices.items() if s <= mid < e), None)
+
+    return embed
+
+
+def test_ambiguous_turn_on_a_three_turn_speaker_is_not_propped_up_by_itself():
+    # 'a' has eight clear turns; 'b' has two clear turns and one that sounds like either speaker. Scored
+    # against a centroid that includes it, the ambiguous turn would get ~0.78.
+    voices = {(0.0, 40.0): A, (40.0, 50.0): B, (50.0, 55.0): AB}
+    raw = [(float(s), s + 5.0, "a") for s in range(0, 40, 5)] + [(40.0, 45.0, "b"), (45.0, 50.0, "b")]
+    raw.append((50.0, 55.0, "b"))
+
+    result = reassign_segments(raw, _embed_by_voice(voices))
+    assert [lb for _, _, lb in result.raw] == [lb for _, _, lb in raw]
+    conf = [turn_confidence(s, lb) for s, (_, _, lb) in zip(result.scores, result.raw, strict=True)]
+    assert conf[-1] == pytest.approx(0.0, abs=0.01)
+    assert all(c == 1.0 for c in conf[:-1])
+
+
+def test_returned_centroids_still_include_every_turn():
+    voices = {(0.0, 40.0): A, (40.0, 50.0): B, (50.0, 55.0): AB}
+    raw = [(float(s), s + 5.0, "a") for s in range(0, 40, 5)] + [(40.0, 45.0, "b"), (45.0, 50.0, "b")]
+    raw.append((50.0, 55.0, "b"))
+
+    result = reassign_segments(raw, _embed_by_voice(voices))
+    expected_b = (2 * B + AB) / np.linalg.norm(2 * B + AB)
+    assert result.centroids["b"] == pytest.approx(expected_b)
+    assert result.centroids["a"] == pytest.approx(A)
+
+
+def test_single_turn_speaker_keeps_its_full_centroid():
+    voices = {(0.0, 40.0): A, (40.0, 45.0): B}
+    raw = [(float(s), s + 5.0, "a") for s in range(0, 40, 5)] + [(40.0, 45.0, "b")]
+
+    result = reassign_segments(raw, _embed_by_voice(voices))
+    assert turn_confidence(result.scores[-1], "b") == 1.0
