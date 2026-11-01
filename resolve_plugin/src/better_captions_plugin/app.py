@@ -618,6 +618,16 @@ def remember_voices(config: dict, editor, voices_path: str, outcome: Outcome, pr
 def create_tracks(
     media_pool, timeline, transcript, review: ReviewResult, templates, clock, origin_frame, srt_paths, outcome: Outcome
 ):
+    marks = resolve_io.save_marks(timeline)
+    try:
+        _create_tracks(media_pool, timeline, transcript, review, templates, clock, origin_frame, srt_paths, outcome)
+    finally:
+        resolve_io.restore_marks(timeline, marks)
+
+
+def _create_tracks(
+    media_pool, timeline, transcript, review: ReviewResult, templates, clock, origin_frame, srt_paths, outcome: Outcome
+):
     taken_video = resolve_io.existing_track_names(timeline, "video")
     taken_subtitle = resolve_io.existing_track_names(timeline, "subtitle")
     if review.subtitles:

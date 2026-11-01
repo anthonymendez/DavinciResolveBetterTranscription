@@ -81,8 +81,12 @@ def test_full_flow_textplus_tracks_on_drop_frame_timeline_with_in_out_range(conf
     tl = resolve.project.timeline
     mark_in, mark_out = tl.start_frame + 300, tl.start_frame + 900
     tl.mark_in_out = {"video": {"in": mark_in, "out": mark_out}, "audio": {"in": mark_in, "out": mark_out}}
+    marks = dict(tl.mark_in_out)
+    resolve.project.media_pool.append_clears_marks = True  # as Resolve 21.1 does
+    resolve.project.media_pool.end_frame_exclusive = True
     backend = FakeBackend(accept_all(subtitles=False, textplus=True, template_index={"SPEAKER_00": 1, "SPEAKER_01": 2}))
     outcome = _run(resolve, backend, config)
+    assert tl.mark_in_out == marks  # the next run renders the same range
 
     assert outcome.error is None, backend.errors
     assert (resolve.project.last_job["settings"]["MarkIn"], resolve.project.last_job["settings"]["MarkOut"]) == (

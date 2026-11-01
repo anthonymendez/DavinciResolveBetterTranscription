@@ -378,3 +378,69 @@ def test_whole_timeline_render_starts_despite_a_stale_mark_range(tmp_path):
     project.stale_range_blocks_select_all = True
     wav = resolve_io.render_audio(project, project.timeline, str(tmp_path), 86400, None, sleep=lambda s: None)
     assert os.path.isfile(wav)
+
+
+def test_create_textplus_track_measures_an_exclusive_end_frame():
+    # Resolve 21.1: endFrame is exclusive, so duration - 1 would make every clip a frame short
+    resolve = make_world()
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    mp.end_frame_exclusive = True
+    template = resolve_io.find_text_templates(mp)[0]
+    clips = [ClipPlacement(86400, 1, "um", 0, 0.01), ClipPlacement(86412, 36, "a", 0.5, 2.0)]
+    clips.append(ClipPlacement(86496, 60, "b", 4.0, 6.5))
+    result = resolve_io.create_textplus_track(mp, tl, _plan("S", clips, template=template))
+    assert result.placed == 3 and result.misplaced == []
+    assert [(i.GetStart(), i.GetDuration()) for i in tl.track("video", "S").items] == [
+        (86400, 1),
+        (86412, 36),
+        (86496, 60),
+    ]
+    assert [i["endFrame"] for i in mp.append_calls[-1]] == [1, 36, 60]
+
+
+def test_create_textplus_track_keeps_an_inclusive_probe():
+    resolve = make_world()
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    template = resolve_io.find_text_templates(mp)[0]
+    clips = [ClipPlacement(86412, 36, "a", 0.5, 2.0), ClipPlacement(86496, 60, "b", 4.0, 6.5)]
+    result = resolve_io.create_textplus_track(mp, tl, _plan("S", clips, template=template))
+    assert result.placed == 2 and result.misplaced == []
+    assert [[i["endFrame"] for i in call] for call in mp.append_calls] == [[35], [59]]
+
+
+def test_create_textplus_track_places_the_rest_when_one_clip_fails_the_batch():
+    resolve = make_world()
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    template = resolve_io.find_text_templates(mp)[0]
+    original = mp.AppendToTimeline
+
+    def refuse_frame(infos):  # Resolve returns None for the whole call if it can't place one clip
+        if any(i["recordFrame"] == 86600 for i in infos):
+            if len(infos) > 1:
+                return None
+            return []
+        return original(infos)
+
+    mp.AppendToTimeline = refuse_frame
+    clips = [ClipPlacement(86412, 36, "a", 0.5, 2.0), ClipPlacement(86496, 60, "b", 4.0, 6.5)]
+    clips.append(ClipPlacement(86600, 10, "c", 8.0, 8.4))
+    result = resolve_io.create_textplus_track(mp, tl, _plan("S", clips, template=template))
+    assert result.placed == 2 and result.misplaced == ["c: no clip at frame 86600"]
+
+
+def test_restore_marks_puts_back_marks_that_appending_cleared():
+    marks = {"video": {"in": 86400, "out": 90000}, "audio": {"in": 86400, "out": 90000}}
+    tl = FakeTimeline(mark_in_out=marks)
+    saved = resolve_io.save_marks(tl)
+    tl.mark_in_out = None
+    resolve_io.restore_marks(tl, saved)
+    assert tl.GetMarkInOut() == marks
+
+
+def test_restore_marks_without_marks_or_api_does_nothing():
+    tl = FakeTimeline()
+    resolve_io.restore_marks(tl, resolve_io.save_marks(tl))
+    assert tl.mark_in_out is None
+    tl = FakeTimeline(has_mark_in_out_api=False)
+    assert resolve_io.save_marks(tl) == {}
+    resolve_io.restore_marks(tl, {"video": {"in": 1, "out": 2}})  # no SetMarkInOut either: no error

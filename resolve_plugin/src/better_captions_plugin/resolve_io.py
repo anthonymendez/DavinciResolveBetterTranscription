@@ -570,21 +570,21 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
     index = add_track(timeline, "video", plan.name)
     result = TrackResult(plan=plan, track_type="video", track_index=index)
     try:
-        infos = [
-            {
+
+        def info(clip, exclusive):
+            return {
                 "mediaPoolItem": item,
                 "startFrame": 0,
-                "endFrame": clip.duration - 1,
+                "endFrame": clip.duration if exclusive else max(0, clip.duration - 1),
                 "trackIndex": index,
                 "recordFrame": clip.record_frame,
                 "mediaType": 1,
             }
-            for clip, _word in clips
-        ]
-        appended = []
+
+        appended, exclusive, probed = _probe_end_frame(media_pool, timeline, index, [c for c, _w in clips], info)
+        infos = [info(clip, exclusive) for n, (clip, _word) in enumerate(clips) if n != probed]
         for start in range(0, len(infos), 100):  # keep each call modest
-            batch = media_pool.AppendToTimeline(infos[start : start + 100]) or []
-            appended.extend(batch)
+            appended.extend(_append_batch(media_pool, timeline, index, infos[start : start + 100]))
         if len(appended) != len(clips):
             appended = _items_by_start(timeline, "video", index)
         placed_by_frame = {}
@@ -629,6 +629,80 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
         delete_track(timeline, "video", index)
         raise
     return result
+
+
+def _probe_end_frame(media_pool, timeline, index: int, clips, info) -> tuple[list, bool, int | None]:
+    """Place one clip of two or more frames with ``endFrame`` read as inclusive and measure it.
+
+    Resolve 21.1 reads ``endFrame`` as exclusive (the clip comes out one frame short, and a
+    one-frame clip, ``endFrame == startFrame``, fails the whole AppendToTimeline call); older
+    releases as inclusive. Returns ``(placed items, exclusive, index of the probe in clips)``:
+    a probe that came out one frame short is deleted again (index None, it is placed with the
+    rest), one that is right is kept. No clip long enough, or nothing measurable: inclusive.
+    """
+    probe = next((n for n, clip in enumerate(clips) if clip.duration >= 2), None)
+    if probe is None:
+        return [], False, None
+    placed = _append_batch(media_pool, timeline, index, [info(clips[probe], False)])
+    if not placed:
+        placed = [i for i in _items_by_start(timeline, "video", index) if _start(i) == clips[probe].record_frame]
+    if not placed:
+        return [], False, None
+    try:
+        duration = int(placed[0].GetDuration())
+    except Exception:
+        return placed, False, probe
+    if duration != clips[probe].duration - 1:
+        return placed, False, probe
+    try:
+        if timeline.DeleteClips(placed, False):
+            return [], True, None
+    except Exception:
+        pass
+    return placed, True, probe  # could not remove the short probe: keep it, its mismatch is reported
+
+
+def _append_batch(media_pool, timeline, index: int, infos: list) -> list:
+    """AppendToTimeline(infos); if Resolve refused the whole call (one clip it can't place makes
+    it return None for all), place them one by one so the others still land."""
+    before = len(_items_by_start(timeline, "video", index))
+    batch = media_pool.AppendToTimeline(infos) or []
+    if batch or len(infos) < 2 or len(_items_by_start(timeline, "video", index)) != before:
+        return list(batch)
+    placed = []
+    for one in infos:
+        placed.extend(media_pool.AppendToTimeline([one]) or [])
+    return placed
+
+
+def _start(item) -> int | None:
+    try:
+        return int(item.GetStart())
+    except Exception:
+        return None
+
+
+def save_marks(timeline) -> dict:
+    """The timeline's mark in/out (``GetMarkInOut()``), to put back with ``restore_marks``; {} if none or unknown."""
+    try:
+        marks = timeline.GetMarkInOut()
+    except Exception:
+        return {}
+    return dict(marks) if isinstance(marks, dict) else {}
+
+
+def restore_marks(timeline, marks: dict) -> None:
+    """Set the marks ``save_marks`` read again where they changed: AppendToTimeline clears them on
+    Resolve 21.1, and the next run would then render the whole timeline."""
+    if not marks or save_marks(timeline) == marks:
+        return
+    for mark_type in ("video", "audio"):
+        section = marks.get(mark_type)
+        if isinstance(section, dict) and "in" in section and "out" in section:
+            try:
+                timeline.SetMarkInOut(int(section["in"]), int(section["out"]), mark_type)
+            except Exception:
+                pass
 
 
 def apply_word_highlight(timeline_item, text: str, word, style: HighlightStyle):

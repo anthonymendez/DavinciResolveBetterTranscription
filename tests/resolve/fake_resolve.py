@@ -367,6 +367,20 @@ class FakeTimeline:
             raise AttributeError("GetMarkInOut")
         return dict(self.mark_in_out or {})
 
+    def SetMarkInOut(self, mark_in, mark_out, mark_type="all"):
+        if not self.has_mark_in_out_api:
+            raise AttributeError("SetMarkInOut")
+        marks = dict(self.mark_in_out or {})
+        for key in ("video", "audio") if mark_type == "all" else (mark_type,):
+            marks[key] = {"in": int(mark_in), "out": int(mark_out)}
+        self.mark_in_out = marks
+        return True
+
+    def DeleteClips(self, items, ripple=False):
+        for track in (t for tracks in self.tracks.values() for t in tracks):
+            track.items = [i for i in track.items if i not in items]
+        return True
+
     # -- tracks
     def GetTrackCount(self, track_type):
         return len(self.tracks[track_type])
@@ -439,6 +453,10 @@ class FakeMediaPool:
         self.deleted = []
         self.append_calls = []
         self.append_returns_items = True
+        # Resolve 21.1: endFrame is exclusive, a clip with endFrame == startFrame fails the whole call
+        # (None for every clip), and appending clears the timeline's mark in/out
+        self.end_frame_exclusive = False
+        self.append_clears_marks = False
 
     def GetRootFolder(self):
         return self.root
@@ -471,6 +489,12 @@ class FakeMediaPool:
 
     def AppendToTimeline(self, clips):
         self.append_calls.append(list(clips))
+        if self.append_clears_marks:
+            self.timeline.mark_in_out = None
+        if self.end_frame_exclusive and any(
+            isinstance(i, dict) and "endFrame" in i and int(i["endFrame"]) <= int(i.get("startFrame", 0)) for i in clips
+        ):
+            return None
         placed = []
         for info in clips:
             if not isinstance(info, dict):
@@ -509,7 +533,7 @@ class FakeMediaPool:
         track = timeline.tracks["video"][index - 1]
         start_frame = int(info.get("startFrame", 0))
         end_frame = int(info.get("endFrame", start_frame + 119))
-        duration = end_frame - start_frame + 1
+        duration = end_frame - start_frame + (0 if self.end_frame_exclusive else 1)
         if item.placed_duration is not None:
             duration = item.placed_duration
         record = int(info.get("recordFrame", track.items[-1].GetEnd() if track.items else timeline.start_frame))
