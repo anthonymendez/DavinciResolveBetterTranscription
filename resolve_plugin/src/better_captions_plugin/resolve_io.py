@@ -117,7 +117,12 @@ def _setting(obj, key):
 
 
 def render_range(timeline, clock: TimelineClock) -> tuple[int, int | None]:
-    """``(start_frame, end_frame)`` of the in/out range if one is set, else ``(timeline start, None)``."""
+    """``(start_frame, end_frame)`` of the in/out range if one is set, else ``(timeline start, None)``;
+    absolute frames, as ``MarkIn``/``MarkOut`` and ``recordFrame`` take them.
+
+    Resolve Studio 21.1.2 returns marks counted from the timeline start (a range set at
+    01:01:00:00 on a 01:00:00:00 timeline reads 3600 at 60 fps, checked headless 2026-11-01);
+    ``marks_offset`` decides which reading a pair of marks needs."""
     marks = None
     try:
         marks = timeline.GetMarkInOut()
@@ -129,8 +134,23 @@ def render_range(timeline, clock: TimelineClock) -> tuple[int, int | None]:
             if isinstance(section, dict) and "in" in section and "out" in section:
                 start, end = int(section["in"]), int(section["out"])
                 if end >= start:
-                    return start, end
+                    offset = marks_offset(timeline, clock.start_frame, start, end)
+                    return start + offset, end + offset
     return clock.start_frame, None
+
+
+def marks_offset(timeline, start_frame: int, mark_in: int, mark_out: int) -> int:
+    """What to add to ``GetMarkInOut()`` values for absolute frames: the timeline start when they are
+    counted from it (21.1: any mark before the start frame can only be relative, and a relative range
+    that still fits inside the timeline is taken as one), 0 for the absolute marks older releases give."""
+    if start_frame <= 0 or mark_in < start_frame:
+        return max(0, start_frame)
+    end = _try(timeline.GetEndFrame)  # one past the last frame
+    try:
+        fits_relative = start_frame + mark_out < int(end)
+    except (TypeError, ValueError):
+        fits_relative = False
+    return start_frame if fits_relative else 0
 
 
 def existing_track_names(timeline, track_type: str) -> list[str]:
@@ -692,8 +712,9 @@ def save_marks(timeline) -> dict:
 
 
 def restore_marks(timeline, marks: dict) -> None:
-    """Set the marks ``save_marks`` read again where they changed: AppendToTimeline clears them on
-    Resolve 21.1, and the next run would then render the whole timeline."""
+    """Set the marks ``save_marks`` read again where they changed, in the numbers GetMarkInOut gave:
+    on Resolve 21.1 AppendToTimeline clears them and SetRenderSettings' MarkIn/MarkOut overwrite them,
+    and the next run would then render another range."""
     if not marks or save_marks(timeline) == marks:
         return
     for mark_type in ("video", "audio"):

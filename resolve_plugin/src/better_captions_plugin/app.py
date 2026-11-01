@@ -226,6 +226,14 @@ def main(
 def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None, popen=None, sleep=None, info=None):
     info = info or compat.detect(resolve)
     project, timeline = resolve_io.current_project_and_timeline(resolve, info=info)
+    marks = resolve_io.save_marks(timeline)  # the render and the appends change them on 21.1
+    try:
+        _run(project, timeline, backend, config, outcome, work_dir, popen, sleep, info)
+    finally:
+        resolve_io.restore_marks(timeline, marks)
+
+
+def _run(project, timeline, backend: Backend, config: dict, outcome: Outcome, work_dir, popen, sleep, info):
     media_pool = project.GetMediaPool()
     clock = resolve_io.timeline_clock(timeline, project)
     range_start, range_end = resolve_io.render_range(timeline, clock)
@@ -616,16 +624,6 @@ def remember_voices(config: dict, editor, voices_path: str, outcome: Outcome, pr
 
 
 def create_tracks(
-    media_pool, timeline, transcript, review: ReviewResult, templates, clock, origin_frame, srt_paths, outcome: Outcome
-):
-    marks = resolve_io.save_marks(timeline)
-    try:
-        _create_tracks(media_pool, timeline, transcript, review, templates, clock, origin_frame, srt_paths, outcome)
-    finally:
-        resolve_io.restore_marks(timeline, marks)
-
-
-def _create_tracks(
     media_pool, timeline, transcript, review: ReviewResult, templates, clock, origin_frame, srt_paths, outcome: Outcome
 ):
     taken_video = resolve_io.existing_track_names(timeline, "video")

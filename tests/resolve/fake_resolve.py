@@ -564,6 +564,7 @@ class FakeProject:
         self.render_format = ("mov", "H264")
         self.render_mode = 0
         self.render_settings = {}
+        self.render_sets_relative_marks = False  # True: MarkIn/MarkOut overwrite the timeline's marks (21.1)
         self.settings_calls = []  # every SetRenderSettings dict, accepted or not
         self.start_failures = 0  # StartRendering returns False this many times first (seen on 21.1)
         self.stale_range_blocks_select_all = False
@@ -636,6 +637,9 @@ class FakeProject:
         if "AudioFormat" in settings and not self.audio_render_api:
             return False  # a key this build doesn't know
         self.render_settings.update(settings)  # layered on the current state, like Resolve
+        if self.render_sets_relative_marks and "MarkIn" in settings and "MarkOut" in settings:
+            start = self.timeline.start_frame  # 21.1: the job's range becomes the timeline's marks
+            self.timeline.SetMarkInOut(int(settings["MarkIn"]) - start, int(settings["MarkOut"]) - start)
         return True
 
     def AddRenderJob(self):

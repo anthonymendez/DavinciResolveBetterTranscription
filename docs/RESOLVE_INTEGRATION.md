@@ -155,6 +155,11 @@ comp.FindToolByID("TextPlus").SetInput("StyledText", text)   # fallback: comp.Ge
 - In/out range: `Timeline.GetMarkInOut()` (returns `{"video": {"in", "out"},
   "audio": {...}}`, README v19+); when the call is missing or no marks are set, the whole
   timeline is used. Cue frames count from the range start (`origin_frame`).
+  On Studio 21.1.2 the marks are counted from the timeline start (01:01:00:00 on a
+  01:00:00:00 timeline at 60 fps reads 3600), while `SetRenderSettings`' `MarkIn`/`MarkOut`
+  take absolute frames and overwrite the timeline's marks. `resolve_io.marks_offset` adds
+  the start frame when the marks lie before it or fit inside the timeline counted from it,
+  and `app.run` puts the marks back after the run in the numbers it read.
 - Drop-frame arithmetic (`timing.py`) is the standard 2/4 frames-per-minute skip; tested
   against known values (`00:01:00;02` = 1800 frames, `00:10:00;00` = 17982 at 29.97).
 

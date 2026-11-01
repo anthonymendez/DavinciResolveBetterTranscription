@@ -444,3 +444,21 @@ def test_restore_marks_without_marks_or_api_does_nothing():
     tl = FakeTimeline(has_mark_in_out_api=False)
     assert resolve_io.save_marks(tl) == {}
     resolve_io.restore_marks(tl, {"video": {"in": 1, "out": 2}})  # no SetMarkInOut either: no error
+
+
+def test_render_range_reads_marks_counted_from_the_timeline_start():
+    # Resolve 21.1: a range at 01:00:04:04 on a 01:00:00:00 timeline at 24 fps reads 100
+    tl = FakeTimeline()
+    clock = resolve_io.timeline_clock(tl, FakeProject(tl))
+    tl.mark_in_out = {"video": {"in": 100, "out": 300}, "audio": {"in": 100, "out": 300}}
+    assert resolve_io.render_range(tl, clock) == (86500, 86700)
+
+
+def test_marks_offset_tells_relative_from_absolute():
+    tl = FakeTimeline()
+    tl.GetEndFrame = lambda: 86400 + 100000  # a long timeline: 86500 also fits as a relative mark
+    assert resolve_io.marks_offset(tl, 86400, 100, 300) == 86400  # before the start: relative
+    assert resolve_io.marks_offset(tl, 86400, 86500, 86700) == 86400  # fits inside counted from the start
+    tl.GetEndFrame = lambda: 90000
+    assert resolve_io.marks_offset(tl, 86400, 86500, 86700) == 0  # only fits as absolute frames
+    assert resolve_io.marks_offset(tl, 0, 100, 300) == 0  # a timeline starting at 0: both readings agree
