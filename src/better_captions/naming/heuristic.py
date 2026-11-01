@@ -9,6 +9,15 @@ from dataclasses import dataclass
 
 from better_captions.schema import Segment, Speaker
 
+# Names no transcript namer overrides: typed by the user (pinned tracks), or recognised by voice
+# (engine.voices, from speakers the user confirmed on earlier videos).
+KEPT_SOURCES = ("user", "voice")
+
+
+def is_kept(speaker: Speaker) -> bool:
+    return bool(speaker.name) and speaker.name_source in KEPT_SOURCES
+
+
 # A capitalised word that could be a name (allows O'Brien, Mary-Jane, José).
 _NAME = r"[A-Z][a-zà-ÿ]+(?:['-][A-Z]?[a-zà-ÿ]+)?"
 _FULL_NAME = rf"{_NAME}(?:\s+{_NAME})?"
@@ -145,11 +154,12 @@ def _confidence(best: float, total: float) -> float:
 def name_speakers(speakers: list[Speaker], segments: list[Segment], min_score: float = 0.25) -> list[Speaker]:
     """Fill name/name_confidence/name_source="heuristic" on copies of speakers where evidence allows.
 
-    Speakers already named by the user are left alone and their names are not reused.
+    Speakers already named by the user (or recognised by voice, see KEPT_SOURCES) are left alone and their
+    names are not reused.
     """
     scores = score_candidates(segments)
-    taken = {_key(s.name) for s in speakers if s.name and s.name_source == "user"}
-    open_ids = {s.id for s in speakers if not (s.name and s.name_source == "user")}
+    taken = {_key(s.name) for s in speakers if is_kept(s)}
+    open_ids = {s.id for s in speakers if not is_kept(s)}
 
     candidates = [
         (ev.score, sid, key, ev.display)

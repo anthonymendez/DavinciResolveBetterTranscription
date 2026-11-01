@@ -34,6 +34,51 @@ def track(spec: str):
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def speaker_name(spec: str) -> tuple[str, str]:
+    """argparse type for ``voices save --name SPEAKER=NAME`` (split at the first ``=``: ids have none)."""
+    speaker, sep, name = str(spec).partition("=")
+    speaker, name = speaker.strip(), " ".join(name.split())
+    if not sep or not speaker or not name:
+        raise argparse.ArgumentTypeError(f"expected SPEAKER=NAME, got {spec!r}")
+    return speaker, name
+
+
+def voices_command(args) -> int:
+    """`better-captions voices ...`: one JSON object on stdout. ``save`` reports like ``run`` does (a
+    ``done`` or ``error`` event), so the plugin reads it with the same runner."""
+    from better_captions.engine import voices
+
+    library = voices.VoiceLibrary()
+    if args.voices_action == "save":
+        try:
+            saved, skipped = voices.save_confirmed(args.source, dict(args.name), library)
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"event": "error", "message": f"{type(exc).__name__}: {exc}"}))
+            return 1
+        print(json.dumps({"event": "done", "saved": saved, "skipped": skipped, "library": str(library.root)}))
+    elif args.voices_action == "list":
+        people = [
+            {
+                "name": p.name,
+                "file": str(p.path),
+                "voices": [{"source": c.source, "model": c.model, "count": c.count} for c in p.centroids],
+            }
+            for p in library.people()
+        ]
+        print(json.dumps({"library": str(library.root), "people": people}, indent=2, ensure_ascii=False))
+    elif args.voices_action == "forget":
+        try:
+            removed = library.forget(args.name)
+        except OSError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps({"event": "voices_forgotten", "name": args.name, "removed": removed}, ensure_ascii=False))
+        if not removed:
+            print(f"no saved voice for {args.name!r}", file=sys.stderr)
+            return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="better-captions")
     parser.add_argument("--version", action="version", version=__version__)
@@ -76,11 +121,33 @@ def build_parser() -> argparse.ArgumentParser:
         "not transcribed). Repeatable.",
     )
     r.add_argument(
+        "--no-voice-library",
+        action="store_true",
+        help="don't name speakers from the voices saved by `better-captions voices save`",
+    )
+    r.add_argument(
         "--verbose", action="store_true", help="debug logging and tracebacks on stderr (the plugin's debug mode)"
     )
 
     c = sub.add_parser("cache", help="manage the transcription cache")
     c.add_argument("action", choices=["clear"])
+
+    v = sub.add_parser("voices", help="manage the library of known voices (speakers named automatically)")
+    vs = v.add_subparsers(dest="voices_action", required=True)
+    save = vs.add_parser("save", help="keep the voices of a run's speakers under the names given")
+    save.add_argument("--from", dest="source", required=True, metavar="OUT_DIR", help="the run's --out directory")
+    save.add_argument(
+        "--name",
+        action="append",
+        default=[],
+        type=speaker_name,
+        required=True,
+        metavar="SPEAKER=NAME",
+        help="a speaker of that run and the person it is, e.g. SPEAKER_00=Anthony. Repeatable.",
+    )
+    vs.add_parser("list", help="the people whose voices are saved")
+    forget = vs.add_parser("forget", help="delete a person's saved voices")
+    forget.add_argument("name")
 
     sub.add_parser("doctor", help="print GPU/backend detection as JSON")
 
@@ -241,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             use_cache=not args.no_cache,
             fixed_tracks=fixed,
             tracks=tracks,
+            voice_library=not args.no_voice_library,
         )
         try:
             run(audio, args.out, options)
@@ -253,6 +321,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     elif args.command == "key":
         return key_command(args)
+    elif args.command == "voices":
+        return voices_command(args)
     elif args.command == "cache":
         from better_captions.engine import cache
 

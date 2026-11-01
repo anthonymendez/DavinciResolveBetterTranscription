@@ -233,6 +233,16 @@ audio file, e.g. `--track person:Anthony=mic.wav --track group:Discord=discord.w
 `--fixed-track NAME=PATH` still works: next to a mixed audio file it pins NAME
 to that track, and without one it is a person track.
 
+### Remembered voices
+
+When you click OK in the review dialog, the voice of every detected speaker you
+confirmed with a real name is saved in `<data>/voices` (one small file per
+person, on your machine only). On the next video, a speaker whose voice clearly
+matches a saved one is named automatically; a doubtful match is left to the
+usual name guessing and to you. Manage the library with
+`better-captions voices list` and `better-captions voices forget NAME`, or turn
+it off with `"voice_library": false` in `config.json`.
+
 ## How it works
 
 The plugin has two halves. The **Resolve plugin** runs inside Resolve and only
@@ -273,7 +283,8 @@ flowchart LR
    The models download once on first use.
 4. **Align.** Each word gets the speaker who was talking at that moment, and
    words are grouped into sentences per speaker.
-5. **Name speakers.** The engine looks for names in the conversation, such as
+5. **Name speakers.** Voices you confirmed on earlier videos are recognised
+   first (see "Remembered voices"). For the rest, the engine looks for names in the conversation, such as
    self-introductions ("I'm Sam") and people addressing each other ("thanks,
    Maria"). Optionally it asks Claude, OpenAI, a local model through Ollama,
    or your signed-in Claude Code / Antigravity CLI for better guesses. If no name is found, the speaker stays `SPEAKER_00` and

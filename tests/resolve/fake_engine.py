@@ -1,7 +1,8 @@
 """A stand-in for `better-captions run` used as a real subprocess by the plugin tests.
 
 Usage: python fake_engine.py run [AUDIO] --out DIR [--track ROLE:NAME=PATH ...] [--fixed-track NAME=PATH ...]
-       [--fail] [--crash] [--slow] [--with-words] [...ignored flags]
+       [--fail] [--crash] [--slow] [--with-words] [--with-voices] [...ignored flags]
+       python fake_engine.py voices save --from DIR --name SPEAKER=NAME ...  (see voices_save)
 
 Emits the same JSON-line events as the engine and writes transcript.json plus one SRT per
 speaker from the fixture below (the shape matches src/better_captions/schema.py, see
@@ -118,7 +119,48 @@ def emit(event):
     sys.stdout.flush()
 
 
+VOICES_LOG = "FAKE_ENGINE_VOICES_LOG"  # env: a file each `voices save` call appends its argv to (JSON lines)
+VOICES_FAIL = "FAKE_ENGINE_VOICES_FAIL"  # env: "error" (an error event), "crash" (exit 3) or "hang" (sleep)
+
+
+def voices_save(argv):
+    """``voices save --from OUT --name SPEAKER=NAME ...``: logged to $FAKE_ENGINE_VOICES_LOG, answered like the
+    engine (a done event listing what was saved), or failing as $FAKE_ENGINE_VOICES_FAIL says."""
+    log = os.environ.get(VOICES_LOG)
+    if log:
+        with open(log, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(argv) + "\n")
+    fail = os.environ.get(VOICES_FAIL)
+    if fail == "error":
+        emit({"event": "error", "message": "ValueError: voice library is broken"})
+        return 1
+    if fail == "crash":
+        sys.stderr.write("Traceback (most recent call last):\nRuntimeError: boom\n")
+        return 3
+    if fail == "hang":
+        time.sleep(30)
+    names = [argv[i + 1].partition("=") for i, arg in enumerate(argv[:-1]) if arg == "--name"]
+    emit({"event": "done", "saved": [{"speaker": sid, "name": name} for sid, _sep, name in names], "skipped": []})
+    return 0
+
+
+def write_voices(out, transcript):
+    """``--with-voices``: a voices.json with a (fake) centroid for every detected (SPEAKER_NN) speaker."""
+    speakers = [s["id"] for s in transcript["speakers"] if s["id"].startswith("SPEAKER_")]
+    path = os.path.join(out, "voices.json")
+    data = {
+        "version": 1,
+        "model": "fake-embedding",
+        "speakers": {sid: {"source": "mix", "centroid": [1.0, float(i)]} for i, sid in enumerate(speakers)},
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle)
+    return path
+
+
 def main(argv):
+    if argv[:2] == ["voices", "save"]:
+        return voices_save(argv)
     if not argv or argv[0] != "run":
         sys.stderr.write("usage: fake_engine.py run AUDIO --out DIR\n")
         return 2
@@ -183,6 +225,7 @@ def main(argv):
         with open(srt_path, "w", encoding="utf-8") as handle:
             handle.write("\n".join(blocks))
         srt[speaker_id] = srt_path
+    voices = write_voices(out, transcript) if "--with-voices" in argv else None
     emit({"event": "progress", "stage": "export", "pct": 100.0})
     emit(
         {
@@ -190,6 +233,7 @@ def main(argv):
             "transcript": path,
             "srt": srt,
             "speakers": [{"id": s["id"], "name": s["name"]} for s in transcript["speakers"]],
+            "voices": voices,
         }
     )
     return 0

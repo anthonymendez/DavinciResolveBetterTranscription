@@ -42,6 +42,8 @@ class DiarizeResult:
     turns: list[SpeakerTurn]
     centroids: dict[str, np.ndarray] = field(default_factory=dict)  # speaker -> unit-length voice centroid
     scores: list[TurnScore | None] = field(default_factory=list)  # aligned with turns; label is a speaker name
+    # the embedding model the centroids come from (voices from another model are not comparable); None without
+    embedding_model: str | None = None
 
 
 def diarize(
@@ -146,7 +148,7 @@ def diarize_detailed(
         if score is not None and score.label in names:
             score = TurnScore(names[score.label], score.best, score.second)
         scores.append(score)
-    return DiarizeResult(turns, centroids, scores)
+    return DiarizeResult(turns, centroids, scores, EMBEDDING_NAME if centroids else None)
 
 
 def relabel(raw: list[tuple[float, float, Hashable]]) -> list[SpeakerTurn]:

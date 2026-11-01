@@ -135,15 +135,19 @@ class GroupNumbering:
     def assign(self, words: list[Word], turns: list[SpeakerTurn]) -> list[Word]:
         """``words`` of one group track labelled from that track's ``turns`` (``align.assign_speakers``), with
         the track's own labels renamed to fresh global ids; one fresh id for all of them if there are no turns."""
+        return self.assign_ids(words, turns)[0]
+
+    def assign_ids(self, words: list[Word], turns: list[SpeakerTurn]) -> tuple[list[Word], dict[str, str]]:
+        """``assign``, plus the track's own turn label -> global id of each speaker that got words."""
         if not words:
-            return []
+            return [], {}
         if not turns:
             sid = self._next()
-            return [replace(w, speaker=sid) for w in words]
+            return [replace(w, speaker=sid) for w in words], {}
         assigned = align.assign_speakers(words, turns)
         # numbered in order of first appearance among the words, so no id is spent on a cluster with no words
         mapping = {label: self._next() for label in dict.fromkeys(w.speaker for w in assigned)}
-        return [replace(w, speaker=mapping[w.speaker]) for w in assigned]
+        return [replace(w, speaker=mapping[w.speaker]) for w in assigned], mapping
 
 
 def label_person(words: list[Word], speaker_id: str) -> list[Word]:

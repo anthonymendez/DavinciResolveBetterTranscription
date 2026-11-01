@@ -32,6 +32,7 @@ Two halves, joined by a subprocess + JSON contract:
 | `engine/backends/whispercpp.py` | whisper.cpp + Vulkan (AMD/Intel/NVIDIA GPUs, Windows/Linux); binary in `<data>/bin`, see `docs/GPU_VULKAN.md` |
 | `engine/diarize.py` | speaker turns; default backend sherpa-onnx (no HF token needed), optional pyannote |
 | `engine/align.py` | words -> speakers -> segments |
+| `engine/voices.py` | voice library in `<data>/voices/<safe name>.json`: speakers whose voice centroid matches a saved person are named before `naming/` (`name_source` "voice"); each run writes `voices.json` next to `transcript.json`; `better-captions voices save/list/forget` |
 | `naming/` | speaker names from context: heuristic + Anthropic / OpenAI-compatible (Ollama) LLM |
 | `secrets.py` | LLM API keys in the OS keychain (`keyring`); `better-captions key set/delete/status/migrate` |
 | `cues.py` | segments -> readable caption cues |

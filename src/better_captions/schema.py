@@ -49,7 +49,7 @@ class Speaker:
     id: str  # stable diarization label, e.g. "SPEAKER_00"
     name: str | None = None  # human name inferred from context, if any
     name_confidence: float = 0.0  # 0..1
-    name_source: str | None = None  # "heuristic", "llm", "user"
+    name_source: str | None = None  # "heuristic", "llm", "user", "voice" (engine.voices library match)
 
     @property
     def display_name(self) -> str:

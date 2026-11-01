@@ -12,11 +12,13 @@
    speakers…" merges / reassigns / splits speakers (``speaker_edits``), saved as
    ``edits.json`` next to ``transcript.json`` and in ``<data>/edits/<audio sha256>.json`` so a
    re-run on the same audio re-applies them
-6. create new tracks (subtitle and/or Text+) from the edited transcript, never touching existing ones;
+6. remember the voices of the speakers the editor confirmed by name (``voice_library``, through the
+   engine's ``voices save``), so the next video names them by voice; a failure is only a warning
+7. create new tracks (subtitle and/or Text+) from the edited transcript, never touching existing ones;
    with "Highlight words as they're spoken" each Text+ cue becomes one clip per word step
    (``word_highlight``); the toggle and colour, and the speaker-naming provider picked for the
    next run, are remembered in config.json
-7. summary; the temp dir is kept only when the user still needs the SRT files
+8. summary; the temp dir is kept only when the user still needs the SRT files
 
 The progress window lists these steps (``STEP_LABELS``) with done / current / pending markers. Its
 Pause button holds the flow before the next step (``hold_while_paused``) and suspends the engine
@@ -43,6 +45,7 @@ from better_captions_plugin import (
     resolve_io,
     speaker_edits,
     track_picker,
+    voice_library,
     word_highlight,
 )
 from better_captions_plugin import config as config_mod
@@ -72,6 +75,7 @@ STEP_LABELS = (
     + ["Load transcript", "Review speakers", "Create tracks"]
 )
 PAUSE_POLL = 0.05  # seconds between repaints while the flow is held
+VOICE_SAVE_TIMEOUT = 60  # seconds `voices save` may take before it is stopped (and only a warning shown)
 
 
 class Cancelled(Exception):
@@ -106,6 +110,7 @@ class Outcome:
         self.created = []  # resolve_io.TrackResult
         self.subtitle_fallbacks = []  # (TrackPlan, message)
         self.warnings = []
+        self.voices_saved = []  # names whose voices went into the voice library
         self.work_dir = None
         self.kept_work_dir = False
         self.cancelled = False
@@ -140,6 +145,8 @@ class Outcome:
             for plan, message in self.subtitle_fallbacks:
                 lines.append("  %s: %s" % (plan.name, plan.srt_path))
                 lines.append("      (%s)" % message)
+        if self.voices_saved:
+            lines.append("Voices remembered for next time: %s." % ", ".join(self.voices_saved))
         for warning in self.warnings:
             lines.append("Warning: " + warning)
         if self.kept_work_dir and self.work_dir:
@@ -348,8 +355,9 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
     try:
         progress.set_steps(STEP_LABELS)
         progress.set_step(STEP_TRACKS)
-        progress.set_status("Creating tracks…")
         progress.set_progress(None)
+        remember_voices(config, editor, voice_library.voices_path(out_dir, done), outcome, progress, popen=popen)
+        progress.set_status("Creating tracks…")
         create_tracks(media_pool, timeline, transcript, review, templates, clock, range_start, srt_paths, outcome)
         progress.set_step(len(STEP_LABELS))
         progress.set_status("Done")
@@ -562,6 +570,48 @@ def remember_review_choices(config: dict, review: ReviewResult, outcome: Outcome
         config_mod.save_settings(config, updates)
     except (OSError, config_mod.ConfigError) as exc:
         outcome.warnings.append("review settings not remembered: %s" % exc)
+
+
+def remember_voices(config: dict, editor, voices_path: str, outcome: Outcome, progress=None, popen=None):
+    """Have the engine keep the voices of the speakers the editor confirmed by name (``voice_library``), so
+    the next video names them by voice. Never stops the flow: a failure is only a warning."""
+    if not config_mod.voice_library_enabled(config):
+        return
+    speakers = voice_library.voice_speakers(voices_path)
+    names = voice_library.confirmed_names(editor.base, editor.data, speakers) if speakers else {}
+    debug_log.note("Voices to remember: %r (voices for %r)" % (names, speakers))
+    if not names:
+        return
+    if progress is not None:
+        progress.set_status("Remembering voices…")
+    deadline = time.monotonic() + VOICE_SAVE_TIMEOUT
+
+    def on_event(event):
+        if progress is not None and event.get("event") == "log":
+            progress.log(event.get("line", ""))
+
+    try:
+        argv = config_mod.voices_command(config, os.path.dirname(voices_path), names)
+        if progress is not None:
+            progress.log("Engine: " + " ".join(argv))
+        done = engine_runner.run_engine(
+            argv,
+            on_event=on_event,
+            should_cancel=lambda: time.monotonic() > deadline,
+            pump=progress.pump if progress is not None else None,
+            env=config_mod.engine_environment(),
+            popen=popen,
+            trace=debug_log.engine_trace(),
+        )
+    except engine_runner.EngineCancelled:
+        outcome.warnings.append("voices not remembered: the engine took longer than %g s" % VOICE_SAVE_TIMEOUT)
+        return
+    except Exception as exc:  # the captions don't depend on it: warn and carry on
+        debug_log.exception("Remembering voices failed:")
+        outcome.warnings.append("voices not remembered: %s" % exc)
+        return
+    saved = [str(entry.get("name")) for entry in done.get("saved") or [] if isinstance(entry, dict)]
+    outcome.voices_saved.extend(dict.fromkeys(saved))
 
 
 def create_tracks(

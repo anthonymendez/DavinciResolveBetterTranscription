@@ -171,10 +171,10 @@ def two_tracks(tmp_path, monkeypatch):
 
     def fake_diarize(audio_path, **kw):
         seen["diarized"].append((audio_path, kw))
-        return [SpeakerTurn("SPEAKER_00", 2.0, 3.1), SpeakerTurn("SPEAKER_01", 4.1, 5.0)]
+        return diarize.DiarizeResult([SpeakerTurn("SPEAKER_00", 2.0, 3.1), SpeakerTurn("SPEAKER_01", 4.1, 5.0)])
 
     monkeypatch.setattr(transcribe, "transcribe", fake_transcribe)
-    monkeypatch.setattr(diarize, "diarize", fake_diarize)
+    monkeypatch.setattr(diarize, "diarize_detailed", fake_diarize)
     return paths, seen
 
 
