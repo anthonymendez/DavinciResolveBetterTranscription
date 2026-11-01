@@ -193,10 +193,10 @@ def test_cli_run_with_a_fixed_track(tmp_path, monkeypatch, capsys):
         residual = diarize.load_audio(audio_path)
         seen["pinned_rms"] = float(np.sqrt(np.mean(residual[int(0.6 * SR) : int(1.4 * SR)] ** 2)))
         seen["other_rms"] = float(np.sqrt(np.mean(residual[int(2.1 * SR) : int(2.9 * SR)] ** 2)))
-        return [SpeakerTurn("SPEAKER_00", 2.0, 3.0), SpeakerTurn("SPEAKER_00", 6.0, 7.0)]
+        return diarize.DiarizeResult([SpeakerTurn("SPEAKER_00", 2.0, 3.0), SpeakerTurn("SPEAKER_00", 6.0, 7.0)])
 
     monkeypatch.setattr(transcribe, "transcribe", fake_transcribe)
-    monkeypatch.setattr(diarize, "diarize", fake_diarize)
+    monkeypatch.setattr(diarize, "diarize_detailed", fake_diarize)
     out = tmp_path / "out"
     rc = cli.main(
         [
@@ -241,7 +241,7 @@ def test_cli_run_with_a_fixed_track(tmp_path, monkeypatch, capsys):
 def test_a_missing_fixed_track_is_reported_as_an_error(tmp_path, monkeypatch, capsys):
     mix_path = _write(tmp_path / "mix.wav", _signals()[0])
     monkeypatch.setattr(transcribe, "transcribe", lambda audio_path, **kw: ("en", DURATION, list(WORDS)))
-    monkeypatch.setattr(diarize, "diarize", lambda audio_path, **kw: pytest.fail("must not diarize"))
+    monkeypatch.setattr(diarize, "diarize_detailed", lambda audio_path, **kw: pytest.fail("must not diarize"))
     missing = str(tmp_path / "nope.wav")
     rc = cli.main(["run", mix_path, "--out", str(tmp_path / "o"), "--no-cache", "--fixed-track", "A=" + missing])
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]

@@ -535,8 +535,14 @@ def test_tk_combobox_index_survives_tk9_empty_answer(answer, expected):
         def call(self, *args):
             return answer
 
-        getint = staticmethod(tkinter.Tcl().getint)
-
+    interp = Interp()
+    # On the instance, not the class: a class sits in a reference cycle, so the Tcl interpreter would only be
+    # freed by a later garbage collection, maybe on another thread (an engine runner's reader), where Tcl
+    # aborts the process ("async handler deleted by the wrong thread").
+    interp.getint = tkinter.Tcl().getint
     box = ttk.Combobox.__new__(ttk.Combobox)
-    box.tk, box._w = Interp(), ".box"
-    assert tk_ui._current(box) == expected
+    box.tk, box._w = interp, ".box"
+    try:
+        assert tk_ui._current(box) == expected
+    finally:
+        del box.tk, interp.getint

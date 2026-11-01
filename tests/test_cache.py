@@ -32,10 +32,10 @@ def calls(monkeypatch):
 
     def fake_diarize(audio_path, **kw):
         counts["diarize"] += 1
-        return list(TURNS)
+        return diarize.DiarizeResult(list(TURNS))
 
     monkeypatch.setattr(transcribe, "transcribe", fake_transcribe)
-    monkeypatch.setattr(diarize, "diarize", fake_diarize)
+    monkeypatch.setattr(diarize, "diarize_detailed", fake_diarize)
     return counts
 
 

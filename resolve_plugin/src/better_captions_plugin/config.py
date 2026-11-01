@@ -23,6 +23,7 @@ TRACK_ROLES = "track_roles"
 # timeline's entry moves to TRACK_ROLES when its tracks are next picked
 TRACK_SPEAKERS = "track_speakers"
 TRACK_ROLE_NAMES = ("person", "group", "none")
+VOICE_LIBRARY = "voice_library"  # false: neither name speakers by voice nor save confirmed voices
 
 # config.json key -> engine CLI flag. Values are passed through as strings.
 ENGINE_FLAGS = (
@@ -218,11 +219,8 @@ def remember_audio_tracks(config: dict, timeline_name: str, indices, speakers=No
     return save_settings(config, updates)
 
 
-def engine_command(config: dict, audio_path: str | None, out_dir: str, fixed_tracks=None, tracks=None) -> list[str]:
-    """``config["engine"] + ["run", audio, "--out", out_dir, <flags from user settings>]``, plus a
-    ``--fixed-track NAME=PATH`` per ``fixed_tracks`` entry ``(speaker name, audio of that track alone)``
-    and a ``--track ROLE:NAME=PATH`` per ``tracks`` entry ``(role, name, audio of that track alone)``.
-    With ``tracks`` the engine transcribes each of them on its own; ``audio_path`` is then None."""
+def _engine(config: dict) -> list[str]:
+    """``config["engine"]``, the command that starts the engine's CLI; ConfigError when it is unusable."""
     engine = config.get("engine")
     if not isinstance(engine, (list, tuple)) or not engine or not all(isinstance(x, str) for x in engine):
         raise ConfigError(
@@ -231,7 +229,15 @@ def engine_command(config: dict, audio_path: str | None, out_dir: str, fixed_tra
         )
     if not os.path.exists(engine[0]):
         raise ConfigError("the engine Python %s no longer exists. Re-run the installer." % engine[0])
-    argv = [*engine, "run"]
+    return list(engine)
+
+
+def engine_command(config: dict, audio_path: str | None, out_dir: str, fixed_tracks=None, tracks=None) -> list[str]:
+    """``config["engine"] + ["run", audio, "--out", out_dir, <flags from user settings>]``, plus a
+    ``--fixed-track NAME=PATH`` per ``fixed_tracks`` entry ``(speaker name, audio of that track alone)``
+    and a ``--track ROLE:NAME=PATH`` per ``tracks`` entry ``(role, name, audio of that track alone)``.
+    With ``tracks`` the engine transcribes each of them on its own; ``audio_path`` is then None."""
+    argv = [*_engine(config), "run"]
     if audio_path is not None:
         argv.append(str(audio_path))
     argv += ["--out", str(out_dir)]
@@ -244,9 +250,27 @@ def engine_command(config: dict, audio_path: str | None, out_dir: str, fixed_tra
         argv += ["--fixed-track", "%s=%s" % (name, path)]
     for role, name, path in tracks or ():
         argv += ["--track", "%s:%s=%s" % (role, name, path)]
+    if not voice_library_enabled(config):
+        argv.append("--no-voice-library")
     extra = config.get("engine_args")
     if isinstance(extra, (list, tuple)):
         argv += [str(x) for x in extra]
+    return argv
+
+
+def voice_library_enabled(config: dict) -> bool:
+    """Config ``"voice_library": false`` turns the voice library off: speakers are not named by voice and
+    confirmed voices are not saved."""
+    return config.get(VOICE_LIBRARY) is not False
+
+
+def voices_command(config: dict, out_dir: str, names: dict) -> list[str]:
+    """``config["engine"] + ["voices", "save", "--from", out_dir, "--name", "SPEAKER=NAME", ...]``: keep the
+    voices of the run in ``out_dir`` for the speakers the editor confirmed (``names``: speaker id -> name)."""
+    engine = _engine(config)
+    argv = [*engine, "voices", "save", "--from", str(out_dir)]
+    for speaker_id, name in names.items():
+        argv += ["--name", "%s=%s" % (speaker_id, name)]
     return argv
 
 
