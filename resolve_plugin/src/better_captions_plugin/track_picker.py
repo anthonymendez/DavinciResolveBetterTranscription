@@ -22,6 +22,7 @@ SPEAKER_NOTE = (
     "everything said on it is captioned as them."
 )
 SPEAKER_PLACEHOLDER = "Speaker (optional)"
+NOTE_HEIGHT = 40  # px: two lines of a wrapped note in the UIManager dialog
 NONE_PICKED = "Pick at least one audio track."
 
 
@@ -183,15 +184,16 @@ def pick_audio_tracks_uimanager(fusion, ui, dispatcher, tracks, preselected) -> 
         {
             "ID": WINDOW_ID_TRACKS,
             "WindowTitle": "%s – audio tracks" % TITLE,
-            "Geometry": [250, 250, 560, 230 + 32 * len(tracks)],
+            "Geometry": [250, 250, 680, 300 + 36 * len(tracks)],
         },
         [
             ui.VGroup(
                 {"Spacing": 6},
                 [
                     ui.Label({"Text": HEADING, "Weight": 0}),
-                    ui.Label({"Text": NOTE, "WordWrap": True, "Weight": 0}),
-                    ui.Label({"Text": SPEAKER_NOTE, "WordWrap": True, "Weight": 0}),
+                    # Wrapped labels get no height of their own in UIManager: reserve two lines each.
+                    ui.Label({"Text": NOTE, "WordWrap": True, "Weight": 0, "MinimumSize": [0, NOTE_HEIGHT]}),
+                    ui.Label({"Text": SPEAKER_NOTE, "WordWrap": True, "Weight": 0, "MinimumSize": [0, NOTE_HEIGHT]}),
                     *rows,
                     ui.Label({"ID": "TracksStatus", "Text": "", "Weight": 0}),
                     ui.HGroup(

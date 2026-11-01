@@ -248,14 +248,16 @@ def pick_model_uimanager(fusion, ui, dispatcher, models, current) -> str | None:
         {
             "ID": WINDOW_ID_MODEL,
             "WindowTitle": "%s – transcription model" % TITLE,
-            "Geometry": [250, 250, 560, 330],
+            "Geometry": [250, 250, 640, 400],
         },
         [
             ui.VGroup(
                 {"Spacing": 6},
                 [
                     ui.Label({"Text": HEADING, "Weight": 0}),
-                    ui.Label({"Text": NOTE, "WordWrap": True, "Weight": 0}),
+                    ui.Label(
+                        {"Text": NOTE, "WordWrap": True, "Weight": 0, "MinimumSize": [0, 40]}
+                    ),  # wrapped: reserve 2 lines
                     ui.ComboBox({"ID": "ModelChoice", "Weight": 0}),
                     ui.Label({"ID": "ModelDetails", "Text": "", "WordWrap": True, "Weight": 1}),
                     ui.HGroup(
