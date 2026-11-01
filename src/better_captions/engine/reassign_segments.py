@@ -8,7 +8,10 @@ reliably, and turns whose best match is ambiguous, stay. Centroids are rebuilt f
 the check repeated, at most MAX_ITERATIONS times.
 
 The final centroids and each turn's best / second-best similarity are returned too, so later steps can derive
-a per-cue speaker confidence and store voice centroids.
+a per-cue speaker confidence and store voice centroids. For those scores a turn is compared with its own
+speaker's centroid rebuilt without it (leave-one-out): a turn that helped build the centroid would otherwise
+partly match itself, which lifts a doubtful turn's confidence most on a speaker with only a few turns. A
+speaker whose centroid is that one turn alone keeps the full centroid.
 
 Works on the backends' raw (start, end, label) turns, like merge_speakers. Without an embedder (the pyannote
 backend) it is a no-op.
@@ -21,7 +24,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from better_captions.engine.merge_speakers import EmbedFn, Raw, _centroids, _embed
+from better_captions.engine.merge_speakers import CENTROID_TURNS, EmbedFn, Raw, _centroids, _embed, _unit_mean
 
 # Another speaker must beat a turn's own by this much cosine similarity for the turn to move.
 REASSIGN_MARGIN = 0.1
@@ -98,11 +101,20 @@ def reassign_segments(
             break
         centroids = _label_centroids(out, cached)
 
+    members = _centroid_members(out, cached)
+    centroids = {lb: c for lb, m in members.items() if (c := _unit_mean(list(m.values()))) is not None}
     scores: list[TurnScore | None] = [None] * len(out)
     for i, vec in vecs.items():
         if not centroids:
             break
-        ranked = sorted(((float(c @ vec), lb) for lb, c in centroids.items()), key=lambda x: -x[0])
+        candidates = dict(centroids)
+        label = out[i][2]
+        if i in members.get(label, {}):
+            # Leave the turn out of its own speaker's centroid, or it partly matches itself.
+            rest = _unit_mean([v for j, v in members[label].items() if j != i])
+            if rest is not None:
+                candidates[label] = rest
+        ranked = sorted(((float(c @ vec), lb) for lb, c in candidates.items()), key=lambda x: -x[0])
         scores[i] = TurnScore(ranked[0][1], ranked[0][0], ranked[1][0] if len(ranked) > 1 else None)
     moved_total = sum(1 for before, after in zip(raw, out, strict=True) if before[2] != after[2])
     return ReassignResult(out, moved_total, centroids, scores)
@@ -127,3 +139,19 @@ def _label_centroids(raw: Raw, embed: EmbedFn) -> dict[Hashable, np.ndarray]:
         if e > s:
             spans.setdefault(label, []).append((float(s), float(e)))
     return _centroids(spans, embed)
+
+
+def _centroid_members(raw: Raw, embed: EmbedFn) -> dict[Hashable, dict[int, np.ndarray]]:
+    """label -> {index in raw: embedding} of the turns its centroid is built from; the same turns as
+    _centroids picks, so the unit mean of each label's embeddings is that label's centroid."""
+    by_label: dict[Hashable, list[int]] = {}
+    for i, (s, e, label) in enumerate(raw):
+        if e > s:
+            by_label.setdefault(label, []).append(i)
+    members: dict[Hashable, dict[int, np.ndarray]] = {}
+    for label, indices in by_label.items():
+        longest = sorted(indices, key=lambda i: float(raw[i][0]) - float(raw[i][1]))[:CENTROID_TURNS]
+        vecs = {i: v for i in longest if (v := _embed(embed, float(raw[i][0]), float(raw[i][1]))) is not None}
+        if vecs:
+            members[label] = vecs
+    return members
