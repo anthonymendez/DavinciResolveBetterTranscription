@@ -7,6 +7,10 @@ Edits are operations on the engine's transcript dict (the parsed ``transcript.js
   B disappears and A keeps its name
 - ``reassign``: some cues belong to another existing speaker
 - ``split``: some cues belong to a speaker diarization missed; they move to a new speaker
+- ``confirm``: the user checked some cues and their speaker is right
+
+A cue the user moved, split off or confirmed counts as checked: its ``speaker_confidence``
+becomes 1.0, so it is no longer listed as uncertain (also when saved edits are re-applied).
 
 ``SpeakerEditor`` keeps the original transcript and the list of operations (the edit stack);
 the current transcript is the original with every operation replayed, so ``undo`` just drops
@@ -30,6 +34,7 @@ EDITS_FILE = "edits.json"
 EDITS_VERSION = 1
 TIME_TOLERANCE = 0.05  # seconds; how far a saved cue reference may drift and still match
 STRUCTURAL_OPS = ("merge", "reassign", "split")
+USER_CONFIDENCE = 1.0  # speaker_confidence of a cue the user moved or confirmed
 
 
 class EditError(ValueError):
@@ -43,6 +48,7 @@ class SpeakerSummary:
     cue_count: int
     sample: str  # first non-empty cue text
     source: str | None = None  # name_source
+    uncertain_count: int = 0  # cues whose voice match is uncertain (transcript.is_uncertain)
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,11 @@ class CueSummary:
     end: float
     speaker: str
     text: str
+    speaker_confidence: float | None = None  # None: unknown
+
+    @property
+    def uncertain(self) -> bool:
+        return transcript_mod.is_uncertain(self)
 
 
 # --- operations on the transcript dict
@@ -120,6 +131,7 @@ def _move_cues(data: dict, refs: list, target: str):
         raise EditError("no cues selected")
     for index in indexes:
         cue = cues[index]
+        cue["speaker_confidence"] = USER_CONFIDENCE  # the user said who says it
         old = str(cue["speaker"])
         if old == target:
             continue
@@ -169,7 +181,22 @@ def _apply_split(data: dict, op: dict):
     _move_cues(data, op.get("cues", []), new_id)
 
 
-_APPLY = {"rename": _apply_rename, "merge": _apply_merge, "reassign": _apply_reassign, "split": _apply_split}
+def _apply_confirm(data: dict, op: dict):
+    cues = data.get("cues", [])
+    indexes = [_find_cue(cues, ref) for ref in op.get("cues", [])]
+    if not indexes:
+        raise EditError("no cues selected")
+    for index in indexes:
+        cues[index]["speaker_confidence"] = USER_CONFIDENCE
+
+
+_APPLY = {
+    "rename": _apply_rename,
+    "merge": _apply_merge,
+    "reassign": _apply_reassign,
+    "split": _apply_split,
+    "confirm": _apply_confirm,
+}
 
 
 def apply_op(data: dict, op: dict):
@@ -232,6 +259,7 @@ class SpeakerEditor:
                     cue_count=len(own),
                     sample=next((t for t in texts if t.strip()), ""),
                     source=entry.get("name_source"),
+                    uncertain_count=sum(1 for c in own if transcript_mod.is_uncertain(c)),
                 )
             )
         return summaries
@@ -240,12 +268,21 @@ class SpeakerEditor:
         """Cues in time order, optionally only one speaker's."""
         rows = [
             CueSummary(
-                index=i, start=float(c["start"]), end=float(c["end"]), speaker=str(c["speaker"]), text=_cue_text(c)
+                index=i,
+                start=float(c["start"]),
+                end=float(c["end"]),
+                speaker=str(c["speaker"]),
+                text=_cue_text(c),
+                speaker_confidence=transcript_mod.parse_confidence(c.get("speaker_confidence")),
             )
             for i, c in enumerate(self.data.get("cues", []))
             if speaker is None or str(c["speaker"]) == speaker
         ]
         return sorted(rows, key=lambda r: (r.start, r.end, r.index))
+
+    def uncertain_count(self) -> int:
+        """How many cues still have an uncertain voice match."""
+        return sum(1 for c in self.data.get("cues", []) if transcript_mod.is_uncertain(c))
 
     def display_name(self, speaker_id: str) -> str:
         entry = _speaker_entry(self.data, speaker_id) or {}
@@ -283,6 +320,10 @@ class SpeakerEditor:
             {"op": "split", "cues": self._refs(cue_indexes), "speaker": new_id, "name": (name or "").strip() or None}
         )
         return new_id
+
+    def confirm(self, cue_indexes) -> dict:
+        """Mark cues as checked: their speaker is right (they stop counting as uncertain)."""
+        return self._push({"op": "confirm", "cues": self._refs(cue_indexes)})
 
     def record_names(self, names: dict[str, str]) -> list[dict]:
         """Turn the review dialog's names into rename edits, for those that differ from the current name."""

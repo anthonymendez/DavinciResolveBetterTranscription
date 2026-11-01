@@ -21,15 +21,20 @@ from better_captions_plugin.ui import (
     ReviewRequest,
     ReviewResult,
     checked_highlight_color,
+    fix_speakers_label,
     naming_index,
+    review_check_note,
     review_scroll,
+    review_speaker_label,
     speaker_rows,
     step_line,
     step_states,
 )
-from better_captions_plugin.ui.speaker_editor import EditorController, cue_index
+from better_captions_plugin.ui.speaker_editor import CONFIRM_LABEL, ONLY_UNCERTAIN_LABEL, EditorController, cue_index
 
 TITLE = "Better Captions"
+CHECK_ROW_BACKGROUND = "#fff4c2"  # cue list rows whose voice match is uncertain
+CHECK_NOTE_COLOR = "#9a6700"
 _STEP_COLORS = {STEP_DONE: "#2e7d32", STEP_CURRENT: "#0b57d0", STEP_PENDING: "#888888"}
 
 
@@ -204,10 +209,13 @@ class _ReviewDialog:
             header += "   Range: %s" % request.range_label
         if header:
             ttk.Label(frame, text=header).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        notes = ttk.Frame(frame)
+        notes.grid(row=1, column=0, columnspan=4, sticky="w")
         if request.note:
-            ttk.Label(frame, text=request.note, foreground="#666").grid(
-                row=1, column=0, columnspan=4, sticky="w", pady=(0, 8)
-            )
+            ttk.Label(notes, text=request.note, foreground="#666").pack(anchor="w", pady=(0, 8))
+        # "3 lines need checking: …"; only packed while there are such lines.
+        self.check_note = ttk.Label(notes, foreground=CHECK_NOTE_COLOR)
+        self.fix_button = None
 
         # The speaker rows live in a canvas no taller than VISIBLE_ROWS rows (scrollbar + mouse wheel),
         # so the options and the OK/Cancel buttons stay on screen however many speakers there are.
@@ -277,7 +285,9 @@ class _ReviewDialog:
         ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="right", padx=(8, 0))
         ttk.Button(buttons, text="Create tracks", command=self._ok).pack(side="right")
         if request.editor is not None:
-            ttk.Button(buttons, text="Fix speakers…", command=self._fix_speakers).pack(side="right", padx=(0, 24))
+            self.fix_button = ttk.Button(buttons, text=fix_speakers_label(self.speakers), command=self._fix_speakers)
+            self.fix_button.pack(side="right", padx=(0, 24))
+        self._show_check_note()
         self.window.bind("<Return>", lambda _e: self._ok())
         self.window.bind("<Escape>", lambda _e: self._cancel())
         self.window.update_idletasks()
@@ -295,8 +305,9 @@ class _ReviewDialog:
         self.template_boxes = {}
         template_labels = list(self.request.templates) or ["(no Text+ templates in the media pool)"]
         for row_index, speaker in enumerate(self.speakers, start=1):
-            label = "%s (%d cues)" % (speaker.id, speaker.cue_count)
-            ttk.Label(self.table, text=label).grid(row=row_index, column=0, sticky="w", padx=(0, 8))
+            ttk.Label(self.table, text=review_speaker_label(speaker)).grid(
+                row=row_index, column=0, sticky="w", padx=(0, 8)
+            )
             var = tk.StringVar(value=speaker.name)
             self.name_vars[speaker.id] = var
             ttk.Entry(self.table, textvariable=var, width=24).grid(row=row_index, column=1, sticky="we", padx=(0, 8))
@@ -342,10 +353,22 @@ class _ReviewDialog:
         _SpeakerEditorDialog(self.window, EditorController(editor, self.request.time_label)).run()
         self.speakers = speaker_rows(editor)
         self._build_rows(template_choice)
+        self._show_check_note()
         try:
             self.window.grab_set()  # the editor took the grab
         except tk.TclError:
             pass
+
+    def _show_check_note(self):
+        """Show (or hide) the uncertain-lines note and the count on "Fix speakers…"."""
+        text = review_check_note(self.speakers, self.request.editor is not None)
+        self.check_note.configure(text=text)
+        if text:
+            self.check_note.pack(anchor="w", pady=(0, 8))
+        else:
+            self.check_note.pack_forget()
+        if self.fix_button is not None:
+            self.fix_button.configure(text=fix_speakers_label(self.speakers))
 
     def _sync_highlight_state(self):
         """Highlighting only applies to Text+ captions: usable while that output is ticked."""
@@ -447,17 +470,26 @@ class _SpeakerEditorDialog:
         self.filter_box = ttk.Combobox(right, state="readonly", width=30)
         self.filter_box.grid(row=0, column=1, sticky="w")
         self.filter_box.bind("<<ComboboxSelected>>", lambda _e: self._refresh_cues())
+        # Checking mode: "Only lines to check" plus the count, right of the speaker filter.
+        self.only_uncertain_var = tk.BooleanVar(value=controller.only_uncertain)
+        self.check_var = tk.StringVar()
+        if controller.checking:
+            check_row = ttk.Frame(right)
+            check_row.grid(row=0, column=2, columnspan=2, sticky="e")
+            ttk.Checkbutton(
+                check_row, text=ONLY_UNCERTAIN_LABEL, variable=self.only_uncertain_var, command=self._toggle_uncertain
+            ).pack(side="left")
+            ttk.Label(check_row, textvariable=self.check_var, foreground=CHECK_NOTE_COLOR).pack(
+                side="left", padx=(10, 0)
+            )
+        columns = controller.cue_columns()
         self.cue_tree = ttk.Treeview(
-            right, columns=("num", "time", "speaker", "text"), show="headings", selectmode="extended", height=14
+            right, columns=[key for key, _title, _width in columns], show="headings", selectmode="extended", height=14
         )
-        for column, title, width in (
-            ("num", "#", 50),
-            ("time", "Time", 100),
-            ("speaker", "Speaker", 120),
-            ("text", "Text", 360),
-        ):
+        for column, title, width in columns:
             self.cue_tree.heading(column, text=title)
             self.cue_tree.column(column, width=width, stretch=column == "text")
+        self.cue_tree.tag_configure("check", background=CHECK_ROW_BACKGROUND)
         scroll = ttk.Scrollbar(right, orient="vertical", command=self.cue_tree.yview)
         self.cue_tree.configure(yscrollcommand=scroll.set)
         self.cue_tree.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
@@ -466,6 +498,8 @@ class _SpeakerEditorDialog:
         self.move_box = ttk.Combobox(right, state="readonly", width=30)
         self.move_box.grid(row=2, column=1, sticky="w", pady=(6, 0))
         ttk.Button(right, text="Move", command=self._move).grid(row=2, column=2, sticky="e", pady=(6, 0))
+        if controller.checking:
+            ttk.Button(right, text=CONFIRM_LABEL, command=self._confirm).grid(row=3, column=2, sticky="e", pady=(6, 0))
 
         bottom = ttk.Frame(frame)
         bottom.grid(row=1, column=0, columnspan=2, sticky="we", pady=(10, 0))
@@ -522,7 +556,13 @@ class _SpeakerEditorDialog:
     def _refresh_cues(self):
         self.cue_tree.delete(*self.cue_tree.get_children())
         for row in self.controller.cue_rows(self._choice(self.filter_box)):
-            self.cue_tree.insert("", "end", iid=row[0], values=row)
+            tags = ("check",) if self.controller.is_check_row(row) else ()
+            self.cue_tree.insert("", "end", iid=row[0], values=row, tags=tags)
+        self.check_var.set(self.controller.check_status())
+
+    def _toggle_uncertain(self):
+        self.controller.only_uncertain = bool(self.only_uncertain_var.get())
+        self._refresh_cues()
 
     def _on_speaker_selected(self):
         speaker_id = self.selected_speaker()
@@ -541,6 +581,10 @@ class _SpeakerEditorDialog:
 
     def _move(self):
         self.controller.move(self.selected_cues(), self._choice(self.move_box))
+        self._refresh()
+
+    def _confirm(self):
+        self.controller.confirm(self.selected_cues())
         self._refresh()
 
     def _undo(self):

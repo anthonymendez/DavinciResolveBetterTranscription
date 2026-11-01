@@ -529,6 +529,7 @@ def build_review_request(
                     cue_count=len(cues),
                     sample=sample,
                     source=speaker.name_source if speaker else None,
+                    uncertain=sum(1 for c in cues if c.uncertain),
                 )
             )
     if range_end is None:
