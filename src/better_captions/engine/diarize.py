@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import numpy as np
 
 from better_captions.engine.download import download
+from better_captions.engine.merge_speakers import MINOR_SECONDS, MINOR_SHARE, EmbedFn, merge_minor_speakers
 from better_captions.paths import models_dir
 from better_captions.schema import SpeakerTurn
 
@@ -40,11 +41,18 @@ def diarize(
     backend: str = "sherpa",
     progress: ProgressFn | None = None,
     log: LogFn | None = None,
+    merge_minor: bool = True,
+    minor_seconds: float = MINOR_SECONDS,
+    minor_share: float = MINOR_SHARE,
 ) -> list[SpeakerTurn]:
     """Return speaker turns sorted by start, labelled SPEAKER_00, SPEAKER_01, ... in order of first appearance.
 
     Status lines (started, models loading, progress, speakers found, finished) go to `log`; by default
     that is stderr, which the Resolve plugin shows in its log window (also without --verbose).
+
+    With merge_minor, clusters with little speech (under max(minor_seconds, minor_share of all speech), see
+    merge_speakers) are folded into the most similar remaining speaker. The result never drops below
+    num_speakers (or min_speakers), so a forced count that clustering already met is left alone.
     """
     if min_speakers is not None and max_speakers is not None and min_speakers > max_speakers:
         raise ValueError(f"min_speakers ({min_speakers}) > max_speakers ({max_speakers})")
@@ -62,9 +70,20 @@ def diarize(
     status.started(backend)
     progress = _monotonic(progress, status)
     if backend == "sherpa":
-        raw = _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress, status)
-    else:
-        raw = _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress, status)
+        raw, embed = _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progress, status)
+    else:  # pyannote: no embedder of our own, so minor clusters merge by time
+        raw, embed = _diarize_pyannote(audio_path, num_speakers, min_speakers, max_speakers, progress, status), None
+    if merge_minor:
+        merged = merge_minor_speakers(
+            raw,
+            embed,
+            min_seconds=minor_seconds,
+            min_share=minor_share,
+            keep_at_least=num_speakers if num_speakers is not None else (min_speakers or 1),
+        )
+        if merged.minor:
+            status.merged(merged.minor, merged.remaining)
+        raw = merged.raw
     turns = relabel(raw)
     status.finished(len({t.speaker for t in turns}))
     return turns
@@ -169,6 +188,12 @@ class _Status:
 
     def retrying(self, speakers: int) -> None:
         self._log(f"Detecting speakers: re-clustering for {speakers} speaker{'s' if speakers != 1 else ''}")
+
+    def merged(self, minor: int, remaining: int) -> None:
+        self._log(f"Detecting speakers: merged {minor} minor speaker{'s' if minor != 1 else ''} into {remaining}")
+
+    def no_embeddings(self, error: BaseException) -> None:
+        self._log(f"Detecting speakers: voice embeddings unavailable ({error}); merging by time instead")
 
     def finished(self, speakers: int) -> None:
         self._log(f"Detecting speakers: found {speakers} speaker{'s' if speakers != 1 else ''}")
@@ -305,7 +330,46 @@ def _diarize_sherpa(audio_path, num_speakers, min_speakers, max_speakers, progre
         if raw and wanted != found:  # threshold clustering landed outside [min, max]: force the count
             status.retrying(wanted)
             raw = run(build(wanted))
-    return raw
+    return raw, _sherpa_embedder(embedding, threads, audio, sd.sample_rate, status)
+
+
+# Turns shorter than this give unreliable speaker embeddings; they are matched some other way.
+MIN_EMBED_SECONDS = 0.5
+
+
+def _sherpa_embedder(model: Path, threads: int, audio: np.ndarray, sample_rate: int, status: _Status) -> EmbedFn:
+    """(start, end) -> the WeSpeaker embedding of that stretch of `audio`, with the model diarization used.
+
+    The extractor is only loaded when the first embedding is asked for (i.e. there are minor speakers to
+    merge). If it can't be loaded or run, that is reported once and every later call returns None, so the
+    merge falls back to timing instead of failing the run.
+    """
+    extractor = None
+    failed = False
+
+    def embed(start: float, end: float) -> np.ndarray | None:
+        nonlocal extractor, failed
+        a, b = max(0, int(start * sample_rate)), min(len(audio), int(end * sample_rate))
+        if failed or b - a < MIN_EMBED_SECONDS * sample_rate:
+            return None
+        try:
+            if extractor is None:
+                import sherpa_onnx
+
+                config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(model), num_threads=threads)
+                extractor = sherpa_onnx.SpeakerEmbeddingExtractor(config)
+            stream = extractor.create_stream()
+            stream.accept_waveform(sample_rate=sample_rate, waveform=audio[a:b])
+            stream.input_finished()
+            if not extractor.is_ready(stream):
+                return None
+            return np.asarray(extractor.compute(stream), dtype=np.float32)
+        except Exception as e:  # an optional refinement: never worth failing the run over
+            failed = True
+            status.no_embeddings(e)
+            return None
+
+    return embed
 
 
 # --- pyannote backend (optional) ---------------------------------------------
