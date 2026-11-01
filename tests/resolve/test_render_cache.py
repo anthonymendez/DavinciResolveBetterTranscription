@@ -206,6 +206,36 @@ def test_default_keeps_a_few_entries(tmp_path):
     assert len(os.listdir(cache)) == render_cache.KEEP_ENTRIES
 
 
+def test_store_prunes_to_the_size_budget(tmp_path):
+    cache = str(tmp_path / "cache")
+    source = _wav(tmp_path, "render.wav", b"x" * 100)
+    for n in range(1, 5):
+        os.utime(render_cache.store(cache, _fp(n), source, max_bytes=250), (1000 + n, 1000 + n))
+    assert [render_cache.lookup(cache, _fp(n)) is not None for n in range(1, 5)] == [False, False, True, True]
+
+
+def test_the_entry_just_stored_is_kept_even_over_the_budget(tmp_path):
+    cache = str(tmp_path / "cache")
+    render_cache.store(cache, _fp(1), _wav(tmp_path, "small.wav", b"x"), max_bytes=50)
+    render_cache.store(cache, _fp(2), _wav(tmp_path, "big.wav", b"x" * 100), max_bytes=50)
+    assert render_cache.lookup(cache, _fp(2)) is not None
+    assert render_cache.lookup(cache, _fp(1)) is None
+
+
+def test_runs_on_other_timelines_do_not_evict_an_unchanged_timelines_renders(tmp_path):
+    # Studio 21.1.2: a two-track run on the 60 fps timeline, then two runs each on the 23.976 and
+    # 29.97 DF copies and one more, then the 60 fps timeline again with nothing changed. With five
+    # entries kept, its renders were gone and both tracks rendered again.
+    cache = str(tmp_path / "cache")
+    source = _wav(tmp_path, "render.wav", b"x" * 1000)
+    clock = 1000
+    for n in (1, 2, 10, 11, 12, 13, 14):
+        clock += 1
+        os.utime(render_cache.store(cache, _fp(n), source), (clock, clock))
+    assert render_cache.lookup(cache, _fp(1)) is not None
+    assert render_cache.lookup(cache, _fp(2)) is not None
+
+
 def test_an_empty_cached_file_is_not_a_hit(tmp_path):
     cache = str(tmp_path / "cache")
     cached = render_cache.store(cache, _fp(1), _wav(tmp_path, "render.wav"))

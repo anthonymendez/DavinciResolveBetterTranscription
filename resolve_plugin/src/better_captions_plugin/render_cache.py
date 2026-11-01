@@ -16,8 +16,11 @@ import json
 import os
 import shutil
 
-# Renders kept in the cache directory; the least recently used beyond this are deleted on ``store``.
-KEEP_ENTRIES = 5
+# Renders kept in the cache directory: the least recently used beyond either limit are deleted on ``store``.
+# One run stores a render per speech track, and other timelines share the directory, so a handful of
+# entries was too few: two per-track runs on other timelines evicted an unchanged timeline's renders.
+KEEP_ENTRIES = 24
+KEEP_BYTES = 4 * 1024**3  # an hour of 48 kHz 16-bit stereo is about 0.7 GB
 _FINGERPRINT_LEN = 64  # sha256 hex digest
 
 
@@ -52,9 +55,9 @@ def lookup(cache_dir: str, fp: str):
     return None
 
 
-def store(cache_dir: str, fp: str, wav: str, keep: int = KEEP_ENTRIES) -> str:
+def store(cache_dir: str, fp: str, wav: str, keep: int = KEEP_ENTRIES, max_bytes: int = KEEP_BYTES) -> str:
     """Copy the render at ``wav`` into the cache under ``fp`` and return the cached path; then drop the
-    least recently used entries beyond ``keep``."""
+    least recently used entries beyond ``keep`` entries or ``max_bytes`` in all (never the one just stored)."""
     if not _valid(fp):
         raise ValueError("not a fingerprint: %r" % (fp,))
     os.makedirs(cache_dir, exist_ok=True)
@@ -66,7 +69,7 @@ def store(cache_dir: str, fp: str, wav: str, keep: int = KEEP_ENTRIES) -> str:
     for name in os.listdir(cache_dir):  # the same render under another extension is stale
         if _entry_fp(name) == fp and os.path.join(cache_dir, name) != target:
             _remove(os.path.join(cache_dir, name))
-    _prune(cache_dir, keep, target)
+    _prune(cache_dir, keep, max_bytes, target)
     return target
 
 
@@ -166,15 +169,20 @@ def _remove(path: str) -> None:
         pass
 
 
-def _prune(cache_dir: str, keep: int, protect: str) -> None:
+def _prune(cache_dir: str, keep: int, max_bytes: int, protect: str) -> None:
     entries = []
     for name in os.listdir(cache_dir):
         path = os.path.join(cache_dir, name)
         if _entry_fp(name) is not None and os.path.isfile(path):
             try:
-                entries.append((path == protect, os.path.getmtime(path), path))
+                entries.append((path == protect, os.path.getmtime(path), os.path.getsize(path), path))
             except OSError:
                 pass
     entries.sort(reverse=True)  # the entry just stored first, then newest to oldest
-    for _, _, path in entries[max(keep, 1) :]:
-        _remove(path)
+    kept = total = 0
+    for protected, _, size, path in entries:
+        if protected or (kept < keep and total + size <= max_bytes):
+            kept += 1
+            total += size
+        else:
+            _remove(path)

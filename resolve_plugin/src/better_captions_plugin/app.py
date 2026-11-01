@@ -473,6 +473,7 @@ def render_or_reuse(
         if cached:
             progress.log("Reusing previous audio render (timeline unchanged): %s" % cached)
             return cached
+        progress.log("No cached audio render for this timeline state (%s)" % fp[:12])
     wav = resolve_io.render_audio(project, timeline, audio_dir, range_start, range_end, **render_kwargs)
     progress.log("Rendered audio: %s" % wav)
     if cache_dir and fp:

@@ -12,6 +12,7 @@ from tests.resolve.fake_resolve import (
     FakeMediaPoolItem,
     FakeProject,
     FakeTimeline,
+    FakeTimelineItem,
     make_media_pool,
     make_world,
 )
@@ -344,6 +345,76 @@ def test_create_subtitle_track_falls_back_cleanly_when_resolve_ignores_record_fr
     assert tl.GetTrackCount("subtitle") == 0  # the new track is gone
     assert mp.deleted == mp.imported  # and so is the imported SRT item
     assert os.path.isfile(srt)  # the file stays for manual import
+
+
+def _studio_21_1_2_with_user_subtitles():
+    resolve = make_world(profile="21.1.2-studio")
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    tl.AddTrack("subtitle")
+    users = FakeTimelineItem("The user's own cue", 86400 + 240, 48)
+    users.timeline = tl
+    tl.tracks["subtitle"][0].items.append(users)
+    return tl, mp, users
+
+
+def test_create_subtitle_track_moves_cues_resolve_21_1_2_appends_after_the_end(tmp_path):
+    # 21.1.2 puts the SRT on Subtitle 1 after the timeline's end, whatever recordFrame and trackIndex say.
+    tl, mp, users = _studio_21_1_2_with_user_subtitles()
+    srt = _srt(tmp_path / "SPEAKER_00.srt", [(0.5, 2.0, "Hey"), (4.0, 6.5, "Ready?")])
+    plan = _plan(
+        "Maria",
+        [ClipPlacement(86412, 36, "Hey", 0.5, 2.0), ClipPlacement(86496, 60, "Ready?", 4.0, 6.5)],
+        srt_path=srt,
+        mode="subtitles",
+    )
+    result = resolve_io.create_subtitle_track(mp, tl, plan, origin_frame=86400)
+    assert (result.track_index, result.placed) == (2, 2)
+    track = tl.track("subtitle", "Maria")
+    assert [(i.GetStart(), i.GetName()) for i in track.items] == [(86412, "Hey"), (86496, "Ready?")]
+    assert tl.tracks["subtitle"][0].items == [users]  # nothing left behind on the user's track
+    assert tl.GetEndFrame() == 86400 + 24 * 60  # the footage's end again
+
+
+def test_create_subtitle_track_expects_resolve_to_drop_zero_length_cues(tmp_path):
+    # Studio 21.1.2 run: "00:00:57,030 --> 00:00:57,030" was not placed, and 4 of 5 cues failed the check.
+    tl, mp, _ = _studio_21_1_2_with_user_subtitles()
+    cues = [(0.0, 0.0, "Gone"), (0.5, 2.0, "Hey"), (2.03, 2.03, "Also gone"), (4.0, 6.5, "Ready?")]
+    srt = _srt(tmp_path / "SPEAKER_00.srt", cues)
+    plan = _plan(
+        "Maria",
+        [ClipPlacement(86400 + round(a * 24), 24, t, a, b) for a, b, t in cues],
+        srt_path=srt,
+        mode="subtitles",
+    )
+    result = resolve_io.create_subtitle_track(mp, tl, plan, origin_frame=86400)
+    assert result.placed == 2
+    assert [(i.GetStart(), i.GetName()) for i in tl.track("subtitle", "Maria").items] == [
+        (86412, "Hey"),
+        (86496, "Ready?"),
+    ]
+
+
+def test_create_subtitle_track_falls_back_and_cleans_up_when_the_move_fails(tmp_path):
+    tl, mp, users = _studio_21_1_2_with_user_subtitles()
+    tl.refuse_move_items = True
+    srt = _srt(tmp_path / "SPEAKER_00.srt", [(0.5, 2.0, "Hey"), (4.0, 6.5, "Ready?")])
+    plan = _plan("Maria", [ClipPlacement(86412, 36, "Hey", 0.5, 2.0)], srt_path=srt, mode="subtitles")
+    with pytest.raises(SubtitlePlacementError, match="refused to move"):
+        resolve_io.create_subtitle_track(mp, tl, plan, origin_frame=86400)
+    assert [t.name for t in tl.tracks["subtitle"]] == ["Subtitle 1"]
+    assert tl.tracks["subtitle"][0].items == [users]  # the stray cues were deleted, the user's kept
+    assert mp.deleted == mp.imported
+
+
+def test_create_subtitle_track_without_move_items_falls_back_cleanly(tmp_path):
+    tl, mp, users = _studio_21_1_2_with_user_subtitles()
+    tl.has_move_items_api = False
+    srt = _srt(tmp_path / "SPEAKER_00.srt", [(0.5, 2.0, "Hey")])
+    plan = _plan("Maria", [ClipPlacement(86412, 36, "Hey", 0.5, 2.0)], srt_path=srt, mode="subtitles")
+    with pytest.raises(SubtitlePlacementError, match="no subtitle clips appeared"):
+        resolve_io.create_subtitle_track(mp, tl, plan, origin_frame=86400)
+    assert [t.name for t in tl.tracks["subtitle"]] == ["Subtitle 1"]
+    assert tl.tracks["subtitle"][0].items == [users]
 
 
 def test_create_subtitle_track_missing_srt_or_import_failure(tmp_path):

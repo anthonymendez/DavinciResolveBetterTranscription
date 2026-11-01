@@ -89,18 +89,42 @@ media_pool.AppendToTimeline([{"mediaPoolItem": items[0], "trackIndex": index, "r
 
 `AppendToTimeline`'s clipInfo keys `trackIndex` and `recordFrame` are documented
 ([README][xraym-gist]). The forum poster reports a bug: when the video track already has
-content, the cues land where that content ends instead of at `recordFrame`. The plugin
-(`resolve_io.create_subtitle_track`) therefore verifies the result with
-`GetItemListInTrack("subtitle", index)` and `GetStart()` against the planned first-cue
-frame; on any mismatch it deletes the new track (`DeleteTrack`) and the imported item
+content, the cues land where that content ends instead of at `recordFrame`.
+
+**Studio 21.1.2 (headless, 2026-11-01): the append ignores both `recordFrame` and
+`trackIndex`.** Every SRT goes onto Subtitle 1, starting at the timeline's end
+(`GetEndFrame()`, every track counted) plus the SRT's own times: on the 60 fps test timeline,
+`recordFrame` 219600 gave a first cue at 761837 = 761717 + 2 s, and a second SRT appended for
+track 2 landed on track 1 after the first one's last cue. `AppendToTimeline` returns only the
+first cue. A cue whose start and end are the same millisecond (`00:00:57,030 --> 00:00:57,030`)
+is not placed at all. `Timeline.SetCurrentTimecode` before the append is no help: under
+`Resolve.exe -nogui` it never returned and hung the scripting server.
+
+What works there is moving the cues afterwards with `Timeline.MoveItems(items, {"trackIndex":
+index, "startFrame": first_cue_frame})` (21.x API; `TimelineItem.SetPosition` is its
+one-item form). It moves the leftmost item to the position and the others by the same offset,
+so the cue spacing is kept, and it puts them on another track. The timeline's end goes back
+to where it was. The plugin (`resolve_io.create_subtitle_track`) therefore:
+
+1. adds the track, notes every subtitle item on the timeline (by `GetUniqueId()`), appends;
+2. takes the new items (all subtitle items that weren't there before, on whatever track);
+3. if they aren't on the new track at the planned first-cue frame, calls `MoveItems` on them;
+4. verifies `GetItemListInTrack("subtitle", index)`: the first cue's `GetStart()` against the
+   planned frame and the count against the plan's cues that have a length in the SRT.
+
+On any mismatch, or when `MoveItems` is missing or returns False, it deletes the new cues left
+on other tracks (`Timeline.DeleteClips`), the new track (`DeleteTrack`) and the imported item
 (`DeleteClips`), keeps the per-speaker SRT files, and the summary tells the user where
 they are and how to import them (File > Import > Subtitle, then "Insert Selected
 Subtitles to Timeline Using Timecode"). The engine's SRTs count from the start of the
 rendered range; for manual import at absolute timecode they would need the timeline start
 added, which is why the message says to drop them at the in-point.
 
-Status: **unverified against a live Resolve** (it is the documented path, but the forum
-bug may still exist in 19/20). Text+ mode is the robust path.
+Checked on Studio 21.1.2 with the range 01:01:00:00–01:01:59:59 and a timeline that already had
+clips to 761717: three speakers' tracks (28, 1 and 4 cues), every cue within half a frame of
+its SRT time, first cue 219600, user's subtitle tracks and the timeline end untouched.
+Studio 19/20: unverified (the forum bug may still apply, and there `MoveItems` may not exist,
+which falls back to the `.srt` files as before). Text+ mode does not depend on any of this.
 
 ## 3. Appending a Text+ template and setting its text
 
@@ -201,6 +225,21 @@ davinci-resolve-mcp use ([AutoSubs core][autosubs-core], [mcp live 21.1 test][mc
 Side effect: the Deliver page's current preset state is changed (paths, audio settings);
 saved render presets are not. The WAV goes to a temp dir that is deleted unless the subtitle
 fallback needs the SRTs.
+
+**Reusing a render** (`render_cache.py`). Before rendering, `render_cache.fingerprint` hashes
+what the audio depends on: the timeline's id and name, the render range, the frame rate and
+start, the track selection, and per audio track its enabled state and every item's media,
+position, offsets, enabled state and volume/pan properties. A finished render is copied to
+`<data>/renders/<fingerprint>.wav`; the next run with the same fingerprint uses it instead
+(unless `force_rerender`). On Studio 21.1.2 the fingerprint is the same after the run's marks
+are restored and across a Resolve restart (the debug log traces of the reads are identical, and
+the run log prints the first 12 characters on a miss).
+
+A run of a two-track timeline stores two entries, and every timeline shares the directory. The
+first version kept only the 5 most recently used, so two per-track runs on other timelines
+evicted an unchanged timeline's renders, and the 60 fps test timeline rendered again
+with nothing changed. Now up to 24 entries and 4 GB (about six hour-long renders) are kept,
+least recently used dropped first; the entry just stored is always kept.
 
 ## 6. Engine subprocess
 
@@ -376,7 +415,8 @@ Studio 21.1.x, and whether the plugin's calls behave the same on Studio 21.1.2.
 
 ## Still to verify on a real Resolve (free and Studio)
 
-1. Subtitle placement (§2) and whether `ImportMedia` returns the SRT item.
+1. Subtitle placement (§2) on 19/20: whether `recordFrame` is honoured there and whether
+   `MoveItems` exists (Studio 21.1.2 is checked).
 2. Placed Text+ clip durations (§3 quirk) and that `FindToolByID("TextPlus")` finds the
    node in user templates (nested macros may need `GetToolList`).
 3. `GetMarkInOut()` shape on 19.0 (older builds may lack it; handled).

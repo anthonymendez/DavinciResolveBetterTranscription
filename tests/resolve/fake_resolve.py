@@ -2,7 +2,7 @@
 
 Method names, argument shapes and return conventions follow Blackmagic's scripting README
 (see docs/RESOLVE_INTEGRATION.md). Knobs on the fakes reproduce the behaviours the plugin
-has to cope with: a subtitle append that ignores recordFrame, a template without a Text+
+has to cope with: a subtitle append that ignores recordFrame (and on 21.1.2 trackIndex too), a template without a Text+
 node, a render that needs several polls, AppendToTimeline returning fewer items, ...
 
 ``PROFILES`` describes the Resolve releases the plugin has to run on (product name, version,
@@ -168,6 +168,8 @@ def parse_imported_comp(text: str) -> FakeComp | None:
 
 
 class FakeTimelineItem:
+    _ids = 0
+
     def __init__(self, name: str, start: int, duration: int, comps=None, media_pool_item=None):
         self.name = name
         self.start = int(start)
@@ -175,6 +177,9 @@ class FakeTimelineItem:
         self.comps = list(comps or [])
         self.media_pool_item = media_pool_item
         self.color = None
+        FakeTimelineItem._ids += 1
+        self.unique_id = "item-%d" % FakeTimelineItem._ids
+        self.timeline = None  # the FakeTimeline it was placed on
         self.active = 0  # index of the current comp
         # knobs
         self.comp_io = True  # False: ExportFusionComp fails (an older Resolve)
@@ -194,6 +199,13 @@ class FakeTimelineItem:
 
     def GetDuration(self):
         return self.duration
+
+    def GetUniqueId(self):
+        return self.unique_id
+
+    def GetPosition(self, subframePrecision=False):
+        where = self.timeline._position(self) if self.timeline is not None else None
+        return where or {"startFrame": self.start}
 
     def GetFusionCompCount(self):
         return len(self.comps)
@@ -317,6 +329,7 @@ class FakeTimeline:
         mark_in_out=None,
         has_mark_in_out_api=True,
         has_track_enable_api=True,
+        has_move_items_api=False,
     ):
         self.name = name
         self.settings = {"timelineFrameRate": frame_rate, "timelineDropFrameTimecode": "1" if drop_frame else "0"}
@@ -329,12 +342,18 @@ class FakeTimeline:
         self.mark_in_out = mark_in_out
         self.has_mark_in_out_api = has_mark_in_out_api
         self.has_track_enable_api = has_track_enable_api  # False: GetIsTrackEnabled/SetTrackEnable don't exist
+        self.has_move_items_api = has_move_items_api  # True: Timeline.MoveItems (21.1.x)
         # knobs
         self.refuse_track_enable = ()  # (track_type, index) pairs SetTrackEnable returns False for
         self.enabled_reads_stale = False  # True: GetIsTrackEnabled always says True, as Resolve 20 can
         self.track_enable_calls = []  # every accepted or refused SetTrackEnable(track_type, index, enabled)
         self.refuse_add_track = False
-        self.subtitle_append_ignores_record_frame = False
+        self.subtitle_append_ignores_record_frame = False  # True: the cues start after the last video clip
+        # Resolve 21.1.2: an SRT append ignores recordFrame and trackIndex; the cues go onto Subtitle 1,
+        # starting at the end of the timeline (every track) plus the SRT's own offsets
+        self.subtitle_append_at_timeline_end = False
+        self.subtitle_drops_empty_cues = False  # 21.1.2: a cue whose SRT start and end are equal is not placed
+        self.refuse_move_items = False
         self.deleted_tracks = []
         self.current_timecode = start_timecode
 
@@ -416,6 +435,8 @@ class FakeTimeline:
     def __getattr__(self, name):
         if name in ("GetIsTrackEnabled", "SetTrackEnable") and self.has_track_enable_api:
             return getattr(self, "_" + name)
+        if name == "MoveItems" and self.has_move_items_api:
+            return self._MoveItems
         raise AttributeError(name)
 
     def _GetIsTrackEnabled(self, track_type, index):
@@ -429,6 +450,40 @@ class FakeTimeline:
             return False
         self.tracks[track_type][index - 1].enabled = bool(enabled)
         return True
+
+    def _MoveItems(self, items, position, moveLinkedItems=True, subframePrecision=False):
+        """Move the leftmost item to ``position`` and the others by the same offset (one track type)."""
+        if self.refuse_move_items or not items:
+            return False
+        located = [(item, self._position(item)) for item in items]
+        if any(where is None for _, where in located):
+            return False
+        _, lead = min(located, key=lambda pair: (pair[1]["startFrame"], pair[1]["trackIndex"]))
+        frame_shift = int(position.get("startFrame", lead["startFrame"])) - lead["startFrame"]
+        track_shift = int(position.get("trackIndex", lead["trackIndex"])) - lead["trackIndex"]
+        moves = []
+        for item, where in located:
+            tracks = self.tracks[where["trackType"]]
+            target = where["trackIndex"] + track_shift
+            if not 1 <= target <= len(tracks):
+                return False
+            moves.append((item, tracks[target - 1], item.start + frame_shift))
+        for item, track, start in moves:
+            for tracks in self.tracks.values():
+                for old in tracks:
+                    if item in old.items:
+                        old.items.remove(item)
+            item.start = start
+            track.items.append(item)
+            track.items.sort(key=lambda c: c.start)
+        return True
+
+    def _position(self, item):
+        for track_type, tracks in self.tracks.items():
+            for index, track in enumerate(tracks, start=1):
+                if item in track.items:
+                    return {"trackType": track_type, "trackIndex": index, "startFrame": item.start}
+        return None
 
     def enabled_audio(self) -> list[int]:
         """Test helper: the 1-based indices of the enabled audio tracks."""
@@ -511,15 +566,20 @@ class FakeMediaPool:
         index = int(info.get("trackIndex", max(1, len(timeline.tracks["subtitle"]))))
         if not timeline.tracks["subtitle"]:
             timeline.AddTrack("subtitle")
-        track = timeline.tracks["subtitle"][index - 1]
         origin = int(info.get("recordFrame", timeline.start_frame))
-        if timeline.subtitle_append_ignores_record_frame:
+        if timeline.subtitle_append_at_timeline_end:
+            index, origin = 1, timeline.GetEndFrame()
+        elif timeline.subtitle_append_ignores_record_frame:
             origin = timeline._video_content_end()
+        track = timeline.tracks["subtitle"][index - 1]
         items = []
         for start, end, text in item.srt_cues:
+            if timeline.subtitle_drops_empty_cues and end <= start:
+                continue
             frame = origin + int(round(start * timeline.fps))
             duration = max(1, int(round(end * timeline.fps)) - int(round(start * timeline.fps)))
             clip = FakeTimelineItem(text, frame, duration, media_pool_item=item)
+            clip.timeline = timeline
             track.items.append(clip)
             items.append(clip)
         track.items.sort(key=lambda c: c.start)
@@ -547,6 +607,7 @@ class FakeMediaPool:
             )
         ]
         clip = FakeTimelineItem(item.name, record, duration, comps=comps, media_pool_item=item)
+        clip.timeline = timeline
         track.items.append(clip)
         track.items.sort(key=lambda c: c.start)
         return clip
@@ -752,6 +813,12 @@ class ResolveProfile:
     python_gated: bool = False  # free edition 21.1+: Python scripts get no usable API
 
     @property
+    def subtitle_api(self) -> bool:
+        """21.1 (checked on 21.1.2): an SRT append lands on Subtitle 1 after the timeline's end, whatever
+        recordFrame and trackIndex say, and Timeline.MoveItems can move the cues to where they belong."""
+        return self.version_tuple[:2] >= (21, 1)
+
+    @property
     def audio_render_api(self) -> bool:
         """21.1 added GetAudioRenderFormats/Codecs and the "AudioFormat" render setting."""
         return self.version_tuple[:2] >= (21, 1)
@@ -822,9 +889,13 @@ def make_world(
         profile = PROFILES[profile]
     if profile is not None:
         timeline_kwargs.setdefault("has_mark_in_out_api", profile.has_mark_in_out_api)
+        timeline_kwargs.setdefault("has_move_items_api", profile.subtitle_api)
     timeline = FakeTimeline(
         frame_rate=frame_rate, start_timecode=start_timecode, drop_frame=drop_frame, **timeline_kwargs
     )
+    if profile is not None:
+        timeline.subtitle_append_at_timeline_end = profile.subtitle_api
+        timeline.subtitle_drops_empty_cues = profile.subtitle_api
     # Some existing content on Video 1 so "never modify existing tracks" is observable.
     footage = FakeMediaPoolItem("footage.mov", file_path="/media/footage.mov")
     timeline.tracks["video"][0].items.append(

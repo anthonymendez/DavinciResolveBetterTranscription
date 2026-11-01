@@ -16,7 +16,9 @@
       60 fps, 01:00:00:00 timeline with a GUI-style in/out range: the log's first line reads
       `Resolve: DaVinci Resolve Studio 21.1.2`, the range renders, Text+ (plain and word
       highlighting) lands on the right frames at full length, and the marks survive the run.
-      Subtitle tracks land after the last clip there, so the `.srt` fallback is what you get.
+      Subtitle tracks: the SRT append lands after the timeline's end there; the plugin now moves
+      the cues into place with `Timeline.MoveItems` (every cue within half a frame), and the
+      unchanged timeline reuses its cached renders on the next run.
       Text+ timing also checked at 23.976 and 29.97 DF (01:00:00:00 start) with a 60 fps
       template: starts within a frame of the cue times, full lengths, no gaps.
 - [ ] **Check in the Resolve GUI:** the progress window, the review / Fix speakers dialogs
