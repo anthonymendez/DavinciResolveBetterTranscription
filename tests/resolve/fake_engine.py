@@ -1,7 +1,8 @@
 """A stand-in for `better-captions run` used as a real subprocess by the plugin tests.
 
 Usage: python fake_engine.py run [AUDIO] --out DIR [--track ROLE:NAME=PATH ...] [--fixed-track NAME=PATH ...]
-       [--fail] [--crash] [--slow] [--with-words] [--with-voices] [...ignored flags]
+       [--fail] [--crash] [--slow] [--with-words] [--with-voices] [--with-confidence]
+       [...ignored flags]
        python fake_engine.py voices save --from DIR --name SPEAKER=NAME ...  (see voices_save)
 
 Emits the same JSON-line events as the engine and writes transcript.json plus one SRT per
@@ -32,6 +33,22 @@ TRANSCRIPT = {
     "meta": {"audio": "", "model": "fake"},
     "schema_version": 1,
 }
+
+
+# ``--with-confidence``: per-cue speaker_confidence (cue order). Cues 2 and 4 are uncertain
+# (below the plugin's UNCERTAIN_BELOW of 0.6), cue 3's is unknown.
+CONFIDENCES = (0.95, 0.42, None, 0.31)
+
+
+def with_confidence(transcript, confidences=CONFIDENCES):
+    """``transcript`` with ``speaker_confidence`` on each cue (left out where the value is None)."""
+    cues = []
+    for cue, confidence in zip(transcript["cues"], confidences, strict=False):
+        cue = dict(cue)
+        if confidence is not None:
+            cue["speaker_confidence"] = confidence
+        cues.append(cue)
+    return dict(transcript, cues=cues)
 
 
 def with_words(transcript):
@@ -205,6 +222,8 @@ def main(argv):
         transcript = with_tracks(transcript, track_specs)
         if transcript is None:
             return 1
+    if "--with-confidence" in argv:
+        transcript = with_confidence(transcript)
     if "--with-words" in argv:
         transcript = with_words(transcript)
     transcript["meta"]["audio"] = audio
