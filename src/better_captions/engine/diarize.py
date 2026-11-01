@@ -7,12 +7,14 @@ import sys
 import tarfile
 import time
 from collections.abc import Callable, Hashable
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 import numpy as np
 
 from better_captions.engine.download import download
 from better_captions.engine.merge_speakers import MINOR_SECONDS, MINOR_SHARE, EmbedFn, merge_minor_speakers
+from better_captions.engine.reassign_segments import TurnScore, reassign_segments
 from better_captions.paths import models_dir
 from better_captions.schema import SpeakerTurn
 
@@ -33,6 +35,15 @@ CLUSTER_THRESHOLD = 0.5
 PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
 
 
+@dataclass
+class DiarizeResult:
+    """diarize()'s turns plus what the reassignment pass learned about the voices (empty without embeddings)."""
+
+    turns: list[SpeakerTurn]
+    centroids: dict[str, np.ndarray] = field(default_factory=dict)  # speaker -> unit-length voice centroid
+    scores: list[TurnScore | None] = field(default_factory=list)  # aligned with turns; label is a speaker name
+
+
 def diarize(
     audio_path: str,
     num_speakers: int | None = None,
@@ -44,6 +55,7 @@ def diarize(
     merge_minor: bool = True,
     minor_seconds: float = MINOR_SECONDS,
     minor_share: float = MINOR_SHARE,
+    reassign: bool = True,
 ) -> list[SpeakerTurn]:
     """Return speaker turns sorted by start, labelled SPEAKER_00, SPEAKER_01, ... in order of first appearance.
 
@@ -53,7 +65,40 @@ def diarize(
     With merge_minor, clusters with little speech (under max(minor_seconds, minor_share of all speech), see
     merge_speakers) are folded into the most similar remaining speaker. The result never drops below
     num_speakers (or min_speakers), so a forced count that clustering already met is left alone.
+
+    With reassign, each turn is then re-checked against every speaker's voice and moved when another speaker
+    matches it clearly better (see reassign_segments). Use diarize_detailed() to also get the voice centroids
+    and per-turn similarities.
     """
+    return diarize_detailed(
+        audio_path,
+        num_speakers,
+        min_speakers,
+        max_speakers,
+        backend,
+        progress,
+        log,
+        merge_minor,
+        minor_seconds,
+        minor_share,
+        reassign,
+    ).turns
+
+
+def diarize_detailed(
+    audio_path: str,
+    num_speakers: int | None = None,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
+    backend: str = "sherpa",
+    progress: ProgressFn | None = None,
+    log: LogFn | None = None,
+    merge_minor: bool = True,
+    minor_seconds: float = MINOR_SECONDS,
+    minor_share: float = MINOR_SHARE,
+    reassign: bool = True,
+) -> DiarizeResult:
+    """diarize(), returning the turns together with the speakers' voice centroids and per-turn similarities."""
     if min_speakers is not None and max_speakers is not None and min_speakers > max_speakers:
         raise ValueError(f"min_speakers ({min_speakers}) > max_speakers ({max_speakers})")
     if num_speakers is not None:
@@ -84,21 +129,44 @@ def diarize(
         if merged.minor:
             status.merged(merged.minor, merged.remaining)
         raw = merged.raw
-    turns = relabel(raw)
+    moved = None
+    if reassign and embed is not None:
+        moved = reassign_segments(raw, embed)
+        if moved.moved:
+            status.reassigned(moved.moved)
+        raw = moved.raw
+    turns, order, names = _relabel(raw)
     status.finished(len({t.speaker for t in turns}))
-    return turns
+    if moved is None:
+        return DiarizeResult(turns, {}, [None] * len(turns))
+    centroids = {names[lb]: c for lb, c in moved.centroids.items() if lb in names}
+    scores = []
+    for i in order:
+        score = moved.scores[i]
+        if score is not None and score.label in names:
+            score = TurnScore(names[score.label], score.best, score.second)
+        scores.append(score)
+    return DiarizeResult(turns, centroids, scores)
 
 
 def relabel(raw: list[tuple[float, float, Hashable]]) -> list[SpeakerTurn]:
     """(start, end, backend label) -> SpeakerTurns sorted by start, labels SPEAKER_NN by first appearance."""
-    labels: dict[Hashable, str] = {}
+    return _relabel(raw)[0]
+
+
+def _relabel(raw: list[tuple[float, float, Hashable]]) -> tuple[list[SpeakerTurn], list[int], dict[Hashable, str]]:
+    """relabel(), plus the index in `raw` of each returned turn and the backend label -> speaker name map."""
+    names: dict[Hashable, str] = {}
     turns = []
-    for start, end, label in sorted(raw, key=lambda r: (r[0], r[1])):
+    order = []
+    for i in sorted(range(len(raw)), key=lambda i: (raw[i][0], raw[i][1])):
+        start, end, label = raw[i]
         if end <= start:
             continue
-        speaker = labels.setdefault(label, f"SPEAKER_{len(labels):02d}")
+        speaker = names.setdefault(label, f"SPEAKER_{len(names):02d}")
         turns.append(SpeakerTurn(speaker=speaker, start=float(start), end=float(end)))
-    return turns
+        order.append(i)
+    return turns, order, names
 
 
 def _clamp(n: int, lo: int | None, hi: int | None) -> int:
@@ -191,6 +259,9 @@ class _Status:
 
     def merged(self, minor: int, remaining: int) -> None:
         self._log(f"Detecting speakers: merged {minor} minor speaker{'s' if minor != 1 else ''} into {remaining}")
+
+    def reassigned(self, moved: int) -> None:
+        self._log(f"Detecting speakers: moved {moved} turn{'s' if moved != 1 else ''} to a better-matching speaker")
 
     def no_embeddings(self, error: BaseException) -> None:
         self._log(f"Detecting speakers: voice embeddings unavailable ({error}); merging by time instead")

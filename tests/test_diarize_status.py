@@ -82,7 +82,7 @@ def test_status_lines_go_to_stderr_by_default(sherpa, capsys):
 def test_progress_is_reported_with_position_in_the_audio(sherpa):
     sherpa()
     lines = []
-    dz.diarize("in.wav", log=lines.append)
+    dz.diarize("in.wav", log=lines.append, reassign=False)  # the fake has no embedder to re-check turns with
     assert "Detecting speakers: 40% (12:00 of 30:00)" in lines
     assert lines[-3] == "Detecting speakers: 100% (30:00 of 30:00)"
 
@@ -100,7 +100,7 @@ def test_messages_in_order_and_speakers_and_elapsed(sherpa, monkeypatch):
     ticks = iter([100.0, 172.0])  # start, finish
     monkeypatch.setattr(dz.time, "monotonic", lambda: next(ticks))
     lines = []
-    dz.diarize("in.wav", log=lines.append)
+    dz.diarize("in.wav", log=lines.append, reassign=False)
     kinds = [
         next(k for k in ("started", "loading", "analysing", "%", "found", "finished") if k in line) for line in lines
     ]
