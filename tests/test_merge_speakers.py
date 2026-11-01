@@ -246,7 +246,7 @@ def test_diarize_falls_back_to_time_without_an_extractor(sherpa):
 def test_forced_speaker_count_that_matches_is_respected(sherpa):
     fake = sherpa({5: SHERPA_TURNS})
     lines = []
-    turns = dz.diarize("in.wav", num_speakers=5, log=lines.append)
+    turns = dz.diarize("in.wav", num_speakers=5, log=lines.append, reassign=False)
     assert fake.runs == [5]
     assert len({t.speaker for t in turns}) == 5
     assert not any("merged" in line for line in lines)
