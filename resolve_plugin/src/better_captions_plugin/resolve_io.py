@@ -7,6 +7,7 @@ and verifies their effect.
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from contextlib import contextmanager
@@ -590,12 +591,14 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
     index = add_track(timeline, "video", plan.name)
     result = TrackResult(plan=plan, track_type="video", track_index=index)
     try:
+        ratio = _source_ratio(item, timeline)
 
         def info(clip, exclusive):
+            frames = _source_frames(clip.duration, ratio)
             return {
                 "mediaPoolItem": item,
                 "startFrame": 0,
-                "endFrame": clip.duration if exclusive else max(0, clip.duration - 1),
+                "endFrame": frames if exclusive else frames - 1,
                 "trackIndex": index,
                 "recordFrame": clip.record_frame,
                 "mediaType": 1,
@@ -651,14 +654,34 @@ def _fill_textplus_track(media_pool, timeline, plan: TrackPlan, item, highlight:
     return result
 
 
+def _source_ratio(item, timeline) -> float:
+    """Template frames per timeline frame: ``startFrame``/``endFrame`` count in the template's own
+    frame rate (its ``FPS`` clip property; a 60 fps title on a 23.976 timeline needs 2.5 of them
+    per timeline frame, checked on Studio 21.1.2). 1 when either rate can't be read."""
+    try:
+        template_fps = float(str(item.GetClipProperty("FPS")).replace("DF", "").strip())
+        timeline_fps = timeline_clock(timeline).fps
+    except Exception:
+        return 1.0
+    if not (template_fps > 0 and timeline_fps > 0):
+        return 1.0
+    ratio = template_fps / timeline_fps
+    return 1.0 if abs(ratio - 1.0) < 1e-3 else ratio
+
+
+def _source_frames(duration: int, ratio: float) -> int:
+    """Template frames that cover ``duration`` timeline frames (Resolve rounds the placed length down)."""
+    return max(1, math.ceil(duration * ratio - 1e-6))
+
+
 def _probe_end_frame(media_pool, timeline, index: int, clips, info) -> tuple[list, bool, int | None]:
     """Place one clip of two or more frames with ``endFrame`` read as inclusive and measure it.
 
-    Resolve 21.1 reads ``endFrame`` as exclusive (the clip comes out one frame short, and a
-    one-frame clip, ``endFrame == startFrame``, fails the whole AppendToTimeline call); older
-    releases as inclusive. Returns ``(placed items, exclusive, index of the probe in clips)``:
-    a probe that came out one frame short is deleted again (index None, it is placed with the
-    rest), one that is right is kept. No clip long enough, or nothing measurable: inclusive.
+    Resolve 21.1 reads ``endFrame`` as exclusive (the clip comes out short, and a one-frame
+    clip, ``endFrame == startFrame``, fails the whole AppendToTimeline call); older releases as
+    inclusive. Returns ``(placed items, exclusive, index of the probe in clips)``: a probe that
+    came out short is deleted again (index None, it is placed with the rest), one that is right
+    is kept. No clip long enough, or nothing measurable: inclusive.
     """
     probe = next((n for n, clip in enumerate(clips) if clip.duration >= 2), None)
     if probe is None:
@@ -672,7 +695,7 @@ def _probe_end_frame(media_pool, timeline, index: int, clips, info) -> tuple[lis
         duration = int(placed[0].GetDuration())
     except Exception:
         return placed, False, probe
-    if duration != clips[probe].duration - 1:
+    if not 0 < duration < clips[probe].duration:
         return placed, False, probe
     try:
         if timeline.DeleteClips(placed, False):

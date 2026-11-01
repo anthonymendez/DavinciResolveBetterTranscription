@@ -462,3 +462,25 @@ def test_marks_offset_tells_relative_from_absolute():
     tl.GetEndFrame = lambda: 90000
     assert resolve_io.marks_offset(tl, 86400, 86500, 86700) == 0  # only fits as absolute frames
     assert resolve_io.marks_offset(tl, 0, 100, 300) == 0  # a timeline starting at 0: both readings agree
+
+
+@pytest.mark.parametrize(("frame_rate", "start_tc"), [("23.976", "01:00:00:00"), ("29.97", "01:00:00;00")])
+def test_create_textplus_track_converts_lengths_to_a_60_fps_template(frame_rate, start_tc):
+    # Studio 21.1.2: a 60 fps "Fusion Title" on a slower timeline reads startFrame/endFrame in its own frames
+    resolve = make_world(frame_rate=frame_rate, start_timecode=start_tc, drop_frame=";" in start_tc)
+    tl, mp = resolve.project.timeline, resolve.project.media_pool
+    mp.end_frame_exclusive = True
+    template = resolve_io.find_text_templates(mp)[0]
+    template.item.props["FPS"] = 60.0
+    start = tl.start_frame
+    clips = [ClipPlacement(start, 1, "um", 0, 0.04), ClipPlacement(start + 12, 15, "a", 0.5, 1.1)]
+    clips.append(ClipPlacement(start + 40, 36, "b", 1.6, 3.1))
+    result = resolve_io.create_textplus_track(mp, tl, _plan("S", clips, template=template))
+    assert result.placed == 3 and result.misplaced == []
+    assert [i.GetDuration() for i in tl.track("video", "S").items] == [1, 15, 36]
+
+
+def test_source_frames_rounds_up_to_cover_the_length():
+    assert resolve_io._source_frames(15, 60 / 23.976) == 38
+    assert resolve_io._source_frames(1, 1.0) == 1
+    assert resolve_io._source_frames(36, 1.0) == 36

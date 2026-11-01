@@ -534,6 +534,9 @@ class FakeMediaPool:
         start_frame = int(info.get("startFrame", 0))
         end_frame = int(info.get("endFrame", start_frame + 119))
         duration = end_frame - start_frame + (0 if self.end_frame_exclusive else 1)
+        template_fps = item.props.get("FPS")
+        if template_fps:  # start/end count in the template's own frames; Resolve rounds the length down
+            duration = int(duration * timeline.fps / float(template_fps) + 1e-9)
         if item.placed_duration is not None:
             duration = item.placed_duration
         record = int(info.get("recordFrame", track.items[-1].GetEnd() if track.items else timeline.start_frame))
