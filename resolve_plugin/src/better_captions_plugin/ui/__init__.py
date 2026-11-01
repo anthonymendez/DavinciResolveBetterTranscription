@@ -171,8 +171,9 @@ class Backend:
 
     def pick_audio_tracks(self, tracks, preselected):
         """The audio tracks to render (``tracks`` as ``resolve_io.audio_tracks`` gives them): a
-        ``track_picker.TrackPick`` (a list of track indices with ``speakers``, the speaker name typed for
-        a track; ``preselected`` is one too, from ``track_picker.default_selection``), or None to cancel."""
+        ``track_picker.TrackPick`` (a list of track indices with ``roles``, who talks on each track, and
+        ``speakers``, the speaker name typed for a track; ``preselected`` is one too, from
+        ``track_picker.default_selection``), or None to cancel."""
         return preselected
 
     def pick_model(self, models, current: str) -> str | None:

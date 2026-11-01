@@ -208,18 +208,30 @@ what it found under `naming_clis`. Optional `config.json` settings:
 | `naming_cli_timeout` | seconds before giving up (default 120) |
 
 When the timeline has two or more audio tracks, the plugin asks which ones to
-transcribe. Only those are rendered, and your tracks are switched back as they
-were afterwards. If the timeline audio hasn't changed since the last run, the
-previous render (kept in `<data>/renders`) is reused. Set `"force_rerender": true`
-in `config.json` to always render again. The progress window lists the steps
-left and has a Pause button.
+transcribe and who talks on each:
 
-If only one person talks on a track (your own microphone, say), type their name
-next to it in that dialog. That track is also rendered alone, and everything
-said on it is captioned as that person, named already in the review. Speaker
-detection then only has to sort out everyone else. Names are remembered per
-timeline. On the command line this is `--fixed-track NAME=PATH` (repeatable),
-where PATH is that track's audio on its own.
+- **One person** (your own microphone, say): type their name. Everything said
+  on it is captioned as that person, named already in the review.
+- **Several people** (a Discord call): speaker detection runs on this track
+  alone.
+- **Not speech** (game audio, music): it isn't transcribed.
+
+A track you type a name for starts as one person, a track named like game audio
+or music as not speech, and any other as several people. The roles are
+remembered per timeline. Each speech track is rendered and transcribed on its
+own, so two people talking at once both get captions. The same word picked up
+by a second track (your microphone hearing the call, or the reverse) is kept
+only where it is louder. Your tracks are switched back as they were afterwards.
+If a track's audio hasn't changed since the last run, the previous render (kept
+in `<data>/renders`) is reused. Set `"force_rerender": true` in `config.json` to
+always render again. The progress window lists the steps left and has a Pause
+button.
+
+On the command line, pass each track as `--track ROLE:NAME=PATH` instead of one
+audio file, e.g. `--track person:Anthony=mic.wav --track group:Discord=discord.wav`
+(ROLE is `person`, `group` or `none`; repeatable). The older
+`--fixed-track NAME=PATH` still works: next to a mixed audio file it pins NAME
+to that track, and without one it is a person track.
 
 ## How it works
 
