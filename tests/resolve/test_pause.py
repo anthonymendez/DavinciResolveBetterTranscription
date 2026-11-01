@@ -253,6 +253,7 @@ def test_run_engine_that_cannot_be_paused_keeps_running_and_says_so(wav, tmp_pat
     assert logs == ["could not pause the engine: no permission"]  # once, not on every poll
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="signal.SIGSTOP does not exist on Windows")
 def test_posix_suspend_sends_sigstop_and_sigcont(monkeypatch):
     sent = []
     monkeypatch.setattr(engine_runner, "sys", types.SimpleNamespace(platform="linux"))
