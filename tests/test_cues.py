@@ -131,3 +131,10 @@ def test_cues_are_sorted_by_start():
         CueOptions(min_duration=0.0),
     )
     assert [c.start for c in cues] == [1.0, 5.0]
+
+
+def test_short_cue_is_not_extended_past_the_end_of_the_audio():
+    t = transcript(seg("S0", [("Yeah.", 59.91, 59.95)]))
+    t.duration = 60.0
+    cues = build_cues(t, CueOptions(min_duration=0.8))
+    assert cues[0].end == pytest.approx(60.0)
