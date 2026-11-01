@@ -22,6 +22,7 @@ class Word:
     end: float
     probability: float = 1.0
     speaker: str | None = None  # Speaker.id, set by alignment
+    speaker_confidence: float | None = None  # 0..1, how clearly the voice matches that speaker; None = unknown
 
 
 @dataclass
@@ -31,6 +32,7 @@ class SpeakerTurn:
     speaker: str
     start: float
     end: float
+    confidence: float | None = None  # 0..1 from the voice re-check (reassign_segments); None = not embedded
 
 
 @dataclass
@@ -64,6 +66,8 @@ class Cue:
     start: float
     end: float
     lines: list[str]
+    # 0..1, duration-weighted over the words' speaker_confidence; None = unknown. Low = check this line's speaker.
+    speaker_confidence: float | None = None
 
     @property
     def text(self) -> str:

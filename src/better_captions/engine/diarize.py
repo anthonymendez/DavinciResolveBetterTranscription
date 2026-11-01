@@ -7,14 +7,14 @@ import sys
 import tarfile
 import time
 from collections.abc import Callable, Hashable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
 import numpy as np
 
 from better_captions.engine.download import download
 from better_captions.engine.merge_speakers import MINOR_SECONDS, MINOR_SHARE, EmbedFn, merge_minor_speakers
-from better_captions.engine.reassign_segments import TurnScore, reassign_segments
+from better_captions.engine.reassign_segments import TurnScore, reassign_segments, turn_confidence
 from better_captions.paths import models_dir
 from better_captions.schema import SpeakerTurn
 
@@ -148,6 +148,7 @@ def diarize_detailed(
         if score is not None and score.label in names:
             score = TurnScore(names[score.label], score.best, score.second)
         scores.append(score)
+    turns = [replace(t, confidence=turn_confidence(s, t.speaker)) for t, s in zip(turns, scores, strict=True)]
     return DiarizeResult(turns, centroids, scores, EMBEDDING_NAME if centroids else None)
 
 
