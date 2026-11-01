@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from better_captions import cues as cues_mod
 from better_captions import naming
-from better_captions.engine import align, cache, diarize, transcribe
+from better_captions.engine import align, cache, diarize, fixed_tracks, transcribe
 from better_captions.export import srt
 from better_captions.schema import Speaker, Transcript
 
@@ -34,6 +35,8 @@ class RunOptions:
     naming_options: dict = field(default_factory=dict)
     cue_options: cues_mod.CueOptions = field(default_factory=cues_mod.CueOptions)
     use_cache: bool = True  # reuse words/turns from engine.cache for unchanged audio + settings
+    # speakers pinned to their own audio track (--fixed-track NAME=PATH), see engine.fixed_tracks
+    fixed_tracks: list[fixed_tracks.FixedTrack] = field(default_factory=list)
 
 
 def json_lines_events(event: dict) -> None:
@@ -60,6 +63,50 @@ def _try_put(put: Callable, *args) -> None:
         put(*args)
     except OSError as e:
         print(f"better-captions: could not write cache entry: {e}", file=sys.stderr)
+
+
+def _minus(count: int | None, pinned: int, floor: int) -> int | None:
+    return None if count is None else max(floor, count - pinned)
+
+
+def _diarize(audio_path: str, options: RunOptions, store, p, digest: str | None = None, pinned: int = 0):
+    """Speaker turns for ``audio_path`` (cached). With ``pinned`` speakers already taken out of the audio
+    (fixed tracks), the speaker counts asked for cover everyone, so that many fewer are left to find."""
+    num_speakers = _minus(options.num_speakers, pinned, 1)
+    min_speakers = _minus(options.min_speakers, pinned, 0) or None
+    max_speakers = _minus(options.max_speakers, pinned, 1)
+    if store and digest is None:
+        try:
+            digest = cache.file_digest(audio_path)
+        except OSError:
+            digest = None
+    turns_key = (
+        store
+        and digest
+        and cache.diarization_key(
+            digest,
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers,
+            backend=options.diarization_backend,
+        )
+    )
+    turns = store.get_turns(turns_key) if turns_key else None
+    if turns is not None:
+        p(1.0, cached=True)
+        return turns
+    turns = diarize.diarize(
+        audio_path,
+        num_speakers=num_speakers,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
+        backend=options.diarization_backend,
+        progress=p,
+    )
+    if turns_key:
+        _try_put(store.put_turns, turns_key, turns)
+    p(1.0)
+    return turns
 
 
 def run(
@@ -99,39 +146,43 @@ def run(
         p(1.0)
 
     p = _stage_progress(emit, "diarize")
-    turns_key = store and cache.diarization_key(
-        digest,
-        num_speakers=options.num_speakers,
-        min_speakers=options.min_speakers,
-        max_speakers=options.max_speakers,
-        backend=options.diarization_backend,
-    )
-    turns = store.get_turns(turns_key) if store else None
-    if turns is not None:
-        p(1.0, cached=True)
+    analysis = None
+    if options.fixed_tracks:
+        analysis = fixed_tracks.analyze(audio_path, options.fixed_tracks)
+        for stem in analysis.stems:
+            print(
+                f"better-captions: {stem.name} ({stem.path}) talks for {analysis.speech_seconds(stem):.1f} s",
+                file=sys.stderr,
+            )
+        with tempfile.TemporaryDirectory(prefix="better-captions-") as tmp:
+            residual = str(Path(tmp) / "residual.wav")
+            if analysis.write_residual(residual):
+                pinned_count = len(fixed_tracks.speaker_ids(options.fixed_tracks))
+                turns = _diarize(residual, options, store, p, pinned=pinned_count)
+            else:  # the pinned speakers say everything: nothing left to diarize
+                turns = []
+                p(1.0)
     else:
-        turns = diarize.diarize(
-            audio_path,
-            num_speakers=options.num_speakers,
-            min_speakers=options.min_speakers,
-            max_speakers=options.max_speakers,
-            backend=options.diarization_backend,
-            progress=p,
-        )
-        if store:
-            _try_put(store.put_turns, turns_key, turns)
-        p(1.0)
+        turns = _diarize(audio_path, options, store, p, digest=digest)
 
     p = _stage_progress(emit, "align")
-    words = align.assign_speakers(words, turns)
+    if analysis is not None:
+        words = fixed_tracks.assign_speakers(analysis, words, turns, align.assign_speakers)
+    else:
+        words = align.assign_speakers(words, turns)
     segments = align.group_segments(words)
     speaker_ids = list(dict.fromkeys(s.speaker for s in segments))
+    pinned = fixed_tracks.fixed_speakers(options.fixed_tracks)
+    meta = {"audio": str(audio_path), "model": options.model}
+    if options.fixed_tracks:
+        ids = fixed_tracks.speaker_ids(options.fixed_tracks)
+        meta["fixed_tracks"] = [{"id": ids[t.name], "name": t.name, "audio": t.path} for t in options.fixed_tracks]
     transcript = Transcript(
         language=language,
         duration=duration,
-        speakers=[Speaker(id=sid) for sid in speaker_ids],
+        speakers=[pinned.get(sid) or Speaker(id=sid) for sid in speaker_ids],
         segments=segments,
-        meta={"audio": str(audio_path), "model": options.model},
+        meta=meta,
     )
     p(1.0)
 

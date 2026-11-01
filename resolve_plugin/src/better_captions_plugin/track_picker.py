@@ -1,9 +1,12 @@
-"""Choose which audio tracks go into the transcription render.
+"""Choose which audio tracks go into the transcription render, and which of them belong to one speaker.
 
 ``tracks`` everywhere is ``resolve_io.audio_tracks``'s ``[(index, name, enabled)]``. The two dialogs
-(tkinter, Fusion UIManager) follow ui/tk_ui.py and ui/uimanager_ui.py and return the chosen track
-indices, or None when cancelled; ``default_selection`` is the pure part that decides what starts ticked.
-tkinter is imported only when the Tk dialog is built, so UIManager-only installs never need it.
+(tkinter, Fusion UIManager) follow ui/tk_ui.py and ui/uimanager_ui.py and return a ``TrackPick`` (the
+chosen track indices, plus the speaker name typed for any of them), or None when cancelled;
+``default_selection`` is the pure part that decides what starts ticked and named. A track with a
+speaker name (say "Microphone" = "Anthony") is also rendered alone, and the engine captions what is
+said on it as that speaker (``--fixed-track``). tkinter is imported only when the Tk dialog is built,
+so UIManager-only installs never need it.
 """
 
 from __future__ import annotations
@@ -14,18 +17,43 @@ TITLE = "Better Captions"
 WINDOW_ID_TRACKS = "BetterCaptionsTracks"
 HEADING = "Audio tracks to transcribe"
 NOTE = "Only the ticked tracks are rendered for transcription. Your tracks are put back as they were."
+SPEAKER_NOTE = (
+    "If only one person talks on a track (your microphone, say), type their name: "
+    "everything said on it is captioned as them."
+)
+SPEAKER_PLACEHOLDER = "Speaker (optional)"
 NONE_PICKED = "Pick at least one audio track."
 
 
-def default_selection(config: dict, timeline_name: str, tracks) -> list[int]:
+class TrackPick(list):
+    """The chosen audio track indices (a plain list, in track order), with ``speakers``: {track index:
+    speaker name} for the chosen tracks that one named person has to themselves."""
+
+    def __init__(self, indices=(), speakers=None):
+        super().__init__(indices)
+        chosen = set(self)
+        # "=" would split the engine's --fixed-track NAME=PATH in the wrong place
+        names = {int(i): " ".join(str(name or "").replace("=", " ").split()) for i, name in (speakers or {}).items()}
+        self.speakers = {index: name for index, name in names.items() if index in chosen and name}
+
+    def __repr__(self):
+        return "TrackPick(%r, speakers=%r)" % (list(self), self.speakers)
+
+
+def speakers_of(picked) -> dict[int, str]:
+    """``picked.speakers`` for a TrackPick, {} for a plain list of indices (or None)."""
+    return dict(getattr(picked, "speakers", None) or {})
+
+
+def default_selection(config: dict, timeline_name: str, tracks) -> TrackPick:
     """What starts ticked: the tracks picked last time for this timeline (those that still exist), else
-    the tracks currently enabled, else all of them."""
+    the tracks currently enabled, else all of them; and the speaker names given to them last time."""
     existing = [index for index, _name, _enabled in tracks]
     remembered = config_mod.remembered_audio_tracks(config, timeline_name) or []
     chosen = [index for index in remembered if index in existing]
     if not chosen:
         chosen = [index for index, _name, enabled in tracks if enabled]
-    return chosen or existing
+    return TrackPick(chosen or existing, config_mod.remembered_track_speakers(config, timeline_name))
 
 
 def track_label(index: int, name: str, enabled: bool = True) -> str:
@@ -36,6 +64,12 @@ def track_label(index: int, name: str, enabled: bool = True) -> str:
 def chosen_indices(tracks, ticked) -> list[int]:
     """The track indices whose ``ticked(index)`` is true, in track order."""
     return [index for index, _name, _enabled in tracks if ticked(index)]
+
+
+def chosen_pick(tracks, ticked, speaker) -> TrackPick:
+    """The ticked tracks (``ticked(index)``) with the speaker name typed for each (``speaker(index)``)."""
+    chosen = chosen_indices(tracks, ticked)
+    return TrackPick(chosen, {index: speaker(index) or "" for index in chosen})
 
 
 # ---------------------------------------------------------------------------
@@ -56,13 +90,25 @@ class _TkTrackDialog:
         frame = ttk.Frame(self.window, padding=12)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text=HEADING).pack(anchor="w")
-        ttk.Label(frame, text=NOTE, foreground="#666").pack(anchor="w", pady=(2, 8))
+        ttk.Label(frame, text=NOTE, foreground="#666").pack(anchor="w", pady=(2, 0))
+        ttk.Label(frame, text=SPEAKER_NOTE, foreground="#666", wraplength=420).pack(anchor="w", pady=(2, 8))
         self.vars = {}
+        self.speaker_vars = {}
+        speakers = speakers_of(preselected)
         preselected = set(preselected)
-        for index, name, enabled in self.tracks:
+        rows = ttk.Frame(frame)
+        rows.pack(fill="x")
+        rows.columnconfigure(1, weight=1)
+        ttk.Label(rows, text=SPEAKER_PLACEHOLDER, foreground="#666").grid(row=0, column=1, sticky="w", padx=(12, 0))
+        for row, (index, name, enabled) in enumerate(self.tracks, start=1):
             var = tk.BooleanVar(value=index in preselected)
             self.vars[index] = var
-            ttk.Checkbutton(frame, text=track_label(index, name, enabled), variable=var).pack(anchor="w")
+            ttk.Checkbutton(rows, text=track_label(index, name, enabled), variable=var).grid(
+                row=row, column=0, sticky="w"
+            )
+            speaker = tk.StringVar(value=speakers.get(index, ""))
+            self.speaker_vars[index] = speaker
+            ttk.Entry(rows, textvariable=speaker, width=20).grid(row=row, column=1, sticky="ew", padx=(12, 0))
         self.status_var = tk.StringVar(value="")
         ttk.Label(frame, textvariable=self.status_var, foreground="#b00").pack(anchor="w", pady=(6, 0))
         buttons = ttk.Frame(frame)
@@ -74,7 +120,9 @@ class _TkTrackDialog:
         self.window.update_idletasks()
 
     def _ok(self):
-        chosen = chosen_indices(self.tracks, lambda index: bool(self.vars[index].get()))
+        chosen = chosen_pick(
+            self.tracks, lambda index: bool(self.vars[index].get()), lambda index: self.speaker_vars[index].get()
+        )
         if not chosen:
             self.status_var.set(NONE_PICKED)
             return
@@ -92,8 +140,9 @@ class _TkTrackDialog:
         return self.result
 
 
-def pick_audio_tracks_tk(root, tracks, preselected) -> list[int] | None:
-    """A modal checklist over ``root``; the ticked track indices, or None if cancelled."""
+def pick_audio_tracks_tk(root, tracks, preselected) -> TrackPick | None:
+    """A modal checklist over ``root`` (``preselected`` may be a TrackPick, whose speaker names fill the
+    name boxes); the ticked tracks with their speaker names, or None if cancelled."""
     return _TkTrackDialog(root, tracks, preselected).run()
 
 
@@ -101,18 +150,32 @@ def pick_audio_tracks_tk(root, tracks, preselected) -> list[int] | None:
 # Fusion UIManager
 
 
-def pick_audio_tracks_uimanager(fusion, ui, dispatcher, tracks, preselected) -> list[int] | None:
+def pick_audio_tracks_uimanager(fusion, ui, dispatcher, tracks, preselected) -> TrackPick | None:
     """The same checklist as a UIManager window (``ui`` = ``fusion.UIManager``, ``dispatcher`` = the
-    ``UIDispatcher``); the ticked track indices, or None if cancelled or closed."""
+    ``UIDispatcher``); the ticked tracks with their speaker names, or None if cancelled or closed."""
+    speakers = speakers_of(preselected)
     preselected = set(preselected)
-    boxes = [
-        ui.CheckBox(
-            {
-                "ID": "Track_%d" % index,
-                "Text": track_label(index, name, enabled),
-                "Checked": index in preselected,
-                "Weight": 0,
-            }
+    rows = [
+        ui.HGroup(
+            {"Weight": 0},
+            [
+                ui.CheckBox(
+                    {
+                        "ID": "Track_%d" % index,
+                        "Text": track_label(index, name, enabled),
+                        "Checked": index in preselected,
+                        "Weight": 1,
+                    }
+                ),
+                ui.LineEdit(
+                    {
+                        "ID": "Speaker_%d" % index,
+                        "Text": speakers.get(index, ""),
+                        "PlaceholderText": SPEAKER_PLACEHOLDER,
+                        "Weight": 1,
+                    }
+                ),
+            ],
         )
         for index, name, enabled in tracks
     ]
@@ -120,7 +183,7 @@ def pick_audio_tracks_uimanager(fusion, ui, dispatcher, tracks, preselected) -> 
         {
             "ID": WINDOW_ID_TRACKS,
             "WindowTitle": "%s – audio tracks" % TITLE,
-            "Geometry": [250, 250, 460, 190 + 28 * len(tracks)],
+            "Geometry": [250, 250, 560, 230 + 32 * len(tracks)],
         },
         [
             ui.VGroup(
@@ -128,7 +191,8 @@ def pick_audio_tracks_uimanager(fusion, ui, dispatcher, tracks, preselected) -> 
                 [
                     ui.Label({"Text": HEADING, "Weight": 0}),
                     ui.Label({"Text": NOTE, "WordWrap": True, "Weight": 0}),
-                    *boxes,
+                    ui.Label({"Text": SPEAKER_NOTE, "WordWrap": True, "Weight": 0}),
+                    *rows,
                     ui.Label({"ID": "TracksStatus", "Text": "", "Weight": 0}),
                     ui.HGroup(
                         {"Weight": 0},
@@ -146,7 +210,11 @@ def pick_audio_tracks_uimanager(fusion, ui, dispatcher, tracks, preselected) -> 
     state = {"result": None}
 
     def on_ok(_event=None):
-        chosen = chosen_indices(tracks, lambda index: bool(items["Track_%d" % index].Checked))
+        chosen = chosen_pick(
+            tracks,
+            lambda index: bool(items["Track_%d" % index].Checked),
+            lambda index: str(items["Speaker_%d" % index].Text or ""),
+        )
         if not chosen:
             items["TracksStatus"].Text = NONE_PICKED
             return

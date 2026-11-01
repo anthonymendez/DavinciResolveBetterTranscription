@@ -214,6 +214,13 @@ previous render (kept in `<data>/renders`) is reused. Set `"force_rerender": tru
 in `config.json` to always render again. The progress window lists the steps
 left and has a Pause button.
 
+If only one person talks on a track (your own microphone, say), type their name
+next to it in that dialog. That track is also rendered alone, and everything
+said on it is captioned as that person, named already in the review. Speaker
+detection then only has to sort out everyone else. Names are remembered per
+timeline. On the command line this is `--fixed-track NAME=PATH` (repeatable),
+where PATH is that track's audio on its own.
+
 ## How it works
 
 The plugin has two halves. The **Resolve plugin** runs inside Resolve and only

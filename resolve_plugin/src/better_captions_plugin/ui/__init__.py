@@ -169,9 +169,11 @@ class Backend:
         """Return None when the user cancels."""
         raise NotImplementedError
 
-    def pick_audio_tracks(self, tracks, preselected) -> list[int] | None:
-        """The audio tracks to render (``tracks`` as ``resolve_io.audio_tracks`` gives them); None cancels."""
-        return list(preselected)
+    def pick_audio_tracks(self, tracks, preselected):
+        """The audio tracks to render (``tracks`` as ``resolve_io.audio_tracks`` gives them): a
+        ``track_picker.TrackPick`` (a list of track indices with ``speakers``, the speaker name typed for
+        a track; ``preselected`` is one too, from ``track_picker.default_selection``), or None to cancel."""
+        return preselected
 
     def pick_model(self, models, current: str) -> str | None:
         """The transcription model to use (``models`` as ``model_picker.catalog`` gives them, ``current`` the
