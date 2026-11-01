@@ -243,6 +243,29 @@ usual name guessing and to you. Manage the library with
 `better-captions voices list` and `better-captions voices forget NAME`, or turn
 it off with `"voice_library": false` in `config.json`.
 
+## Developing on Windows
+
+The checked-in `.venv` may have been created under WSL/Linux, so `uv run` on Windows
+can't reuse it (it tries to replace it and fails with "Access denied"). Leave it alone
+and point uv at a separate environment outside the repo:
+
+```powershell
+$env:UV_PROJECT_ENVIRONMENT = "D:envsetter-captions-win"   # any path outside the repo
+uv sync
+uv run pytest -q
+uv run ruff check .
+```
+
+Notes:
+
+- Set `UV_PROJECT_ENVIRONMENT` in every shell (or in your user environment variables).
+- Tests that need bash, `/proc`, or a real display are skipped on Windows; the
+  Windows-specific code paths (`NtSuspendProcess`, the PowerShell installer) have their own tests.
+- Tests that need symlinks fall back to copying when Windows denies the privilege
+  (or turn on Developer Mode).
+- `.brindle/config.json` runs `env -u DISPLAY ... uv run pytest -q`, which is POSIX-only;
+  run brindle from WSL, or run the PowerShell commands above by hand.
+
 ## How it works
 
 The plugin has two halves. The **Resolve plugin** runs inside Resolve and only
