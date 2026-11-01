@@ -331,6 +331,7 @@ class FakeTimeline:
         self.has_track_enable_api = has_track_enable_api  # False: GetIsTrackEnabled/SetTrackEnable don't exist
         # knobs
         self.refuse_track_enable = ()  # (track_type, index) pairs SetTrackEnable returns False for
+        self.enabled_reads_stale = False  # True: GetIsTrackEnabled always says True, as Resolve 20 can
         self.track_enable_calls = []  # every accepted or refused SetTrackEnable(track_type, index, enabled)
         self.refuse_add_track = False
         self.subtitle_append_ignores_record_frame = False
@@ -406,7 +407,7 @@ class FakeTimeline:
     def _GetIsTrackEnabled(self, track_type, index):
         if not 1 <= index <= len(self.tracks[track_type]):
             return False
-        return self.tracks[track_type][index - 1].enabled
+        return self.enabled_reads_stale or self.tracks[track_type][index - 1].enabled
 
     def _SetTrackEnable(self, track_type, index, enabled):
         self.track_enable_calls.append((track_type, index, bool(enabled)))

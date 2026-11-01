@@ -3,8 +3,10 @@
 ``fingerprint`` hashes everything the audio render depends on, read through the Resolve API; ``lookup``
 and ``store`` keep the finished renders in a small directory keyed by that hash. Stdlib only.
 
-Compute the fingerprint while the track selection for the render is applied: a muted or disabled track
-changes the audio, and ``Timeline.GetIsTrackEnabled`` reports the state the render will actually use.
+Compute the fingerprint while the track selection for the render is applied, and pass that selection as
+``tracks``: Resolve's ``Timeline.GetIsTrackEnabled`` can keep reporting True right after
+``SetTrackEnable(..., False)`` succeeded, so the enabled states it reports can't tell the full mix
+apart from a one-track render.
 """
 
 from __future__ import annotations
@@ -19,11 +21,13 @@ KEEP_ENTRIES = 5
 _FINGERPRINT_LEN = 64  # sha256 hex digest
 
 
-def fingerprint(timeline, range_start, range_end, clock) -> str:
+def fingerprint(timeline, range_start, range_end, clock, tracks=None) -> str:
     """Hex digest of the timeline state that determines the rendered audio for ``range_start``..``range_end``
-    (``range_end`` None means "to the end"). Anything Resolve will not report hashes as ``None``, so an
-    old or partial API still gives a stable fingerprint."""
+    (``range_end`` None means "to the end"), with only the audio tracks in ``tracks`` enabled (None: the
+    timeline as it is). Anything Resolve will not report hashes as ``None``, so an old or partial API
+    still gives a stable fingerprint."""
     state = {
+        "selection": None if tracks is None else sorted({int(i) for i in tracks}),
         "timeline": [_call(timeline, "GetUniqueId"), _call(timeline, "GetName")],
         "range": [_int(range_start), _int(range_end)],
         "clock": [clock.fps, bool(clock.drop_frame), _int(clock.start_frame)],

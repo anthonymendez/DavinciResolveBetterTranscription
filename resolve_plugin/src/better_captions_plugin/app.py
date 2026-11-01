@@ -240,7 +240,7 @@ def run(resolve, backend: Backend, config: dict, outcome: Outcome, work_dir=None
         try:
             with resolve_io.tracks_enabled(timeline, picked):
                 wav = render_or_reuse(
-                    project, timeline, audio_dir, range_start, range_end, clock, config, progress, render_kwargs
+                    project, timeline, audio_dir, range_start, range_end, clock, config, progress, render_kwargs, picked
                 )
             pinned = render_pinned_tracks(
                 project, timeline, picked, audio_dir, range_start, range_end, clock, config, progress, render_kwargs
@@ -404,17 +404,21 @@ def render_pinned_tracks(
                 config,
                 progress,
                 render_kwargs,
+                [index],
             )
         progress.log("Audio track %d is %s: %s" % (index, name, wav))
         rendered.append((name, wav))
     return rendered
 
 
-def render_or_reuse(project, timeline, audio_dir, range_start, range_end, clock, config: dict, progress, render_kwargs):
-    """The timeline's audio: the cached render when nothing that affects it changed, else a fresh render."""
+def render_or_reuse(
+    project, timeline, audio_dir, range_start, range_end, clock, config: dict, progress, render_kwargs, tracks=None
+):
+    """The timeline's audio with only ``tracks`` enabled (None: as it is): the cached render when nothing
+    that affects it changed, else a fresh render."""
     cache_dir = config_mod.renders_dir(config)
     try:
-        fp = render_cache.fingerprint(timeline, range_start, range_end, clock)
+        fp = render_cache.fingerprint(timeline, range_start, range_end, clock, tracks)
     except Exception as exc:  # an unexpected API shape only costs the cache, never the render
         progress.log("Could not fingerprint the timeline audio: %s" % exc)
         fp = None

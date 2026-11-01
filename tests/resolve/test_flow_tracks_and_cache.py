@@ -116,3 +116,20 @@ def test_unchanged_track_choice_is_not_a_warning(config):
     for _ in range(2):
         outcome = _run(resolve, FakeBackend(accept_all(subtitles=True, textplus=False), tracks_answer=[1]), config)
         assert outcome.error is None and outcome.warnings == []
+
+
+def test_pinned_track_never_reuses_the_mix_when_resolve_reports_stale_enabled_states(config, monkeypatch):
+    # Resolve can keep answering GetIsTrackEnabled -> True after SetTrackEnable(False) succeeded; the
+    # one-track stem must still get its own render, not the cached mix (which pinned everyone to it).
+    calls = _count_renders(monkeypatch)
+    resolve = _two_track_world()
+    _timeline(resolve).enabled_reads_stale = True
+    backend = FakeBackend(
+        accept_all(subtitles=True, textplus=False), tracks_answer=[1, 2], speakers_answer={1: "Anthony"}
+    )
+    assert _run(resolve, backend, config).error is None
+    assert len(calls) == 2
+    engine_line = next(line for line in backend.progress_views[0].lines if line.startswith("Engine: "))
+    argv = engine_line.split(" ")
+    mix, stem = argv[argv.index("run") + 1], argv[argv.index("--fixed-track") + 1].partition("=")[2]
+    assert mix != stem
