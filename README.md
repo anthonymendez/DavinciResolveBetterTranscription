@@ -128,15 +128,28 @@ send the log. Close Resolve first, then run one of these:
 
       curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install-debug.sh | bash
 
-- Or set the variable before the normal installer, e.g. in PowerShell
-  `$env:BETTER_CAPTIONS_DEBUG = '1'` and then the Option A command (the variable stays set
-  in that window), or `BETTER_CAPTIONS_DEBUG=1 bash install/install.sh` on macOS / Linux.
-- From a local copy (in the project folder, as in Option B):
+- From a local copy (a clone or extracted zip, as in Option B): run the debug installer inside
+  it and it installs that copy, with no environment variable to set:
 
-      $env:BETTER_CAPTIONS_SOURCE = (Get-Location).Path
       powershell -ExecutionPolicy Bypass -File .\install\install-debug.ps1
 
-  or `BETTER_CAPTIONS_SOURCE="$PWD" bash install/install-debug.sh` on macOS / Linux.
+  or `bash install/install-debug.sh` on macOS / Linux.
+
+The debug installers take options instead of environment variables:
+
+| PowerShell | bash | Installs |
+|---|---|---|
+| `-Ref main` | `--ref main` | that branch, tag or commit from GitHub |
+| `-Source D:\path` | `--source /path` | that local copy |
+| `-GitHub` | `--github` | the latest release from GitHub, even when run from a local copy |
+
+With the one-line install, pass them like this:
+
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install-debug.ps1))) -Ref main
+
+    curl -fsSL https://raw.githubusercontent.com/anthonymendez/DavinciResolveBetterTranscription/main/install/install-debug.sh | bash -s -- --ref main
+
+Setting `BETTER_CAPTIONS_DEBUG=1` before the normal installer still works too.
 
 Each run of Better Captions then writes a log to the `logs` folder of the data dir:
 `%LOCALAPPDATA%\BetterCaptions\logs` on Windows, `~/Library/Application Support/BetterCaptions/logs`

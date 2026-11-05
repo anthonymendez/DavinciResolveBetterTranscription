@@ -236,6 +236,70 @@ def test_debug_install_then_normal_reinstall(sandbox: dict[str, str], source: Pa
     assert not data.exists()
 
 
+def _debug_wrapper(tmp_path: Path, in_a_copy: bool = True) -> Path:
+    """install-debug.sh next to a stub install.sh that prints what it was given, in a folder that looks
+    like a clone (pyproject.toml one level up) or not."""
+    root = tmp_path / "copy"
+    (root / "install").mkdir(parents=True)
+    if in_a_copy:
+        (root / "pyproject.toml").write_text("")
+    shutil.copy2(INSTALL / "install-debug.sh", root / "install")
+    (root / "install" / "install.sh").write_text(
+        'echo "DEBUG=${BETTER_CAPTIONS_DEBUG:-} SOURCE=${BETTER_CAPTIONS_SOURCE:-} REF=${BETTER_CAPTIONS_REF:-}"\n'
+    )
+    return root
+
+
+def _run_wrapper(root: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+    run_env = {k: v for k, v in os.environ.items() if not k.startswith("BETTER_CAPTIONS_")}
+    run_env.update(env)
+    return subprocess.run(
+        ["bash", str(root / "install" / "install-debug.sh"), *args],
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "env", "source", "ref"),
+    [
+        ((), {}, "{root}", ""),  # run from a clone: that clone, with no variable set by hand
+        (("--ref", "main"), {}, "", "main"),
+        (("--ref=v1.2",), {}, "", "v1.2"),
+        (("--github",), {}, "", ""),
+        (("--source", "/some where"), {}, "/some where", ""),
+        ((), {"BETTER_CAPTIONS_SOURCE": "/from env"}, "/from env", ""),
+        (("--github",), {"BETTER_CAPTIONS_SOURCE": "/from env"}, "", ""),
+    ],
+)
+def test_debug_wrapper_options(tmp_path: Path, args, env, source, ref) -> None:
+    root = _debug_wrapper(tmp_path)
+    result = _run_wrapper(root, *args, **env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"DEBUG=1 SOURCE={source.format(root=root)} REF={ref}"
+
+
+def test_debug_wrapper_outside_a_copy_installs_from_github(tmp_path: Path) -> None:
+    result = _run_wrapper(_debug_wrapper(tmp_path, in_a_copy=False))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "DEBUG=1 SOURCE= REF="
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("--nope",), "unknown option: --nope"),
+        (("--ref",), "--ref needs"),
+        (("--source", "a", "--ref", "b"), "can't be combined"),
+    ],
+)
+def test_debug_wrapper_rejects_bad_options(tmp_path: Path, args, message) -> None:
+    result = _run_wrapper(_debug_wrapper(tmp_path), *args)
+    assert result.returncode != 0 and message in result.stderr and not result.stdout
+
+
 def test_home_override(sandbox: dict[str, str], source: Path, tmp_path: Path) -> None:
     custom = tmp_path / "custom home"
     sandbox["BETTER_CAPTIONS_HOME"] = str(custom)
