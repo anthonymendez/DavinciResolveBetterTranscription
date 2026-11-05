@@ -241,6 +241,17 @@ evicted an unchanged timeline's renders, and the 60 fps test timeline rendered a
 with nothing changed. Now up to 24 entries and 4 GB (about six hour-long renders) are kept,
 least recently used dropped first; the entry just stored is always kept.
 
+**Rendering one track alone** (`resolve_io.tracks_enabled`). On Studio 21.1.2,
+`Timeline.SetTrackEnable(type, index, False)` returns True and changes nothing, for audio and
+video tracks alike: `GetIsTrackEnabled` still says True, and a render with every other audio
+track "disabled" was byte-identical to the full mix (checked headless on a Microphone / Discord /
+Game timeline). A disabled clip is left out of the render, so the plugin also disables every
+enabled clip on the other tracks (`TimelineItem.SetClipEnabled(False)`) and enables them again
+afterwards (clips the user disabled stay disabled). Before this, every track of a per-track
+run rendered the same mix, and since the same word then sat on both tracks equally loud, bleed
+removal gave the group track's lines to the person track. Those old renders are not reused:
+the fingerprint is taken while the clips are disabled, so it differs from theirs.
+
 ## 6. Engine subprocess
 
 `config.json["engine"] + ["run", wav, "--out", dir, flags]`; stdout is read on a thread

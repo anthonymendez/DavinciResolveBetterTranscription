@@ -6,7 +6,7 @@ import pytest
 
 from better_captions_plugin import config as config_mod
 from better_captions_plugin import resolve_io, track_picker
-from tests.resolve.fake_resolve import make_world
+from tests.resolve.fake_resolve import FakeTimelineItem, make_world
 from tests.resolve.test_ui import FakeBmd, FakeFusion
 
 
@@ -108,22 +108,61 @@ def test_no_selection_or_no_enable_api_leaves_the_timeline_alone():
     assert not resolve_io.track_enable_supported(timeline)
 
 
-def test_the_render_sees_only_the_chosen_tracks(tmp_path):
-    world = make_world(profile="21.1.2-studio")
+def _with_clips(timeline, per_track=2):
+    for track in timeline.tracks["audio"]:
+        track.items = [FakeTimelineItem("rec.mp4", n * 100, 100) for n in range(per_track)]
+    return timeline
+
+
+@pytest.mark.parametrize("profile", ["20.3-studio", "21.1.2-studio"])
+def test_the_render_sees_only_the_chosen_tracks(tmp_path, profile):
+    world = make_world(profile=profile)
     project = world.project
-    timeline = project.GetCurrentTimeline()
+    timeline = _with_clips(project.GetCurrentTimeline())
     timeline.AddTrack("audio")
+    _with_clips(timeline)
     seen = []
     original_start = project.StartRendering
 
     def start(job_ids=None, is_interactive=False):
-        seen.append(timeline.enabled_audio())
+        seen.append(timeline.heard_audio())
         return original_start(job_ids, is_interactive)
 
     project.StartRendering = start
     with resolve_io.tracks_enabled(timeline, [2]):
         resolve_io.render_audio(project, timeline, str(tmp_path), 0, None, sleep=lambda _s: None)
-    assert seen == [[2]] and timeline.enabled_audio() == [1, 2]
+    assert seen == [[2]] and timeline.heard_audio() == [1, 2]
+    assert all(item.enabled for track in timeline.tracks["audio"] for item in track.items)
+
+
+def test_on_21_1_2_the_other_tracks_clips_are_disabled_since_set_track_enable_does_nothing():
+    timeline = _with_clips(_timeline())
+    timeline.track_enable_is_noop = True  # SetTrackEnable returns True, the track stays enabled
+    with resolve_io.tracks_enabled(timeline, [2]):
+        assert timeline.enabled_audio() == [1, 2, 3]
+        assert timeline.heard_audio() == [2]
+    assert timeline.heard_audio() == [1, 2, 3]
+
+
+def test_clips_the_user_disabled_stay_disabled():
+    timeline = _with_clips(_timeline())
+    off = timeline.tracks["audio"][0].items[1]
+    off.enabled = False
+    with resolve_io.tracks_enabled(timeline, [2]):
+        pass
+    assert off.enabled is False and timeline.tracks["audio"][0].items[0].enabled is True
+
+
+def test_a_clip_resolve_will_not_disable_restores_everything():
+    timeline = _with_clips(_timeline())
+    stubborn = timeline.tracks["audio"][2].items[0]
+    stubborn.SetClipEnabled = lambda enabled: False
+    with (
+        pytest.raises(resolve_io.ResolveError, match="clips on audio track 3"),
+        resolve_io.tracks_enabled(timeline, [1]),
+    ):
+        pytest.fail("the block must not run")
+    assert timeline.enabled_audio() == [1, 2, 3] and timeline.heard_audio() == [1, 2, 3]
 
 
 # --- default selection and remembering

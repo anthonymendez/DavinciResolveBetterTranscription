@@ -177,6 +177,7 @@ class FakeTimelineItem:
         self.comps = list(comps or [])
         self.media_pool_item = media_pool_item
         self.color = None
+        self.enabled = True
         FakeTimelineItem._ids += 1
         self.unique_id = "item-%d" % FakeTimelineItem._ids
         self.timeline = None  # the FakeTimeline it was placed on
@@ -202,6 +203,13 @@ class FakeTimelineItem:
 
     def GetUniqueId(self):
         return self.unique_id
+
+    def GetClipEnabled(self):
+        return self.enabled
+
+    def SetClipEnabled(self, enabled):
+        self.enabled = bool(enabled)
+        return True
 
     def GetPosition(self, subframePrecision=False):
         where = self.timeline._position(self) if self.timeline is not None else None
@@ -346,6 +354,7 @@ class FakeTimeline:
         # knobs
         self.refuse_track_enable = ()  # (track_type, index) pairs SetTrackEnable returns False for
         self.enabled_reads_stale = False  # True: GetIsTrackEnabled always says True, as Resolve 20 can
+        self.track_enable_is_noop = False  # True: SetTrackEnable returns True and changes nothing (21.1.2)
         self.track_enable_calls = []  # every accepted or refused SetTrackEnable(track_type, index, enabled)
         self.refuse_add_track = False
         self.subtitle_append_ignores_record_frame = False  # True: the cues start after the last video clip
@@ -448,7 +457,8 @@ class FakeTimeline:
         self.track_enable_calls.append((track_type, index, bool(enabled)))
         if (track_type, index) in self.refuse_track_enable or not 1 <= index <= len(self.tracks[track_type]):
             return False
-        self.tracks[track_type][index - 1].enabled = bool(enabled)
+        if not self.track_enable_is_noop:
+            self.tracks[track_type][index - 1].enabled = bool(enabled)
         return True
 
     def _MoveItems(self, items, position, moveLinkedItems=True, subframePrecision=False):
@@ -488,6 +498,14 @@ class FakeTimeline:
     def enabled_audio(self) -> list[int]:
         """Test helper: the 1-based indices of the enabled audio tracks."""
         return [i for i, track in enumerate(self.tracks["audio"], start=1) if track.enabled]
+
+    def heard_audio(self) -> list[int]:
+        """Test helper: the audio tracks a render hears: enabled, and not every clip on them disabled."""
+        return [
+            i
+            for i, track in enumerate(self.tracks["audio"], start=1)
+            if track.enabled and (not track.items or any(item.enabled for item in track.items))
+        ]
 
     def track(self, track_type, name) -> FakeTrack | None:
         return next((t for t in self.tracks[track_type] if t.name == name), None)
@@ -724,7 +742,7 @@ class FakeProject:
         self._rendering = self.polls_until_done
         self._active = list(job_ids or self.jobs)
         timeline = self.timeline
-        enabled = timeline.enabled_audio() if timeline is not None and hasattr(timeline, "enabled_audio") else None
+        enabled = timeline.heard_audio() if timeline is not None and hasattr(timeline, "heard_audio") else None
         for job_id in self._active:
             self.jobs[job_id]["status"] = "Rendering"
             self.jobs[job_id]["enabled_audio"] = enabled  # the audio tracks this render hears
@@ -896,6 +914,7 @@ def make_world(
     if profile is not None:
         timeline.subtitle_append_at_timeline_end = profile.subtitle_api
         timeline.subtitle_drops_empty_cues = profile.subtitle_api
+        timeline.track_enable_is_noop = profile.subtitle_api  # 21.1.2: SetTrackEnable changes nothing
     # Some existing content on Video 1 so "never modify existing tracks" is observable.
     footage = FakeMediaPoolItem("footage.mov", file_path="/media/footage.mov")
     timeline.tracks["video"][0].items.append(
