@@ -200,13 +200,15 @@ def audio_tracks(timeline) -> list[tuple[int, str, bool]]:
 
 @contextmanager
 def tracks_enabled(timeline, selected_indices):
-    """Inside the block only the audio tracks in ``selected_indices`` are enabled (so only they reach the
-    audio render); on the way out, success, error or cancel, every track is put back as it was.
+    """Inside the block only the audio tracks in ``selected_indices`` reach the audio render; on the way
+    out, success, error or cancel, every track and clip is put back as it was.
 
-    ``None`` leaves the timeline alone, as does a Resolve without the enable calls. Raises ResolveError
-    for an empty selection (a silent render), an index the timeline doesn't have, or a track Resolve
-    won't switch; tracks already switched are restored first."""
-    if selected_indices is None or not track_enable_supported(timeline):
+    The other tracks are disabled and so are their clips: on Resolve 21.1.2 ``SetTrackEnable`` returns True
+    and changes nothing (checked headless: every "one track" render was the full mix), while a disabled clip
+    is left out of the render. ``None`` leaves the timeline alone. Raises ResolveError for an empty
+    selection (a silent render), an index the timeline doesn't have, or a track or clip Resolve won't
+    switch; what was already switched is restored first."""
+    if selected_indices is None:
         yield
         return
     wanted = {int(i) for i in selected_indices}
@@ -218,18 +220,35 @@ def tracks_enabled(timeline, selected_indices):
     if unknown:
         raise ResolveError("this timeline has no audio track %s" % ", ".join(str(i) for i in unknown))
     changed = []
+    disabled_clips = []
     try:
         for index, was_enabled in original.items():
             should = index in wanted
-            if should == was_enabled:
+            if not should:
+                _disable_clips(timeline, index, disabled_clips)
+            if should == was_enabled or not track_enable_supported(timeline):
                 continue
             changed.append(index)  # before the call: a call that raised may still have switched it
             if not timeline.SetTrackEnable("audio", index, should):
                 raise ResolveError("Resolve would not %s audio track %d" % ("enable" if should else "disable", index))
         yield
     finally:
+        for item in disabled_clips:
+            _try(lambda item=item: item.SetClipEnabled(True))
         for index in changed:
             _try(lambda index=index: timeline.SetTrackEnable("audio", index, original[index]))
+
+
+def _disable_clips(timeline, index, disabled):
+    """Disable the enabled clips of audio track ``index``, appending each to ``disabled`` (before the call,
+    so a call that raised is still undone). Clips the user disabled are left alone; a Resolve without
+    ``SetClipEnabled`` only has the track switch."""
+    for item in _try(lambda: timeline.GetItemListInTrack("audio", index)) or []:
+        if not callable(getattr(item, "SetClipEnabled", None)) or _try(item.GetClipEnabled) is False:
+            continue
+        disabled.append(item)
+        if not item.SetClipEnabled(False):
+            raise ResolveError("Resolve would not disable the clips on audio track %d" % index)
 
 
 # ---------------------------------------------------------------------------
